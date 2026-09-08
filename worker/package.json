@@ -1,0 +1,7 @@
+{
+  "name": "arena-worker",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.114.0"
+  }
+}

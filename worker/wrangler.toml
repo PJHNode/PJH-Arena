@@ -1,0 +1,22 @@
+name = "arena"
+main = "arena-worker.js"
+compatibility_date = "2024-01-01"
+account_id = "c31bb04e7cc014b454684a18f48031c4"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "arena"
+database_id = "993ae127-ec94-499a-9794-7f37087693b9"
+
+# PJH-hub(pjh-auth/forum)와 계정을 공유하기 위해 같은 SESSIONS/USERS KV 네임스페이스를 그대로
+# 바인딩한다(forum/wrangler.toml과 동일한 id). 이 Worker는 이 두 KV에 절대 쓰지 않고 읽기만 한다.
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "bcb3e2eee0954d7285e2315fc6a86259"
+
+[[kv_namespaces]]
+binding = "USERS"
+id = "1a3afad4940c45758a8a0a656aacc71c"
+
+[triggers]
+crons = ["*/10 * * * *"]

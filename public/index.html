@@ -6,119 +6,307 @@
 <title>PJH Arena</title>
 <style>
   :root {
-    --bg: #0a0a0c;
-    --surface: #131315;
-    --surface-2: #1b1b1e;
-    --border: #2a2a2e;
-    --text: #e8e8ea;
-    --sub: #8a8a90;
-    --accent: #00ff90;
-    --accent-glow: rgba(0, 255, 144, 0.35);
+    --bg: #05070a;
+    --surface: #0d1117;
+    --surface-2: #151b23;
+    --border: #23303d;
+    --text: #dcefe8;
+    --sub: #6d8590;
+    --accent: #00ff9d;
+    --accent-glow: rgba(0, 255, 157, 0.35);
+    --cyan: #00d4ff;
+    --danger: #ff3d68;
+    --hp: #2b7fff;
+    --energy: #00e07a;
+    --stamina: #ffb020;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-mono);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
+    margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono);
+    min-height: 100vh; display: flex; flex-direction: column;
   }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
-  }
-  .brand { font-size: 15px; letter-spacing: 0.08em; color: var(--accent); }
-  .brand span { color: var(--sub); }
-  nav { display: flex; align-items: center; gap: 12px; font-size: 12px; }
-  nav button {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-family: inherit;
-    font-size: 12px;
-    padding: 7px 14px;
-    cursor: pointer;
-  }
-  nav button:hover { border-color: var(--accent); color: var(--accent); }
-  #userLabel { display: none; color: var(--sub); font-size: 12px; }
+  a { color: var(--cyan); }
+  .dim { color: var(--sub); font-size: 12px; }
+  button { cursor: pointer; font-family: inherit; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 40px 20px;
+  /* ── 헤더 ── */
+  header { border-bottom: 1px solid var(--border); background: var(--surface); }
+  .crumb { padding: 8px 20px 0; font-size: 11px; color: var(--sub); }
+  .crumb b { color: var(--accent); }
+  .profile-row {
+    display: flex; align-items: center; gap: 20px; padding: 10px 20px; flex-wrap: wrap;
   }
-  main h1 { font-size: 28px; margin: 0 0 10px; letter-spacing: 0.05em; }
-  main p { color: var(--sub); font-size: 13px; max-width: 420px; line-height: 1.6; }
-  .tag {
-    margin-top: 20px;
-    font-size: 11px;
-    color: var(--sub);
-    border: 1px solid var(--border);
-    padding: 6px 12px;
+  .level-badge {
+    width: 40px; height: 40px; border-radius: 50%; background: radial-gradient(circle, var(--accent-glow), transparent 70%);
+    border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center;
+    font-weight: bold; font-size: 15px; color: var(--accent);
+  }
+  .exp-wrap { flex: 1; min-width: 160px; max-width: 260px; }
+  .exp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; }
+  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; }
+  #expText { font-size: 10px; color: var(--sub); }
+  .pocket-tag { font-size: 13px; color: var(--stamina); margin-left: auto; }
+  .stat-mini { font-size: 11px; color: var(--sub); }
+  .shield-tag { font-size: 11px; color: var(--cyan); border: 1px solid var(--cyan); padding: 2px 8px; display: none; }
+  .nav-auth { display: flex; align-items: center; gap: 10px; margin-left: 16px; }
+  .nav-auth button {
+    background: transparent; border: 1px solid var(--border); color: var(--text); font-size: 12px; padding: 6px 12px;
+  }
+  #userLabel { font-size: 12px; color: var(--sub); display: none; }
+
+  /* ── 통합 위젯 바 ── */
+  .widget-bar {
+    display: flex; gap: 18px; padding: 6px 20px; background: var(--surface-2); border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--sub); flex-wrap: wrap;
+  }
+  .widget-bar b { color: var(--text); }
+
+  /* ── 리소스 바 (HP/Energy/Stamina) ── */
+  .resource-bar-row { display: flex; gap: 20px; padding: 10px 20px; flex-wrap: wrap; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .resource { flex: 1; min-width: 140px; }
+  .resource-label { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+  .resource-fill { height: 100%; transition: width 0.3s; }
+  .resource-fill.hp { background: var(--hp); }
+  .resource-fill.energy { background: var(--energy); }
+  .resource-fill.stamina { background: var(--stamina); }
+  .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; }
+
+  #downedBanner {
+    display: none; background: var(--danger); color: #fff; text-align: center; font-size: 12px; padding: 6px;
   }
 
-  /* 로그인/가입 모달 */
-  #authSection {
-    display: none;
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.6);
-    align-items: center; justify-content: center;
-    z-index: 1000;
+  /* ── 레이아웃 ── */
+  .app-body { display: flex; flex: 1; min-height: 0; }
+  .sidebar {
+    width: 190px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--surface);
+    display: flex; flex-direction: column; padding: 10px 0;
   }
-  .auth-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    width: 300px;
-    padding: 20px;
+  .side-tab {
+    background: none; border: none; color: var(--sub); text-align: left; padding: 12px 18px; font-size: 12px;
+    border-left: 3px solid transparent;
   }
-  .auth-tabs { display: flex; gap: 0; margin-bottom: 16px; }
-  .auth-tabs button {
-    flex: 1; background: transparent; border: none; border-bottom: 2px solid var(--border);
-    color: var(--sub); font-family: inherit; font-size: 12px; padding: 8px; cursor: pointer;
+  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); }
+  .side-tab:hover { color: var(--text); }
+
+  .content { flex: 1; padding: 20px; overflow-y: auto; }
+  .tab-panel { display: none; }
+  .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
+
+  /* Jobs */
+  .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .job-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
+  .job-card.locked { opacity: 0.55; }
+  .job-card-icon { font-size: 22px; }
+  .job-card-title { font-weight: bold; margin: 6px 0 2px; }
+  .job-card-sub { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
+  .job-card-reward { font-size: 11px; margin-bottom: 2px; }
+  .mining-wrap { background: var(--surface); border: 1px solid var(--border); padding: 12px; }
+  .mining-wrap canvas { width: 100%; height: 80px; display: block; }
+
+  /* PvP */
+  .pvp-row { display: grid; grid-template-columns: 1.6fr 0.8fr 0.8fr 0.5fr auto auto; gap: 10px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .pvp-name { }
+  .pvp-stat { color: var(--sub); }
+
+  /* Shop */
+  .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .shop-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
+  .shop-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+  .shop-card-type { font-size: 10px; color: var(--cyan); margin-bottom: 6px; }
+  .shop-card-stat { font-size: 11px; color: var(--sub); margin-bottom: 6px; }
+  .shop-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
+
+  /* Inventory */
+  .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+
+  /* Bank */
+  .bank-cards { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .bank-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 22px; }
+  .bank-card .label { font-size: 11px; color: var(--sub); }
+  .bank-card .value { font-size: 20px; color: var(--accent); }
+  .bank-form { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .bank-form input {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit;
+    padding: 8px 10px; width: 160px;
   }
+
+  /* Leaderboard */
+  .lb-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .lb-type-btn { background: var(--surface); border: 1px solid var(--border); color: var(--sub); font-size: 11px; padding: 7px 14px; }
+  .lb-type-btn.active { color: var(--accent); border-color: var(--accent); }
+  .lb-row { display: grid; grid-template-columns: 50px 1fr auto; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .lb-rank { color: var(--sub); }
+  .lb-value { color: var(--accent); }
+
+  /* Log */
+  .log-row { display: grid; grid-template-columns: 24px 1fr auto 130px; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11px; align-items: center; }
+  .log-row .pos { color: var(--energy); }
+  .log-row .neg { color: var(--danger); }
+
+  /* 버튼 공통 */
+  .btn-primary { background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 8px 14px; font-size: 11px; }
+  .btn-ghost { background: transparent; border: 1px solid var(--cyan); color: var(--cyan); padding: 7px 12px; font-size: 11px; }
+  .btn-danger { background: var(--danger); border: none; color: #fff; padding: 7px 12px; font-size: 11px; }
+
+  /* 로그인 모달 (auth-widget.js가 조작) */
+  #authSection { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1000; }
+  .auth-box { background: var(--surface); border: 1px solid var(--border); width: 300px; padding: 20px; position: relative; }
+  .auth-tabs { display: flex; margin-bottom: 16px; }
+  .auth-tabs button { flex: 1; background: transparent; border: none; border-bottom: 2px solid var(--border); color: var(--sub); font-size: 12px; padding: 8px; }
   .auth-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .auth-box input {
-    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
-    color: var(--text); font-family: inherit; font-size: 12px; padding: 9px 10px; margin-bottom: 8px;
+  .auth-box input { width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; padding: 9px 10px; margin-bottom: 8px; }
+  .auth-box .err { font-size: 11px; color: var(--danger); min-height: 14px; margin: 0 0 8px; }
+  .auth-box .submit-btn { width: 100%; background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 10px; }
+  #authCloseBtn { position: absolute; top: 10px; right: 14px; background: none; border: none; color: var(--sub); font-size: 16px; }
+
+  #loggedOutHint { text-align: center; padding: 80px 20px; color: var(--sub); }
+  #loggedOutHint h1 { color: var(--accent); font-size: 26px; }
+
+  /* Scan modal */
+  #scanModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1000; }
+  .scan-box { background: var(--surface); border: 1px solid var(--cyan); width: 320px; padding: 20px; position: relative; }
+  .scan-row { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .scan-winrate { text-align: center; margin-top: 16px; font-size: 12px; color: var(--sub); }
+  .scan-winrate span { display: block; font-size: 30px; color: var(--accent); }
+
+  /* Toast */
+  #toastLayer { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
+  .arena-toast {
+    background: var(--surface); border: 1px solid var(--accent); color: var(--text); font-size: 12px;
+    padding: 10px 16px; opacity: 0; transform: translateY(8px); transition: opacity 0.3s, transform 0.3s;
   }
-  .auth-box .err { font-size: 11px; color: #ff5c5c; min-height: 14px; margin: 0 0 8px; }
-  .auth-box .submit-btn {
-    width: 100%; background: var(--accent); color: #05130c; border: none;
-    font-family: inherit; font-size: 12px; font-weight: bold; padding: 10px; cursor: pointer;
-  }
-  #authCloseBtn {
-    position: absolute; top: 10px; right: 14px; background: none; border: none;
-    color: var(--sub); font-size: 16px; cursor: pointer;
-  }
-  .auth-box { position: relative; }
+  .arena-toast.err { border-color: var(--danger); }
+  .arena-toast.show { opacity: 1; transform: translateY(0); }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="brand">PJH <span>ARENA</span></div>
-  <nav>
-    <span id="userLabel"></span>
-    <button id="loginNavBtn">로그인</button>
-    <button id="logoutNavBtn" style="display:none;">로그아웃</button>
-  </nav>
+  <div class="crumb">PJH Hub &gt; <b>PJH Arena</b></div>
+  <div class="profile-row">
+    <div class="level-badge" id="levelBadge">1</div>
+    <div class="exp-wrap">
+      <div class="exp-track"><div class="exp-fill" id="expBar"></div></div>
+      <div id="expText">0 / 100</div>
+    </div>
+    <div class="pocket-tag">💰 Pocket: <b id="pocketCoinsHead">0</b></div>
+    <span class="shield-tag" id="shieldTag">🛡 SHIELDED</span>
+    <div class="nav-auth">
+      <span id="userLabel"></span>
+      <button id="loginNavBtn">로그인</button>
+      <button id="logoutNavBtn" style="display:none;">로그아웃</button>
+    </div>
+  </div>
+  <div class="widget-bar">
+    <span>XP <b id="wXp">-</b></span>
+    <span>Coins <b id="wCoins">-</b></span>
+    <span>KOSPI <b id="wKospi">-</b></span>
+    <span>원/달러 <b id="wUsdKrw">-</b></span>
+    <span>BTC <b id="wBtc">-</b></span>
+    <span>연속출석 <b id="wStreak">-</b></span>
+  </div>
 </header>
 
-<main>
-  <h1>PJH Arena</h1>
-  <p>준비 중입니다. 계정은 PJH-Hub와 동일한 아이디/비밀번호로 로그인할 수 있어요.</p>
-  <div class="tag">COMING SOON</div>
-</main>
+<div id="downedBanner">⚠ HP가 0입니다 — 회복 전까지 해킹/전투 활동이 불가능합니다.</div>
+
+<div id="loggedOutHint">
+  <h1>PJH ARENA</h1>
+  <p>PJH-Hub와 동일한 계정으로 로그인하세요.</p>
+</div>
+
+<div id="appShell" style="display:none; flex:1; flex-direction:column; min-height:0;">
+  <div class="resource-bar-row">
+    <div class="resource">
+      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span></div>
+      <div class="resource-track"><div class="resource-fill hp" id="hpBar"></div></div>
+    </div>
+    <div class="resource">
+      <div class="resource-label"><span>ENERGY</span><span id="energyText">100 / 100</span></div>
+      <div class="resource-track"><div class="resource-fill energy" id="energyBar"></div></div>
+    </div>
+    <div class="resource">
+      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span></div>
+      <div class="resource-track"><div class="resource-fill stamina" id="staminaBar"></div></div>
+    </div>
+    <div class="atk-def-row">
+      <span>ATK <b id="atkText">10</b></span>
+      <span>DEF <b id="defText">10</b></span>
+    </div>
+  </div>
+
+  <div class="app-body">
+    <div class="sidebar">
+      <button class="side-tab active" data-tab="jobs">Hacking Jobs</button>
+      <button class="side-tab" data-tab="pvp">Arena P2P</button>
+      <button class="side-tab" data-tab="shop">Hardware Shop</button>
+      <button class="side-tab" data-tab="inventory">Digital Inventory</button>
+      <button class="side-tab" data-tab="bank">Secure Bank</button>
+      <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
+      <button class="side-tab" data-tab="logs">Hack Log</button>
+    </div>
+
+    <div class="content">
+      <div class="tab-panel" id="panel-jobs">
+        <p class="panel-title">⚡ ACTIVE HACKING JOBS</p>
+        <div class="job-grid"></div>
+        <div class="mining-wrap">
+          <p class="dim" style="margin:0 0 6px;">PACKET MINING (최근 수익)</p>
+          <canvas id="miningCanvas" width="600" height="80"></canvas>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="panel-pvp">
+        <p class="panel-title">🎯 ARENA P2P — TARGETS</p>
+        <div class="pvp-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-shop">
+        <p class="panel-title">🛒 HARDWARE SHOP</p>
+        <div class="shop-grid"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-inventory">
+        <p class="panel-title">💾 DIGITAL INVENTORY</p>
+        <div class="inv-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-bank">
+        <p class="panel-title">🏦 SECURE BANK</p>
+        <div class="bank-cards">
+          <div class="bank-card"><div class="label">POCKET COINS (약탈 가능)</div><div class="value" id="bankPocket">0</div></div>
+          <div class="bank-card"><div class="label">BANK COINS (안전 보관, 일 1% 이자)</div><div class="value" id="bankVault">0</div></div>
+        </div>
+        <div class="bank-form">
+          <input id="depositInput" type="number" placeholder="입금할 금액" />
+          <button class="btn-primary" id="depositBtn">DEPOSIT</button>
+        </div>
+        <div class="bank-form">
+          <input id="withdrawInput" type="number" placeholder="출금할 금액" />
+          <button class="btn-ghost" id="withdrawBtn">WITHDRAW</button>
+        </div>
+        <p class="dim">Bank Coins는 Arena P2P 약탈 대상에서 완전히 제외됩니다. 매일 00:00(KST) 1% 이자 지급(1일 최대 10,000코인).</p>
+      </div>
+
+      <div class="tab-panel" id="panel-leaderboard">
+        <p class="panel-title">🏆 LEADERBOARD</p>
+        <div class="lb-tabs">
+          <button class="lb-type-btn active" data-lb="level">레벨</button>
+          <button class="lb-type-btn" data-lb="assets">자산</button>
+          <button class="lb-type-btn" data-lb="plunder">약탈</button>
+        </div>
+        <div class="lb-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-logs">
+        <p class="panel-title">📜 HACK LOG</p>
+        <div class="log-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="authSection">
   <div class="auth-box">
@@ -143,6 +331,16 @@
   </div>
 </div>
 
+<div id="scanModal">
+  <div class="scan-box">
+    <button id="scanModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
+    <div id="scanModalBody"></div>
+  </div>
+</div>
+
+<div id="toastLayer"></div>
+
 <script src="./auth-widget.js"></script>
+<script src="./arena.js"></script>
 </body>
 </html>
