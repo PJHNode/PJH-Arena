@@ -70,7 +70,7 @@
 
   async function startDashboard() {
     dashboardStarted = true;
-    $("appShell").style.display = "";
+    $("appShell").style.display = "flex"; // appShell은 CSS 기본값이 없어 ""로는 인라인 display:none이 안 지워짐
     $("loggedOutHint").style.display = "none";
     await refreshState();
     refreshWidgetBar();
@@ -110,7 +110,7 @@
     $("defText").textContent = state.def;
     $("shieldTag").style.display = state.shielded ? "" : "none";
 
-    if (state.hp <= 0) $("downedBanner").style.display = "";
+    if (state.hp <= 0) $("downedBanner").style.display = "block"; // .tab-panel과 동일한 함정: ""는 CSS의 display:none으로 되돌아감
     else $("downedBanner").style.display = "none";
 
     const dashVault = $("dashBankVault");
@@ -162,7 +162,9 @@
     if (!dashboardStarted) return;
     document.querySelectorAll(".tab-panel").forEach((p) => { p.style.display = "none"; });
     const panel = $("panel-" + tab);
-    if (panel) panel.style.display = "";
+    // .tab-panel의 CSS 기본값이 display:none이라, 인라인 스타일을 ""로 지우면 그 기본값으로
+    // "되돌아갈 뿐"이라 계속 숨겨진 채로 남는다(실제로 겪은 버그) — 반드시 명시적으로 "block".
+    if (panel) panel.style.display = "block";
     const fn = TAB_RENDERERS[tab];
     if (fn) fn();
   }
