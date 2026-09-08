@@ -62,6 +62,8 @@
 
   function stopDashboard() {
     dashboardStarted = false;
+    state = null;
+    firstStateLoaded = false;
     $("appShell").style.display = "none";
     $("loggedOutHint").style.display = "";
   }
@@ -79,10 +81,14 @@
     }
   }
 
+  let firstStateLoaded = false;
   async function refreshState() {
     try {
       state = await api("/state");
       renderHeader();
+      // 최초 로드가 실패했다가 나중 폴링에서 성공한 경우를 대비 — 탭 내용이 계속 빈 채로
+      // 남지 않도록, state가 처음 채워진 시점에 한 번 더 현재 탭을 그려준다.
+      if (!firstStateLoaded) { firstStateLoaded = true; renderTab(currentTab); }
     } catch (e) { /* 세션 만료 등 — 다음 틱에서 자동 로그아웃 처리됨 */ }
   }
 
@@ -163,6 +169,7 @@
 
   // ── ① Hacking Jobs ──
   function renderJobsTab() {
+    if (!state) return; // /state 조회가 아직 안 끝났거나 실패한 경우 — 다음 refreshState 성공 시 재호출됨
     const panel = $("panel-jobs");
     const cards = Object.keys(JOB_TIERS).map((tier) => {
       const t = JOB_TIERS[tier], meta = JOB_META[tier];
@@ -225,6 +232,7 @@
 
   // ── ② Arena P2P ──
   async function renderPvpTab() {
+    if (!state) return;
     const panel = $("panel-pvp");
     const listEl = panel.querySelector(".pvp-list");
     listEl.innerHTML = '<p class="dim">타겟 스캔 중...</p>';
@@ -280,7 +288,7 @@
   //    한눈에 볼 수 있는 요약본만 보여준다(최대 6건). 상세 조작은 해당 사이드바 탭에서. ──
   async function renderDashboardPvp() {
     const el = document.querySelector(".pvp-compact-list");
-    if (!el) return;
+    if (!el || !state) return;
     el.innerHTML = '<p class="dim">타겟 스캔 중...</p>';
     try {
       const { targets } = await api("/arena/targets");
@@ -299,7 +307,7 @@
 
   async function renderDashboardShop() {
     const el = document.querySelector(".shop-compact-list");
-    if (!el) return;
+    if (!el || !state) return;
     el.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const { items } = await api("/shop");
@@ -345,6 +353,7 @@
 
   // ── ③ Hardware Shop ──
   async function renderShopTab() {
+    if (!state) return;
     const panel = $("panel-shop");
     const grid = panel.querySelector(".shop-grid");
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
@@ -417,6 +426,7 @@
 
   // ── ⑤ Secure Bank ──
   function renderBankTab() {
+    if (!state) return;
     $("bankPocket").textContent = fmt(state.pocketCoins);
     $("bankVault").textContent = fmt(state.bankCoins);
   }
@@ -499,6 +509,9 @@
     initLeaderboardTabs();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
+    // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
+    const cta = $("loggedOutCta");
+    if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
     watchLogin();
     if (session()) startDashboard();
   });
