@@ -1,3 +1,4 @@
+# CI 재시도 트리거용 — 토큰 권한(Workers Scripts:Edit) 추가 반영 확인
 name = "arena"
 main = "arena-worker.js"
 compatibility_date = "2024-01-01"
