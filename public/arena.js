@@ -506,14 +506,18 @@
       const data = await api("/property");
       $("propertyRate").textContent = fmt(data.ratePerHour) + " / hr";
       $("propertyPending").textContent = fmt(data.pendingCoins);
-      grid.innerHTML = data.devices.map((d) => (
-        '<div class="property-card">' +
-        '<div class="property-card-name">' + escapeHtml(d.name) + "</div>" +
-        '<div class="property-card-rate">💾 ' + fmt(d.coinsPerHour) + " 코인/시간</div>" +
-        '<div class="property-card-owned">보유 ' + d.owned + "대</div>" +
-        '<div class="property-card-price">💰 ' + fmt(d.price) + "</div>" +
-        '<button class="btn-primary" data-buydevice="' + d.id + '"' + (state.pocketCoins < d.price ? " disabled" : "") + ">구매</button></div>"
-      )).join("");
+      const atCap = data.totalOwned >= data.maxDevices;
+      grid.innerHTML =
+        '<p class="dim" style="grid-column:1/-1;margin-bottom:4px;">보유 기기 ' + data.totalOwned + " / " + data.maxDevices + "</p>" +
+        data.devices.map((d) => (
+          '<div class="property-card">' +
+          '<div class="property-card-name">' + escapeHtml(d.name) + "</div>" +
+          '<div class="property-card-rate">💾 ' + fmt(d.coinsPerHour) + " 코인/시간</div>" +
+          '<div class="property-card-owned">보유 ' + d.owned + "대</div>" +
+          '<div class="property-card-price">💰 ' + fmt(d.price) + "</div>" +
+          '<button class="btn-primary" data-buydevice="' + d.id + '"' + (atCap || state.pocketCoins < d.price ? " disabled" : "") + ">" +
+          (atCap ? "한도 도달" : "구매") + "</button></div>"
+        )).join("");
       grid.querySelectorAll("button[data-buydevice]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           btn.disabled = true;

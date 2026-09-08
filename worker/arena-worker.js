@@ -44,7 +44,7 @@ async function verifyUser(request, env) {
 // ══════════════════════════════════════════════════════════
 //  게임 상수 — 기획 스펙 그대로
 // ══════════════════════════════════════════════════════════
-const MAX_HP = 100, MAX_ENERGY = 100, MAX_STAMINA = 10;
+const MAX_HP = 100, MAX_ENERGY = 50, MAX_STAMINA = 10;
 const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 5 * 60 * 1000;   // 5분당 +5
 const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 10 * 60 * 1000; // 10분당 +1
 const HP_REGEN_PER_TICK = Math.round(MAX_HP * 0.05), HP_TICK_MS = 5 * 60 * 1000; // 5분당 최대체력의 5%
@@ -129,6 +129,7 @@ function botRecruitCost(currentCount) { return Math.round(BOT_BASE_COST * Math.p
 //    최대 24시간치까지만 누적되므로(그 이상은 손실), 너무 오래 방치하지 않고 가끔은 들어와서
 //    수거(collect)하게 만드는 장치다. ──
 const PROPERTY_MAX_ACCRUAL_MS = 24 * 60 * 60 * 1000;
+const PROPERTY_MAX_DEVICES = 6; // 보유 기기 총 수량(종류 합산) 상한
 const PROPERTY_DEVICES = {
   botnet_node:     { name: "Botnet Node",          price: 500,   coinsPerHour: 5 },
   packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,  coinsPerHour: 18 },
@@ -207,6 +208,10 @@ async function loadOrCreateUser(env, userId, realName) {
 //    계산을 위해 남겨둔다(끝수를 버리지 않음). ──
 function applyRegen(row, now) {
   const out = { ...row };
+  // 에너지 최대치를 100→50으로 낮췄을 때, 그 전에 이미 50을 넘게 채워뒀던 기존 유저의 값을
+  // 자연스럽게 새 상한으로 깎아준다(회복 로직은 항상 올리는 방향으로만 Math.min을 쓰기 때문에
+  // 이 클램프가 없으면 초과분이 영영 안 줄어든다).
+  if (out.energy > MAX_ENERGY) out.energy = MAX_ENERGY;
   if (out.hp > 0) { // 사망(HP 0) 상태에서는 자연 회복도 멈춘다 — 소생은 백신/스탯 회복 액션으로만
     const energyTicks = Math.floor((now - out.last_energy_tick) / ENERGY_TICK_MS);
     if (energyTicks > 0 && out.energy < MAX_ENERGY) {
@@ -359,6 +364,17 @@ async function equippedCountMap(env, userId) {
 }
 
 function fmtNum(n) { return Number(n || 0).toLocaleString("en-US"); }
+
+// 상점 목록은 항상 종류별로 묶어서(무장→방어→코어→소비재), 그 안에서는 가격 오름차순으로 준다.
+// SHOP_ITEMS 리터럴의 작성 순서에 기대지 않고 매번 명시적으로 정렬해서, 나중에 아이템을 추가할
+// 때 순서가 흐트러져도 항상 올바르게 표시되게 한다.
+const SHOP_TYPE_ORDER = { weapon: 0, armor: 1, core: 2, consumable: 3 };
+function sortedShopEntries() {
+  return Object.entries(SHOP_ITEMS).sort(([, a], [, b]) => {
+    const t = SHOP_TYPE_ORDER[a.type] - SHOP_TYPE_ORDER[b.type];
+    return t !== 0 ? t : a.price - b.price;
+  });
+}
 
 // ══════════════════════════════════════════════════════════
 //  라우터
@@ -555,7 +571,7 @@ export default {
         const ownedMap = {};
         owned.forEach((o) => { ownedMap[o.item_id] = o.qty; });
         const equippedCount = await equippedCountMap(env, user.userId);
-        const items = Object.entries(SHOP_ITEMS).map(([id, item]) => ({
+        const items = sortedShopEntries().map(([id, item]) => ({
           id, ...item, owned: ownedMap[id] || 0, equipped: equippedCount[id] || 0,
         }));
         return json({ items });
@@ -624,7 +640,8 @@ export default {
         const equippedCount = await equippedCountMap(env, user.userId);
         const availableItems = owned
           .map((o) => ({ id: o.item_id, available: o.qty - (equippedCount[o.item_id] || 0), ...SHOP_ITEMS[o.item_id] }))
-          .filter((o) => o.available > 0 && (o.type === "weapon" || o.type === "armor" || o.type === "core"));
+          .filter((o) => o.available > 0 && (o.type === "weapon" || o.type === "armor" || o.type === "core"))
+          .sort((a, b) => a.price - b.price);
         return json({
           player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core },
           bots,
@@ -695,9 +712,12 @@ export default {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const { ratePerHour, pendingCoins, owned } = await pendingPropertyIncome(env, row);
         const ownedMap = {};
-        owned.forEach((o) => { ownedMap[o.device_id] = o.qty; });
-        const devices = Object.entries(PROPERTY_DEVICES).map(([id, d]) => ({ id, ...d, owned: ownedMap[id] || 0 }));
-        return json({ devices, ratePerHour, pendingCoins, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
+        let totalOwned = 0;
+        owned.forEach((o) => { ownedMap[o.device_id] = o.qty; totalOwned += o.qty; });
+        const devices = Object.entries(PROPERTY_DEVICES)
+          .sort(([, a], [, b]) => a.price - b.price)
+          .map(([id, d]) => ({ id, ...d, owned: ownedMap[id] || 0 }));
+        return json({ devices, ratePerHour, pendingCoins, totalOwned, maxDevices: PROPERTY_MAX_DEVICES, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 
       // ── POST /property/buy { deviceId } — 구매 전 항상 먼저 대기 수익을 정산(공정한 요율 전환) ──
@@ -705,6 +725,10 @@ export default {
         const body = await request.json().catch(() => ({}));
         const device = PROPERTY_DEVICES[body.deviceId];
         if (!device) return json({ error: "알 수 없는 기기입니다." }, 400);
+
+        const { results: ownedRows } = await env.DB.prepare("SELECT qty FROM arena_devices WHERE user_id = ?").bind(user.userId).all();
+        const totalOwned = ownedRows.reduce((sum, r) => sum + r.qty, 0);
+        if (totalOwned >= PROPERTY_MAX_DEVICES) return json({ error: "기기는 최대 " + PROPERTY_MAX_DEVICES + "개까지만 보유할 수 있습니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         await collectProperty(env, row); // row.pocket_coins/last_property_collect 갱신됨
