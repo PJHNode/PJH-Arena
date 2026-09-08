@@ -1,0 +1,8 @@
+{
+  "name": "pjh-arena-build-tools",
+  "private": true,
+  "description": "Local build tooling only (Cloudflare Pages deploy) — not part of the served site itself.",
+  "devDependencies": {
+    "wrangler": "^4.114.0"
+  }
+}

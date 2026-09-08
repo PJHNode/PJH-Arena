@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PJH Arena</title>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #131315;
+    --surface-2: #1b1b1e;
+    --border: #2a2a2e;
+    --text: #e8e8ea;
+    --sub: #8a8a90;
+    --accent: #00ff90;
+    --accent-glow: rgba(0, 255, 144, 0.35);
+    --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { font-size: 15px; letter-spacing: 0.08em; color: var(--accent); }
+  .brand span { color: var(--sub); }
+  nav { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+  nav button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  nav button:hover { border-color: var(--accent); color: var(--accent); }
+  #userLabel { display: none; color: var(--sub); font-size: 12px; }
+
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  main h1 { font-size: 28px; margin: 0 0 10px; letter-spacing: 0.05em; }
+  main p { color: var(--sub); font-size: 13px; max-width: 420px; line-height: 1.6; }
+  .tag {
+    margin-top: 20px;
+    font-size: 11px;
+    color: var(--sub);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+  }
+
+  /* 로그인/가입 모달 */
+  #authSection {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .auth-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    width: 300px;
+    padding: 20px;
+  }
+  .auth-tabs { display: flex; gap: 0; margin-bottom: 16px; }
+  .auth-tabs button {
+    flex: 1; background: transparent; border: none; border-bottom: 2px solid var(--border);
+    color: var(--sub); font-family: inherit; font-size: 12px; padding: 8px; cursor: pointer;
+  }
+  .auth-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .auth-box input {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); font-family: inherit; font-size: 12px; padding: 9px 10px; margin-bottom: 8px;
+  }
+  .auth-box .err { font-size: 11px; color: #ff5c5c; min-height: 14px; margin: 0 0 8px; }
+  .auth-box .submit-btn {
+    width: 100%; background: var(--accent); color: #05130c; border: none;
+    font-family: inherit; font-size: 12px; font-weight: bold; padding: 10px; cursor: pointer;
+  }
+  #authCloseBtn {
+    position: absolute; top: 10px; right: 14px; background: none; border: none;
+    color: var(--sub); font-size: 16px; cursor: pointer;
+  }
+  .auth-box { position: relative; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">PJH <span>ARENA</span></div>
+  <nav>
+    <span id="userLabel"></span>
+    <button id="loginNavBtn">로그인</button>
+    <button id="logoutNavBtn" style="display:none;">로그아웃</button>
+  </nav>
+</header>
+
+<main>
+  <h1>PJH Arena</h1>
+  <p>준비 중입니다. 계정은 PJH-Hub와 동일한 아이디/비밀번호로 로그인할 수 있어요.</p>
+  <div class="tag">COMING SOON</div>
+</main>
+
+<div id="authSection">
+  <div class="auth-box">
+    <button id="authCloseBtn">&times;</button>
+    <div class="auth-tabs">
+      <button id="authTabLogin" class="active">로그인</button>
+      <button id="authTabRegister">가입</button>
+    </div>
+    <form id="authLoginForm" onsubmit="return false;">
+      <input id="loginId" type="text" placeholder="아이디" autocomplete="username" />
+      <input id="loginPw" type="password" placeholder="비밀번호" autocomplete="current-password" />
+      <p class="err" id="loginErr"></p>
+      <button type="submit" class="submit-btn" id="loginBtn">로그인</button>
+    </form>
+    <form id="authRegisterForm" onsubmit="return false;" style="display:none;">
+      <input id="regId" type="text" placeholder="아이디" autocomplete="username" />
+      <input id="regName" type="text" placeholder="이름" />
+      <input id="regPw" type="password" placeholder="비밀번호" autocomplete="new-password" />
+      <p class="err" id="regErr"></p>
+      <button type="submit" class="submit-btn" id="registerBtn">가입하기</button>
+    </form>
+  </div>
+</div>
+
+<script src="./auth-widget.js"></script>
+</body>
+</html>

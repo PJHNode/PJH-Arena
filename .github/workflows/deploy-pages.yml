@@ -1,0 +1,29 @@
+name: Deploy to Cloudflare Pages
+
+# main에 push될 때마다 public/ 폴더를 그대로 Cloudflare Pages(pjh-arena 프로젝트)로 배포한다.
+# wrangler를 devDependency로 고정해두고 npx로 직접 실행 — 서드파티 action 래퍼 없이 로컬에서
+# 돌리는 것과 동일한 명령이라 실패 시 실제 wrangler 출력이 로그에 그대로 남는다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # 대시보드에서 수동으로도 재실행 가능
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Deploy to Cloudflare Pages
+        run: npx wrangler pages deploy public --project-name=pjh-arena --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
