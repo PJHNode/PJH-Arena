@@ -141,7 +141,9 @@
     jobs: renderJobsTab,
     pvp: renderPvpTab,
     shop: renderShopTab,
+    bots: renderBotsTab,
     inventory: renderInventoryTab,
+    property: renderPropertyTab,
     bank: renderBankTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
@@ -243,7 +245,8 @@
       if (!targets.length) { listEl.innerHTML = '<p class="dim">현재 공격 가능한 대상이 없습니다.</p>'; return; }
       listEl.innerHTML = targets.map((t) => (
         '<div class="pvp-row">' +
-        '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span></div>" +
+        '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
+        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE</span>') + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "%</div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
@@ -265,6 +268,7 @@
       const r = await api("/arena/scan", { method: "POST", body: { targetUserId } });
       $("scanModalBody").innerHTML =
         "<h3>🔎 PRACTICE SCAN — " + escapeHtml(r.realName) + " (Lv." + r.level + ")</h3>" +
+        '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">소모 스태미나 <b>' + r.staminaCost + "</b></div>" +
@@ -277,7 +281,7 @@
     btn.disabled = true;
     try {
       const r = await api("/arena/attack", { method: "POST", body: { targetUserId } });
-      if (r.attackerWins) toast("✅ 침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인");
+      if (r.attackerWins) toast((r.isCrit ? "💥 CRITICAL! " : "✅ ") + "침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인");
       else toast("❌ 침투 실패...", true);
       state = r.state; renderHeader();
       if (currentTab === "pvp") renderPvpTab();
@@ -297,7 +301,8 @@
       if (!targets.length) { el.innerHTML = '<p class="dim">공격 가능한 대상이 없습니다.</p>'; return; }
       el.innerHTML = targets.slice(0, 6).map((t) => (
         '<div class="compact-row">' +
-        '<span>' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + " · DEF " + t.def + "</span></span>" +
+        '<span>' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + " · DEF " + t.def + "</span> " +
+        (t.online ? '<span style="color:var(--energy);font-size:10px;">●</span>' : '<span class="dim" style="font-size:10px;">○</span>') + "</span>" +
         '<button class="btn-ghost" data-dscan="' + t.userId + '">SCAN</button>' +
         '<button class="btn-danger" data-dattack="' + t.userId + '"' + (state.stamina < t.staminaCost ? " disabled" : "") + ">⚡" + t.staminaCost + "</button>" +
         "</div>"
@@ -313,15 +318,11 @@
     el.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const { items } = await api("/shop");
-      el.innerHTML = items.map((it) => {
-        const owned = (it.type === "weapon" || it.type === "armor") && it.owned > 0;
-        return (
-          '<div class="compact-row">' +
-          '<span>' + escapeHtml(it.name) + '<span class="dim"> 💰' + fmt(it.price) + "</span></span>" +
-          '<button class="btn-primary" data-dbuy="' + it.id + '"' + (owned || state.pocketCoins < it.price ? " disabled" : "") + ">" +
-          (owned ? "보유중" : "구매") + "</button><span></span></div>"
-        );
-      }).join("");
+      el.innerHTML = items.map((it) => (
+        '<div class="compact-row">' +
+        '<span>' + escapeHtml(it.name) + '<span class="dim"> 💰' + fmt(it.price) + "</span></span>" +
+        '<button class="btn-primary" data-dbuy="' + it.id + '"' + (state.pocketCoins < it.price ? " disabled" : "") + ">구매</button><span></span></div>"
+      )).join("");
       el.querySelectorAll("button[data-dbuy]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           btn.disabled = true;
@@ -343,8 +344,9 @@
       if (!logs.length) { el.innerHTML = '<p class="dim">기록이 없습니다.</p>'; return; }
       el.innerHTML = logs.slice(0, 6).map((l) => {
         let desc = "";
+        const attackWon = l.result === "win" || l.result === "crit";
         if (l.kind === "job") desc = (l.opponent_name || "") + " 작업 완료";
-        else if (l.kind === "pvp_attack") desc = (l.result === "win" ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "");
+        else if (l.kind === "pvp_attack") desc = (l.result === "crit" ? "크리티컬 성공: " : attackWon ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "");
         else if (l.kind === "pvp_defend") desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "");
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return '<div class="compact-row"><span>' + desc + '</span><span class="' + coinCls + '">' +
@@ -353,7 +355,22 @@
     } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
-  // ── ③ Hardware Shop ──
+  // 아이템 하나의 능력치 표시 문구 — 상점/봇/인벤토리에서 공용으로 쓴다.
+  function itemStatLabel(it) {
+    if (it.type === "weapon") return "ATK +" + it.value;
+    if (it.type === "armor") return "DEF +" + it.value;
+    if (it.type === "core") return "치명타 +" + it.value + "%";
+    if (it.effect === "stamina") return "Stamina +" + it.value;
+    if (it.effect === "stamina_full") return "Stamina 100% 회복";
+    if (it.effect === "energy") return "Energy +" + it.value;
+    if (it.effect === "energy_full") return "Energy 100% 회복";
+    if (it.effect === "heal_flat") return "HP +" + it.value;
+    if (it.effect === "heal_full") return "HP 100% 회복";
+    if (it.effect === "self_shield") return "1시간 자가 보호막";
+    return "";
+  }
+
+  // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착). ──
   async function renderShopTab() {
     if (!state) return;
     const panel = $("panel-shop");
@@ -361,20 +378,14 @@
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const { items } = await api("/shop");
-      grid.innerHTML = items.map((it) => {
-        const statLabel = it.stat === "atk" ? "ATK +" + it.value : it.stat === "def" ? "DEF +" + it.value :
-          it.effect === "stamina" ? "Stamina +" + it.value : it.effect === "heal_full" ? "HP 100% 회복" : "";
-        const owned = (it.type === "weapon" || it.type === "armor") && it.owned > 0;
-        return (
-          '<div class="shop-card">' +
-          '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
-          '<div class="shop-card-type">' + it.type.toUpperCase() + "</div>" +
-          '<div class="shop-card-stat">' + statLabel + "</div>" +
-          '<div class="shop-card-price">💰 ' + fmt(it.price) + "</div>" +
-          '<button class="btn-primary" data-buy="' + it.id + '"' + (owned || state.pocketCoins < it.price ? " disabled" : "") + ">" +
-          (owned ? "보유중" : "구매") + "</button></div>"
-        );
-      }).join("");
+      grid.innerHTML = items.map((it) => (
+        '<div class="shop-card">' +
+        '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
+        '<div class="shop-card-type">' + it.type.toUpperCase() + (it.owned ? " · 보유 " + it.owned : "") + "</div>" +
+        '<div class="shop-card-stat">' + itemStatLabel(it) + "</div>" +
+        '<div class="shop-card-price">💰 ' + fmt(it.price) + "</div>" +
+        '<button class="btn-primary" data-buy="' + it.id + '"' + (state.pocketCoins < it.price ? " disabled" : "") + ">구매</button></div>"
+      )).join("");
       grid.querySelectorAll("button[data-buy]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           btn.disabled = true;
@@ -388,35 +399,22 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
-  // ── ④ Digital Inventory ──
+  // ── ④ Digital Inventory — 소비재 사용 전용(장비 장착은 Bots 탭) ──
   async function renderInventoryTab() {
     const panel = $("panel-inventory");
     const list = panel.querySelector(".inv-list");
     list.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const inv = await api("/inventory");
-      if (!inv.items.length) { list.innerHTML = '<p class="dim">보유한 아이템이 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
-      list.innerHTML = inv.items.map((it) => {
-        const isEquip = it.type === "weapon" || it.type === "armor";
-        const equipped = (it.type === "weapon" && inv.equippedWeapon === it.id) || (it.type === "armor" && inv.equippedArmor === it.id);
-        const statLabel = it.stat === "atk" ? "ATK +" + it.value : it.stat === "def" ? "DEF +" + it.value :
-          it.effect === "stamina" ? "Stamina +" + it.value : it.effect === "heal_full" ? "HP 100% 회복" : "";
-        return (
-          '<div class="inv-row">' +
-          '<div class="inv-name">' + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + "</div>" +
-          '<div class="dim">' + statLabel + "</div>" +
-          (isEquip
-            ? '<button class="btn-ghost" data-equip="' + it.id + '"' + (equipped ? " disabled" : "") + ">" + (equipped ? "장착됨" : "장착") + "</button>"
-            : '<button class="btn-ghost" data-use="' + it.id + '">사용</button>') +
-          "</div>"
-        );
-      }).join("");
-      list.querySelectorAll("button[data-equip]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          try { await api("/inventory/equip", { method: "POST", body: { itemId: btn.dataset.equip } }); toast("장착 완료"); await refreshState(); renderInventoryTab(); }
-          catch (e) { toast(e.message, true); }
-        });
-      });
+      const consumables = inv.items.filter((it) => it.type === "consumable");
+      if (!consumables.length) { list.innerHTML = '<p class="dim">보유한 소비재가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
+      list.innerHTML = consumables.map((it) => (
+        '<div class="inv-row">' +
+        '<div class="inv-name">' + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + "</div>" +
+        '<div class="dim">' + itemStatLabel(it) + "</div>" +
+        '<button class="btn-ghost" data-use="' + it.id + '">사용</button>' +
+        "</div>"
+      )).join("");
       list.querySelectorAll("button[data-use]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           try { const r = await api("/inventory/use", { method: "POST", body: { itemId: btn.dataset.use } }); toast("사용 완료"); state = r.state; renderHeader(); renderInventoryTab(); }
@@ -424,6 +422,108 @@
         });
       });
     } catch (e) { list.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  // 상점 카탈로그(아이템 이름 조회용) — 한 번 받아오면 캐시. 이미 장착돼 availableItems에는
+  // 안 잡히는 아이템의 이름을 드롭다운에 표시하기 위해 필요하다.
+  let shopCatalogCache = null;
+  async function getShopCatalog() {
+    if (!shopCatalogCache) {
+      const { items } = await api("/shop");
+      shopCatalogCache = {};
+      items.forEach((it) => { shopCatalogCache[it.id] = it; });
+    }
+    return shopCatalogCache;
+  }
+
+  // ── Bots ──
+  async function renderBotsTab() {
+    const panel = $("panel-bots");
+    const el = panel.querySelector(".bot-roster");
+    el.innerHTML = '<p class="dim">불러오는 중...</p>';
+    try {
+      const [data, catalog] = await Promise.all([api("/bots"), getShopCatalog()]);
+
+      function slotRow(target, slotType, label, equippedId) {
+        const options = data.availableItems.filter((it) => it.type === slotType);
+        const currentItem = equippedId ? catalog[equippedId] : null;
+        let optionsHtml = '<option value="">— 비어있음 —</option>';
+        if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>' + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
+        options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">' + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
+        return (
+          '<div class="bot-slot"><span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
+        );
+      }
+
+      let html = '<div class="bot-card player"><div class="bot-card-title">🧑‍💻 YOU</div>' +
+        slotRow("player", "weapon", "무장", data.player.equippedWeapon) +
+        slotRow("player", "armor", "방어", data.player.equippedArmor) +
+        slotRow("player", "core", "코어", data.player.equippedCore) +
+        "</div>";
+
+      data.bots.forEach((b, i) => {
+        html += '<div class="bot-card"><div class="bot-card-title">🤖 BOT #' + (i + 1) + '</div>' +
+          slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
+          slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
+          slotRow(String(b.id), "core", "코어", b.equipped_core) +
+          "</div>";
+      });
+
+      html += '<div class="bot-recruit-card">' +
+        (data.nextBotCost != null
+          ? '<p>다음 봇 모집 비용</p><p class="accent-text" style="font-size:16px;">💰 ' + fmt(data.nextBotCost) + '</p><button class="btn-primary" id="recruitBotBtn">모집하기</button>'
+          : '<p>최대 봇 수(' + data.maxBots + '기)에 도달했습니다.</p>') +
+        "</div>";
+
+      el.innerHTML = html;
+
+      el.querySelectorAll("select[data-target]").forEach((sel) => {
+        sel.addEventListener("change", async () => {
+          const target = sel.dataset.target, slot = sel.dataset.slot, itemId = sel.value;
+          try {
+            if (!itemId) await api("/bots/unequip", { method: "POST", body: { target, slot } });
+            else await api("/bots/equip", { method: "POST", body: { target, slot, itemId } });
+            toast("장착 정보가 갱신됐습니다.");
+            await refreshState(); renderBotsTab();
+          } catch (e) { toast(e.message, true); renderBotsTab(); }
+        });
+      });
+      const recruitBtn = el.querySelector("#recruitBotBtn");
+      if (recruitBtn) recruitBtn.addEventListener("click", async () => {
+        recruitBtn.disabled = true;
+        try { const r = await api("/bots/recruit", { method: "POST" }); toast("봇을 모집했습니다!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab(); }
+        catch (e) { toast(e.message, true); recruitBtn.disabled = false; }
+      });
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  // ── Property ──
+  async function renderPropertyTab() {
+    const panel = $("panel-property");
+    const grid = panel.querySelector(".property-grid");
+    grid.innerHTML = '<p class="dim">불러오는 중...</p>';
+    try {
+      const data = await api("/property");
+      $("propertyRate").textContent = fmt(data.ratePerHour) + " / hr";
+      $("propertyPending").textContent = fmt(data.pendingCoins);
+      grid.innerHTML = data.devices.map((d) => (
+        '<div class="property-card">' +
+        '<div class="property-card-name">' + escapeHtml(d.name) + "</div>" +
+        '<div class="property-card-rate">💾 ' + fmt(d.coinsPerHour) + " 코인/시간</div>" +
+        '<div class="property-card-owned">보유 ' + d.owned + "대</div>" +
+        '<div class="property-card-price">💰 ' + fmt(d.price) + "</div>" +
+        '<button class="btn-primary" data-buydevice="' + d.id + '"' + (state.pocketCoins < d.price ? " disabled" : "") + ">구매</button></div>"
+      )).join("");
+      grid.querySelectorAll("button[data-buydevice]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/property/buy", { method: "POST", body: { deviceId: btn.dataset.buydevice } });
+            toast("기기 구매 완료!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderPropertyTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
   // ── ⑤ Secure Bank ──
@@ -437,8 +537,11 @@
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
       if (!amount || amount <= 0) return toast("금액을 입력하세요.", true);
-      try { const r = await api("/bank/deposit", { method: "POST", body: { amount } }); state = r.state; renderHeader(); renderBankTab(); $(inputId).value = ""; toast("입금 완료"); }
-      catch (e) { toast(e.message, true); }
+      try {
+        const r = await api("/bank/deposit", { method: "POST", body: { amount } });
+        state = r.state; renderHeader(); renderBankTab(); $(inputId).value = "";
+        toast("입금 완료 (세금 -" + fmt(r.tax) + " · 실입금 " + fmt(r.credited) + ")");
+      } catch (e) { toast(e.message, true); }
     }
     async function withdraw(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -491,8 +594,9 @@
       list.innerHTML = logs.map((l) => {
         const time = new Date(l.created_at).toLocaleString("ko-KR");
         let icon = "📡", desc = "";
+        const attackWon = l.result === "win" || l.result === "crit";
         if (l.kind === "job") { icon = "💾"; desc = (l.opponent_name || "") + " 작업 완료"; }
-        else if (l.kind === "pvp_attack") { icon = l.result === "win" ? "⚔️" : "🛡️"; desc = (l.result === "win" ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "pvp_attack") { icon = l.result === "crit" ? "💥" : attackWon ? "⚔️" : "🛡️"; desc = (l.result === "crit" ? "크리티컬 침투 성공: " : attackWon ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "pvp_defend") { icon = l.result === "win" ? "🛡️" : "💥"; desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (

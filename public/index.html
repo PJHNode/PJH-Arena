@@ -148,6 +148,24 @@
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
 
+  /* Bots */
+  .bot-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .bot-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
+  .bot-card.player { border-color: var(--accent); }
+  .bot-card-title { font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold; }
+  .bot-slot { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 6px 0; border-bottom: 1px solid var(--border); gap: 6px; }
+  .bot-slot:last-child { border-bottom: none; }
+  .bot-slot select { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 10px; padding: 4px 6px; max-width: 130px; }
+  .bot-recruit-card { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); padding: 20px; color: var(--sub); font-size: 12px; text-align: center; }
+
+  /* Property */
+  .property-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .property-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
+  .property-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+  .property-card-rate { font-size: 11px; color: var(--energy); margin-bottom: 4px; }
+  .property-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
+  .property-card-owned { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
+
   /* Bank */
   .bank-cards { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
   .bank-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 22px; }
@@ -273,7 +291,9 @@
       <button class="side-tab active" data-tab="jobs">Hacking Jobs</button>
       <button class="side-tab" data-tab="pvp">Arena P2P</button>
       <button class="side-tab" data-tab="shop">Hardware Shop</button>
+      <button class="side-tab" data-tab="bots">Bots</button>
       <button class="side-tab" data-tab="inventory">Digital Inventory</button>
+      <button class="side-tab" data-tab="property">Property</button>
       <button class="side-tab" data-tab="bank">Secure Bank</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
@@ -328,26 +348,44 @@
         <div class="shop-grid"></div>
       </div>
 
+      <div class="tab-panel" id="panel-bots">
+        <p class="panel-title">🤖 BOTS</p>
+        <p class="dim" style="margin-bottom:14px;">플레이어 본인과 각 봇은 무장 모듈(ATK) / 방어 장갑(DEF) / 연산 코어(치명타%) 3슬롯을 각각 갖습니다. 봇의 장비 보너스는 전투 시 전부 합산됩니다.</p>
+        <div class="bot-roster"></div>
+      </div>
+
       <div class="tab-panel" id="panel-inventory">
         <p class="panel-title">💾 DIGITAL INVENTORY</p>
+        <p class="dim" style="margin-bottom:10px;">소비재 사용 전용 화면입니다 — 장비(무장/방어/코어) 장착은 Bots 탭에서 합니다.</p>
         <div class="inv-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-property">
+        <p class="panel-title">🏭 PROPERTY</p>
+        <p class="dim" style="margin-bottom:14px;">자동 수익 기기는 오프라인 상태에서도 실제 경과 시간만큼 코인을 벌어들입니다(최대 24시간치까지 누적, 그 이상은 손실되니 가끔 수거하세요).</p>
+        <div class="bank-cards">
+          <div class="bank-card"><div class="label">시간당 수익</div><div class="value" id="propertyRate">0 / hr</div></div>
+          <div class="bank-card"><div class="label">대기 중 수익 (최대 24h)</div><div class="value" id="propertyPending">0</div></div>
+        </div>
+        <button class="btn-primary" id="propertyCollectBtn" style="margin-bottom:20px;">COLLECT</button>
+        <div class="property-grid"></div>
       </div>
 
       <div class="tab-panel" id="panel-bank">
         <p class="panel-title">🏦 SECURE BANK</p>
         <div class="bank-cards">
           <div class="bank-card"><div class="label">POCKET COINS (약탈 가능)</div><div class="value" id="bankPocket">0</div></div>
-          <div class="bank-card"><div class="label">BANK COINS (안전 보관, 일 1% 이자)</div><div class="value" id="bankVault">0</div></div>
+          <div class="bank-card"><div class="label">BANK COINS (약탈 완전 제외)</div><div class="value" id="bankVault">0</div></div>
         </div>
         <div class="bank-form">
           <input id="depositInput" type="number" placeholder="입금할 금액" />
-          <button class="btn-primary" id="depositBtn">DEPOSIT</button>
+          <button class="btn-primary" id="depositBtn">DEPOSIT (수수료 10%)</button>
         </div>
         <div class="bank-form">
           <input id="withdrawInput" type="number" placeholder="출금할 금액" />
-          <button class="btn-ghost" id="withdrawBtn">WITHDRAW</button>
+          <button class="btn-ghost" id="withdrawBtn">WITHDRAW (무료)</button>
         </div>
-        <p class="dim">Bank Coins는 Arena P2P 약탈 대상에서 완전히 제외됩니다. 매일 00:00(KST) 1% 이자 지급(1일 최대 10,000코인).</p>
+        <p class="dim">Bank Coins는 Arena P2P 약탈 대상에서 완전히 제외됩니다. 이자는 없으며, 입금액의 10%는 보관 수수료로 즉시 차감됩니다.</p>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">
