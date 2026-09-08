@@ -95,6 +95,31 @@
   .tab-panel { display: none; }
   .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
 
+  /* Network Control Center (홈 대시보드) */
+  .ncc-grid {
+    display: grid; gap: 14px;
+    grid-template-columns: 1.3fr 1fr;
+    grid-template-areas: "jobs pvp" "bank shop" "bank log";
+  }
+  .ncc-jobs { grid-area: jobs; } .ncc-pvp { grid-area: pvp; }
+  .ncc-bank { grid-area: bank; } .ncc-shop { grid-area: shop; } .ncc-log { grid-area: log; }
+  @media (max-width: 900px) {
+    .ncc-grid { grid-template-columns: 1fr; grid-template-areas: "jobs" "pvp" "bank" "shop" "log"; }
+  }
+  .ncc-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; min-width: 0; }
+  .ncc-card-head {
+    display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--accent);
+    margin-bottom: 10px; letter-spacing: 0.03em;
+  }
+  .live-dot { color: var(--danger); font-size: 10px; animation: pulseLive 1.6s infinite; }
+  @keyframes pulseLive { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .accent-text { color: var(--accent); }
+  .compact-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 7px 0;
+    border-bottom: 1px solid var(--border); font-size: 11px;
+  }
+  .compact-row:last-child { border-bottom: none; }
+
   /* Jobs */
   .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .job-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
@@ -203,9 +228,6 @@
   <div class="widget-bar">
     <span>XP <b id="wXp">-</b></span>
     <span>Coins <b id="wCoins">-</b></span>
-    <span>KOSPI <b id="wKospi">-</b></span>
-    <span>원/달러 <b id="wUsdKrw">-</b></span>
-    <span>BTC <b id="wBtc">-</b></span>
     <span>연속출석 <b id="wStreak">-</b></span>
   </div>
 </header>
@@ -250,11 +272,40 @@
 
     <div class="content">
       <div class="tab-panel" id="panel-jobs">
-        <p class="panel-title">⚡ ACTIVE HACKING JOBS</p>
-        <div class="job-grid"></div>
-        <div class="mining-wrap">
-          <p class="dim" style="margin:0 0 6px;">PACKET MINING (최근 수익)</p>
-          <canvas id="miningCanvas" width="600" height="80"></canvas>
+        <p class="panel-title">🖧 NETWORK CONTROL CENTER</p>
+        <div class="ncc-grid">
+          <div class="ncc-card ncc-jobs">
+            <div class="ncc-card-head"><span>⚡ Active Hacking Jobs</span></div>
+            <div class="job-grid"></div>
+            <div class="mining-wrap">
+              <p class="dim" style="margin:8px 0 6px;">PACKET MINING (최근 수익)</p>
+              <canvas id="miningCanvas" width="600" height="80"></canvas>
+            </div>
+          </div>
+          <div class="ncc-card ncc-pvp">
+            <div class="ncc-card-head"><span>🎯 Arena P2P</span><span class="live-dot">● LIVE</span></div>
+            <div class="pvp-compact-list"></div>
+          </div>
+          <div class="ncc-card ncc-bank">
+            <div class="ncc-card-head"><span>🏦 Secure Bank</span></div>
+            <div class="bank-form">
+              <input id="dashDepositInput" type="number" placeholder="Deposit → Pocket" />
+              <button class="btn-primary" id="dashDepositBtn">DEPOSIT</button>
+            </div>
+            <div class="bank-form">
+              <input id="dashWithdrawInput" type="number" placeholder="Withdraw → Pocket" />
+              <button class="btn-ghost" id="dashWithdrawBtn">WITHDRAW</button>
+            </div>
+            <div class="dim">Bank Coins: <span class="accent-text" id="dashBankVault">0</span></div>
+          </div>
+          <div class="ncc-card ncc-shop">
+            <div class="ncc-card-head"><span>🛒 Hacker Shop</span></div>
+            <div class="shop-compact-list"></div>
+          </div>
+          <div class="ncc-card ncc-log">
+            <div class="ncc-card-head"><span>📜 Hack Log</span><span class="live-dot">● LIVE</span></div>
+            <div class="log-compact-list"></div>
+          </div>
         </div>
       </div>
 

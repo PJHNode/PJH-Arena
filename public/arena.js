@@ -4,7 +4,6 @@
 (function () {
   const ARENA_API = "https://arena.chaostatix.workers.dev";
   const FORUM_API = "https://forum.chaostatix.workers.dev";
-  const NEWS_API = "https://pjh-hub-news.chaostatix.workers.dev";
 
   const JOB_META = {
     low:    { label: "LOW",    icon: "📡" },
@@ -107,9 +106,13 @@
 
     if (state.hp <= 0) $("downedBanner").style.display = "";
     else $("downedBanner").style.display = "none";
+
+    const dashVault = $("dashBankVault");
+    if (dashVault) dashVault.textContent = fmt(state.bankCoins);
   }
 
-  // ── 상단 통합 위젯 바 — PJH-Hub의 공개 프로필/시세 API를 프론트에서 직접 호출(백엔드 경유 없음) ──
+  // ── 상단 통합 위젯 바 — 게임/사이트 관련 지표만(시세 위젯은 제외). PJH-Hub의 공개 프로필 API를
+  //    프론트에서 직접 호출한다(백엔드 경유 없음). ──
   async function refreshWidgetBar() {
     const s = session();
     if (!s) return;
@@ -120,15 +123,6 @@
         $("wXp").textContent = fmt(p.xp);
         $("wCoins").textContent = fmt(p.coins);
         $("wStreak").textContent = p.attendanceStreak + "일";
-      }
-    } catch (e) {}
-    try {
-      const res = await fetch(NEWS_API + "/market");
-      if (res.ok) {
-        const m = await res.json();
-        $("wKospi").textContent = m.kospi ? fmt(Math.round(m.kospi.price)) : "-";
-        $("wUsdKrw").textContent = m.usdkrw ? fmt(Math.round(m.usdkrw.price)) : "-";
-        $("wBtc").textContent = m.btc ? fmt(Math.round(m.btc.krw)) : "-";
       }
     } catch (e) {}
   }
@@ -199,6 +193,9 @@
       });
     });
     renderMiningGraph();
+    renderDashboardPvp();
+    renderDashboardShop();
+    renderDashboardLog();
   }
 
   async function renderMiningGraph() {
@@ -272,9 +269,78 @@
       const r = await api("/arena/attack", { method: "POST", body: { targetUserId } });
       if (r.attackerWins) toast("✅ 침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인");
       else toast("❌ 침투 실패...", true);
-      state = r.state; renderHeader(); renderPvpTab();
+      state = r.state; renderHeader();
+      if (currentTab === "pvp") renderPvpTab();
+      if (currentTab === "jobs") { renderDashboardPvp(); renderDashboardLog(); }
     } catch (e) { toast(e.message, true); }
     finally { btn.disabled = false; }
+  }
+
+  // ── 홈 대시보드(Network Control Center)용 축약 위젯들 — 각 탭의 전체 화면과 별개로,
+  //    한눈에 볼 수 있는 요약본만 보여준다(최대 6건). 상세 조작은 해당 사이드바 탭에서. ──
+  async function renderDashboardPvp() {
+    const el = document.querySelector(".pvp-compact-list");
+    if (!el) return;
+    el.innerHTML = '<p class="dim">타겟 스캔 중...</p>';
+    try {
+      const { targets } = await api("/arena/targets");
+      if (!targets.length) { el.innerHTML = '<p class="dim">공격 가능한 대상이 없습니다.</p>'; return; }
+      el.innerHTML = targets.slice(0, 6).map((t) => (
+        '<div class="compact-row">' +
+        '<span>' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + " · DEF " + t.def + "</span></span>" +
+        '<button class="btn-ghost" data-dscan="' + t.userId + '">SCAN</button>' +
+        '<button class="btn-danger" data-dattack="' + t.userId + '"' + (state.stamina < t.staminaCost ? " disabled" : "") + ">⚡" + t.staminaCost + "</button>" +
+        "</div>"
+      )).join("");
+      el.querySelectorAll("button[data-dscan]").forEach((btn) => btn.addEventListener("click", () => openScanModal(btn.dataset.dscan)));
+      el.querySelectorAll("button[data-dattack]").forEach((btn) => btn.addEventListener("click", () => doAttack(btn.dataset.dattack, btn)));
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  async function renderDashboardShop() {
+    const el = document.querySelector(".shop-compact-list");
+    if (!el) return;
+    el.innerHTML = '<p class="dim">불러오는 중...</p>';
+    try {
+      const { items } = await api("/shop");
+      el.innerHTML = items.map((it) => {
+        const owned = (it.type === "weapon" || it.type === "armor") && it.owned > 0;
+        return (
+          '<div class="compact-row">' +
+          '<span>' + escapeHtml(it.name) + '<span class="dim"> 💰' + fmt(it.price) + "</span></span>" +
+          '<button class="btn-primary" data-dbuy="' + it.id + '"' + (owned || state.pocketCoins < it.price ? " disabled" : "") + ">" +
+          (owned ? "보유중" : "구매") + "</button><span></span></div>"
+        );
+      }).join("");
+      el.querySelectorAll("button[data-dbuy]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/shop/buy", { method: "POST", body: { itemId: btn.dataset.dbuy } });
+            toast("구매 완료!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderDashboardShop();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  async function renderDashboardLog() {
+    const el = document.querySelector(".log-compact-list");
+    if (!el) return;
+    el.innerHTML = '<p class="dim">불러오는 중...</p>';
+    try {
+      const { logs } = await api("/logs");
+      if (!logs.length) { el.innerHTML = '<p class="dim">기록이 없습니다.</p>'; return; }
+      el.innerHTML = logs.slice(0, 6).map((l) => {
+        let desc = "";
+        if (l.kind === "job") desc = (l.opponent_name || "") + " 작업 완료";
+        else if (l.kind === "pvp_attack") desc = (l.result === "win" ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "");
+        else if (l.kind === "pvp_defend") desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "");
+        const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
+        return '<div class="compact-row"><span>' + desc + '</span><span class="' + coinCls + '">' +
+          (l.coins_delta ? (l.coins_delta > 0 ? "+" : "") + fmt(l.coins_delta) : "") + "</span><span></span></div>";
+      }).join("");
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
   // ── ③ Hardware Shop ──
@@ -356,18 +422,22 @@
   }
 
   function initBankForm() {
-    $("depositBtn").addEventListener("click", async () => {
-      const amount = parseInt($("depositInput").value, 10);
+    async function deposit(inputId) {
+      const amount = parseInt($(inputId).value, 10);
       if (!amount || amount <= 0) return toast("금액을 입력하세요.", true);
-      try { const r = await api("/bank/deposit", { method: "POST", body: { amount } }); state = r.state; renderHeader(); renderBankTab(); $("depositInput").value = ""; toast("입금 완료"); }
+      try { const r = await api("/bank/deposit", { method: "POST", body: { amount } }); state = r.state; renderHeader(); renderBankTab(); $(inputId).value = ""; toast("입금 완료"); }
       catch (e) { toast(e.message, true); }
-    });
-    $("withdrawBtn").addEventListener("click", async () => {
-      const amount = parseInt($("withdrawInput").value, 10);
+    }
+    async function withdraw(inputId) {
+      const amount = parseInt($(inputId).value, 10);
       if (!amount || amount <= 0) return toast("금액을 입력하세요.", true);
-      try { const r = await api("/bank/withdraw", { method: "POST", body: { amount } }); state = r.state; renderHeader(); renderBankTab(); $("withdrawInput").value = ""; toast("출금 완료"); }
+      try { const r = await api("/bank/withdraw", { method: "POST", body: { amount } }); state = r.state; renderHeader(); renderBankTab(); $(inputId).value = ""; toast("출금 완료"); }
       catch (e) { toast(e.message, true); }
-    });
+    }
+    $("depositBtn").addEventListener("click", () => deposit("depositInput"));
+    $("withdrawBtn").addEventListener("click", () => withdraw("withdrawInput"));
+    $("dashDepositBtn").addEventListener("click", () => deposit("dashDepositInput"));
+    $("dashWithdrawBtn").addEventListener("click", () => withdraw("dashWithdrawInput"));
   }
 
   // ── ⑥ Leaderboard ──
