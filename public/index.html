@@ -155,6 +155,10 @@
   .bot-gacha-btn { flex: 1; font-size: 9px; padding: 6px 2px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); text-align: center; line-height: 1.4; }
   .bot-gacha-btn:disabled { opacity: 0.4; }
   .bot-card-rarity-tag { font-size: 9px; font-weight: bold; margin-bottom: 8px; }
+  .bot-card-title { display: flex; justify-content: space-between; align-items: center; }
+  .bot-sell-btn { font-size: 9px; font-weight: normal; background: transparent; border: 1px solid var(--border); color: var(--sub); padding: 3px 6px; }
+  .bot-stat-line { display: flex; justify-content: space-between; font-size: 10px; color: var(--sub); background: var(--surface-2); padding: 6px 8px; margin-bottom: 8px; border: 1px solid var(--border); }
+  .bot-stat-line b { color: var(--text); }
 
   /* Property */
   .property-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
@@ -165,6 +169,15 @@
   .property-card-owned { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
 
   /* Galaxy Map */
+  .galaxy-empire { background: var(--surface); border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; }
+  .galaxy-empire-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-bottom: 12px; }
+  .galaxy-empire-header b { color: var(--energy); }
+  .galaxy-empire-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .galaxy-empire-empty { font-size: 11px; color: var(--sub); grid-column: 1/-1; }
+  .galaxy-filter-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .galaxy-filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .galaxy-filter-btn { background: var(--surface); border: 1px solid var(--border); color: var(--sub); font-size: 10px; padding: 6px 10px; }
+  .galaxy-filter-btn.active { color: var(--accent); border-color: var(--accent); }
   .planet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .planet-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
   .planet-card.mine { border-left-color: var(--energy); }
@@ -376,13 +389,32 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">각자 공격받지 않는 홈 행성에서 시작합니다. 야생 행성은 처음엔 PVE 봇이 지키고 있고, 격파하면 정복해서 시간당 수익을 얻습니다 — 다른 유저가 정복한 행성도 다시 빼앗을 수 있습니다(최대 <span id="galaxyMaxOwned">3</span>개까지 동시 보유). 스태미나 2 소모.</p>
-        <div class="bank-cards" style="margin-bottom:14px;">
-          <div class="bank-card"><div class="label">내 야생 행성</div><div class="value"><span id="galaxyOwnedCount">0</span> / <span id="galaxyMaxOwned2">3</span></div></div>
-          <div class="bank-card"><div class="label">대기 중 수익</div><div class="value" id="galaxyPending">0</div></div>
+        <p class="dim" style="margin-bottom:14px;">야생 행성을 정복해서 시간당 수익을 얻으세요(스태미나 2). 봇이 지키는 곳도, 다른 유저가 이미 정복한 곳도 다시 빼앗을 수 있습니다. 홈 행성은 절대 공격받지 않습니다.</p>
+
+        <div class="galaxy-empire">
+          <div class="galaxy-empire-header">
+            <span>🏠 내 제국 — 정복 <b id="galaxyOwnedCount">0</b>/<b id="galaxyMaxOwned">3</b> · 대기수익 <b id="galaxyPending">0</b></span>
+            <button class="btn-primary" id="galaxyCollectBtn">COLLECT ALL</button>
+          </div>
+          <div class="galaxy-empire-grid"></div>
         </div>
-        <button class="btn-primary" id="galaxyCollectBtn" style="margin-bottom:16px;">COLLECT ALL</button>
+
+        <div class="galaxy-filter-bar">
+          <div class="galaxy-filter-group" data-filter-group="tier">
+            <button class="galaxy-filter-btn active" data-tier="all">전체 난이도</button>
+            <button class="galaxy-filter-btn" data-tier="weak">약함</button>
+            <button class="galaxy-filter-btn" data-tier="medium">보통</button>
+            <button class="galaxy-filter-btn" data-tier="strong">강함</button>
+          </div>
+          <div class="galaxy-filter-group" data-filter-group="type">
+            <button class="galaxy-filter-btn active" data-type="all">전체</button>
+            <button class="galaxy-filter-btn" data-type="bot">🤖 PVE 봇</button>
+            <button class="galaxy-filter-btn" data-type="player">⚔️ 유저 소유</button>
+          </div>
+        </div>
+
         <div class="planet-grid"></div>
+        <button class="btn-ghost" id="galaxyShowMoreBtn" style="display:none;margin-top:14px;width:100%;">더 보기</button>
       </div>
 
       <div class="tab-panel" id="panel-pvp">

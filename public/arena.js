@@ -372,42 +372,113 @@
 
   // ── Galaxy Map — 각자의 홈 행성(공격 불가) + 야생 행성(PVE 봇 또는 다른 유저가 정복해 둔 것)
   //    목록. 야생 행성 공격은 PvP와 똑같은 태세+타이밍 시퀀스를 그대로 재사용한다. ──
+  // ── Galaxy Map — 48개 야생 행성을 한 화면에 다 쏟아내면 뭘 해야 할지 알기 어렵다는 피드백이
+  //    있어서, "내 제국"(홈 + 이미 정복한 행성)과 "정복 대상"을 아예 다른 섹션으로 나누고,
+  //    정복 대상 쪽엔 난이도/유형 필터 + 처음엔 12개만 보여주는 "더 보기"를 둬서 한눈에 훑을
+  //    수 있게 했다. 필터/더보기는 이미 받아온 목록을 다시 그리기만 할 뿐 서버를 다시 호출하지
+  //    않는다 — 캐시가 없을 때만(최초 진입, 공격 후) 네트워크를 탄다. ──
+  let galaxyCache = null;
+  let galaxyTierFilter = "all", galaxyTypeFilter = "all", galaxyShowCount = 12;
+  const GALAXY_PAGE_SIZE = 12;
+
   async function renderGalaxyTab() {
     if (!state) return;
+    if (!galaxyCache) {
+      const grid = document.querySelector("#panel-galaxy .planet-grid");
+      grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
+      try {
+        galaxyCache = await api("/planets");
+      } catch (e) {
+        grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+        return;
+      }
+    }
+    renderGalaxyContent();
+  }
+
+  function renderGalaxyContent() {
+    const data = galaxyCache;
+    if (!data) return;
     const panel = $("panel-galaxy");
+    const empireGrid = panel.querySelector(".galaxy-empire-grid");
     const grid = panel.querySelector(".planet-grid");
-    grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
-    try {
-      const { planets, myOwnedWild, maxOwnedWild } = await api("/planets");
-      $("galaxyOwnedCount").textContent = myOwnedWild;
-      $("galaxyMaxOwned").textContent = maxOwnedWild;
-      $("galaxyMaxOwned2").textContent = maxOwnedWild;
-      const pendingTotal = planets.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
-      $("galaxyPending").textContent = fmt(pendingTotal);
-      grid.innerHTML = planets.map((p) => {
-        const cls = p.isHome ? "home" : p.mine ? "mine" : "";
-        const ownerLine = p.isHome ? "🏠 홈 행성" : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "";
-        const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
-        const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
-        const btn = p.attackable
-          ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
-          : '<button class="btn-ghost" disabled>' + (p.isHome ? "홈 행성" : "내 행성") + "</button>";
-        return (
-          '<div class="planet-card ' + cls + '">' +
-          '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
-          '<div class="planet-card-owner">' + ownerLine + "</div>" +
-          tierLine + rateLine + btn +
-          "</div>"
-        );
-      }).join("");
-      grid.querySelectorAll("button[data-planet]").forEach((btn) => {
-        const planet = planets.find((p) => String(p.id) === btn.dataset.planet);
-        btn.addEventListener("click", () => openPlanetAttackSequence(planet));
+    const moreBtn = $("galaxyShowMoreBtn");
+
+    $("galaxyOwnedCount").textContent = data.myOwnedWild;
+    $("galaxyMaxOwned").textContent = data.maxOwnedWild;
+    const empire = data.planets.filter((p) => p.isHome || p.mine);
+    const pendingTotal = empire.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
+    $("galaxyPending").textContent = fmt(pendingTotal);
+
+    function planetCard(p, withButton) {
+      const cls = p.isHome ? "home" : p.mine ? "mine" : "";
+      const ownerLine = p.isHome ? "🏠 홈 행성" : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "🤖 무주인 (PVE)";
+      const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
+      const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
+      const btn = !withButton ? "" : p.attackable
+        ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
+        : '<button class="btn-ghost" disabled>' + (p.isHome ? "홈 행성" : "내 행성") + "</button>";
+      return (
+        '<div class="planet-card ' + cls + '">' +
+        '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
+        '<div class="planet-card-owner">' + ownerLine + "</div>" +
+        tierLine + rateLine + btn +
+        "</div>"
+      );
+    }
+
+    // 내 제국 — 항상 전부 보여준다(최대 1 홈 + 3 야생이라 얼마 안 됨).
+    empireGrid.innerHTML = empire.length
+      ? empire.map((p) => planetCard(p, false)).join("")
+      : '<p class="galaxy-empire-empty">아직 정복한 행성이 없습니다. 아래에서 첫 행성을 노려보세요.</p>';
+
+    // 정복 대상 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출.
+    const targets = data.planets.filter((p) => {
+      if (p.isHome || p.mine) return false;
+      // 정복된 행성은 원래의 봇 난이도 정보가 사라지므로(bot_tier가 NULL이 됨), 난이도 필터는
+      // 아직 봇이 지키고 있는 행성에만 적용된다 — 유저 소유 행성은 난이도 필터와 무관하게 남는다.
+      if (galaxyTierFilter !== "all" && p.botTier && p.botTier !== galaxyTierFilter) return false;
+      if (galaxyTypeFilter === "bot" && p.ownerUserId) return false;
+      if (galaxyTypeFilter === "player" && !p.ownerUserId) return false;
+      return true;
+    });
+    const visible = targets.slice(0, galaxyShowCount);
+    grid.innerHTML = visible.length
+      ? visible.map((p) => planetCard(p, true)).join("")
+      : '<p class="dim">조건에 맞는 행성이 없습니다.</p>';
+    moreBtn.style.display = targets.length > visible.length ? "" : "none";
+
+    grid.querySelectorAll("button[data-planet]").forEach((btn) => {
+      const planet = data.planets.find((p) => String(p.id) === btn.dataset.planet);
+      btn.addEventListener("click", () => openPlanetAttackSequence(planet));
+    });
+  }
+
+  function initGalaxyFilters() {
+    document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        galaxyTierFilter = btn.dataset.tier;
+        galaxyShowCount = GALAXY_PAGE_SIZE;
+        renderGalaxyContent();
       });
-    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+    });
+    document.querySelectorAll(".galaxy-filter-btn[data-type]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".galaxy-filter-btn[data-type]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        galaxyTypeFilter = btn.dataset.type;
+        galaxyShowCount = GALAXY_PAGE_SIZE;
+        renderGalaxyContent();
+      });
+    });
+    const moreBtn = $("galaxyShowMoreBtn");
+    if (moreBtn) moreBtn.addEventListener("click", () => { galaxyShowCount += GALAXY_PAGE_SIZE; renderGalaxyContent(); });
   }
 
   function initGalaxyButtons() {
+    initGalaxyFilters();
     const btn = $("galaxyCollectBtn");
     if (!btn) return;
     btn.addEventListener("click", async () => {
@@ -415,7 +486,7 @@
       try {
         const r = await api("/planets/collect", { method: "POST" });
         toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 수거" : "수거할 대기 수익이 없습니다.");
-        state.pocketCoins = r.pocketCoins; renderHeader(); renderGalaxyTab();
+        state.pocketCoins = r.pocketCoins; renderHeader(); galaxyCache = null; renderGalaxyTab();
       } catch (e) { toast(e.message, true); }
       btn.disabled = false;
     });
@@ -566,7 +637,7 @@
         '<button class="attack-close-btn" id="attackResultCloseBtn">확인</button>';
       state = r.state; renderHeader();
       if (!isPlanet && currentTab === "pvp") renderPvpTab();
-      if (isPlanet && currentTab === "galaxy") renderGalaxyTab();
+      if (isPlanet) { galaxyCache = null; if (currentTab === "galaxy") renderGalaxyTab(); }
       $("attackResultCloseBtn").addEventListener("click", closeAttackModal);
     } catch (e) {
       body.innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
@@ -755,8 +826,12 @@
           return '<button class="bot-gacha-btn" data-gacha="' + botId + '" data-tier="' + tier + '"' + (state.pocketCoins < m.price ? " disabled" : "") + ">" + m.label + "<br>💰" + fmt(m.price) + "</button>";
         }).join("") + "</div>";
       }
+      function statLine(stats) {
+        return '<div class="bot-stat-line"><span>⚔️ ATK <b>' + stats.atk + '</b></span><span>🛡️ DEF <b>' + stats.def + '</b></span><span>💥 CRIT <b>' + stats.crit + '%</b></span></div>';
+      }
 
       let html = '<div class="bot-card player"><div class="bot-card-title">🧑‍💻 YOU</div>' +
+        statLine(data.player.stats) +
         slotRow("player", "weapon", "무장", data.player.equippedWeapon) +
         slotRow("player", "armor", "방어", data.player.equippedArmor) +
         slotRow("player", "core", "코어", data.player.equippedCore) +
@@ -765,8 +840,11 @@
       data.bots.forEach((b, i) => {
         const rarityInfo = bestRarityOf(b.equipped_weapon, b.equipped_armor, b.equipped_core);
         const attrs = botCardStyleAttrs(rarityInfo);
-        html += '<div class="bot-card' + attrs.cls + '" ' + attrs.style + '><div class="bot-card-title">🤖 BOT #' + (i + 1) + '</div>' +
+        const sellRefund = Math.floor((b.recruit_cost || 2000) * (data.botSellRate || 0.5));
+        html += '<div class="bot-card' + attrs.cls + '" ' + attrs.style + '>' +
+          '<div class="bot-card-title">🤖 BOT #' + (i + 1) + '<button class="bot-sell-btn" data-sell="' + b.id + '" title="봇 되팔기">되팔기 💰' + fmt(sellRefund) + "</button></div>" +
           attrs.tag +
+          statLine(b.stats) +
           slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
           slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
           slotRow(String(b.id), "core", "코어", b.equipped_core) +
@@ -799,6 +877,16 @@
           try {
             const r = await api("/bots/gacha", { method: "POST", body: { botId: btn.dataset.gacha, tier: btn.dataset.tier } });
             toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급!");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      el.querySelectorAll("button[data-sell]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/bots/sell", { method: "POST", body: { botId: btn.dataset.sell } });
+            toast("+" + fmt(r.refund) + " 코인 환불, 봇을 되팔았습니다.");
             state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });

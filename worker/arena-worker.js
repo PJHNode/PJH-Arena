@@ -50,7 +50,7 @@ async function verifyUser(request, env) {
 const BASE_MAX_HP = 100, BASE_MAX_ENERGY = 50, BASE_MAX_STAMINA = 10;
 const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 5 * 60 * 1000;   // 5분당 +5
 const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 10 * 60 * 1000; // 10분당 +1
-const HP_REGEN_PCT = 0.05, HP_TICK_MS = 5 * 60 * 1000; // 5분당 "그때그때의 최대체력"의 5%
+const HP_REGEN_PER_TICK = 10, HP_TICK_MS = 5 * 60 * 1000; // 5분당 +10(최대치와 무관한 고정량)
 
 // 기본 ATK/DEF — 기획서에 레벨별 성장 수식이 명시돼 있지 않아, 장비 없이도 레벨업이
 // 전투력에 의미가 있도록 "레벨당 +2"의 완만한 성장을 임의로 추가했다(합리적 기본값).
@@ -198,6 +198,7 @@ const STARTING_ENERGY = BASE_MAX_ENERGY;
 const BOT_BASE_COST = 2000;
 const BOT_COST_GROWTH = 2.5;
 const BOT_MAX_COUNT = 10;
+const BOT_SELL_RATE = 0.5; // 되팔 때는 모집 당시 낸 비용(recruit_cost)의 50%만 환불
 function botRecruitCost(currentCount) { return Math.round(BOT_BASE_COST * Math.pow(BOT_COST_GROWTH, currentCount)); }
 
 // ── 봇 가챠 — 봇 칸을 산 뒤(위 recruit) 그 봇의 3슬롯(무장/방어/코어)을 한 번에 랜덤으로 채운다.
@@ -382,6 +383,7 @@ async function ensureSchema(env) {
     "equipped_weapon TEXT, equipped_armor TEXT, equipped_core TEXT, created_at INTEGER NOT NULL)"
   );
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_user ON arena_bots(user_id)"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN recruit_cost INTEGER NOT NULL DEFAULT " + BOT_BASE_COST); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_devices (user_id TEXT NOT NULL, device_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -460,7 +462,7 @@ function applyRegen(row, now) {
     }
     const hpTicks = Math.floor((now - out.last_hp_tick) / HP_TICK_MS);
     if (hpTicks > 0) {
-      out.hp = Math.min(out.max_hp, out.hp + hpTicks * Math.round(out.max_hp * HP_REGEN_PCT));
+      out.hp = Math.min(out.max_hp, out.hp + hpTicks * HP_REGEN_PER_TICK);
       out.last_hp_tick += hpTicks * HP_TICK_MS;
     }
   }
@@ -532,7 +534,7 @@ async function totalCombatStats(env, row) {
 function publicState(row, combat) {
   const now = Date.now();
   // HP는 0(다운) 상태면 아예 회복이 안 되므로(applyRegen 참고 — 아이템으로만 회복 가능) null.
-  const hpFullInMs = row.hp <= 0 ? null : msUntilFull(row.hp, row.max_hp, Math.round(row.max_hp * HP_REGEN_PCT), HP_TICK_MS, row.last_hp_tick, now);
+  const hpFullInMs = row.hp <= 0 ? null : msUntilFull(row.hp, row.max_hp, HP_REGEN_PER_TICK, HP_TICK_MS, row.last_hp_tick, now);
   const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, ENERGY_TICK_MS, row.last_energy_tick, now);
   const staminaFullInMs = msUntilFull(row.stamina, row.max_stamina, STAMINA_REGEN_PER_TICK, STAMINA_TICK_MS, row.last_stamina_tick, now);
   return {
@@ -1017,7 +1019,7 @@ export default {
 
       if (request.method === "GET" && path === "/bots") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
+        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
         const ownedRes = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
         const equippedCount = await equippedCountMap(env, user.userId);
         const rawEntries = ownedRes.results
@@ -1026,12 +1028,16 @@ export default {
         const availableItems = sortedShopEntries(rawEntries).map(function (pair) {
           return Object.assign({ id: pair[0] }, pair[1], { rarityLabel: RARITY_META[pair[1].rarity].label, rarityColor: RARITY_META[pair[1].rarity].color });
         });
+        // 봇은 레벨 개념이 없어서 equipStats(장비 보너스)가 곧 그 봇의 전투력 전부다(totalCombatStats
+        // 에서도 봇은 base 없이 equipStats만 더함) — 그대로 ATK/DEF/CRIT 수치로 보여준다.
+        const botsWithStats = botsRes.results.map(function (b) { return Object.assign({}, b, { stats: equipStats(b) }); });
         return json({
-          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core },
-          bots: botsRes.results,
+          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row) },
+          bots: botsWithStats,
           botCount: botsRes.results.length,
           maxBots: BOT_MAX_COUNT,
           nextBotCost: botsRes.results.length < BOT_MAX_COUNT ? botRecruitCost(botsRes.results.length) : null,
+          botSellRate: BOT_SELL_RATE,
           availableItems: availableItems,
         });
       }
@@ -1045,7 +1051,7 @@ export default {
         if (row.pocket_coins < cost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost) + ")" }, 400);
 
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = pocket_coins - ? WHERE user_id = ?").bind(cost, user.userId).run();
-        await env.DB.prepare("INSERT INTO arena_bots (user_id, created_at) VALUES (?, ?)").bind(user.userId, Date.now()).run();
+        await env.DB.prepare("INSERT INTO arena_bots (user_id, recruit_cost, created_at) VALUES (?, ?, ?)").bind(user.userId, cost, Date.now()).run();
         return json({ ok: true, cost: cost, pocketCoins: row.pocket_coins - cost });
       }
 
@@ -1074,6 +1080,25 @@ export default {
           weapon: rolled.weapon, armor: rolled.armor, core: rolled.core,
           bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
         });
+      }
+
+      // ── POST /bots/sell { botId } — 모집 당시 낸 비용(recruit_cost)의 BOT_SELL_RATE(50%)만
+      //    환불하고 그 봇을 삭제한다. 장착돼 있던 장비는 인벤토리에서 산 것이었다면(수동 장착)
+      //    그대로 인벤토리 보유 수량에 남아있으니 다른 슬롯에 다시 쓸 수 있다 — 가챠로 만들어진
+      //    장비는 그 봇 전용이라 봇과 함께 사라진다(애초에 인벤토리에 들어간 적이 없음). ──
+      if (request.method === "POST" && path === "/bots/sell") {
+        const body = await request.json().catch(function () { return {}; });
+        const botId = parseInt(body.botId, 10);
+        const bot = await env.DB.prepare("SELECT id, recruit_cost FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const refund = Math.floor((bot.recruit_cost || BOT_BASE_COST) * BOT_SELL_RATE);
+        row.pocket_coins += refund;
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
+        await env.DB.prepare("DELETE FROM arena_bots WHERE id = ?").bind(botId).run();
+
+        return json({ ok: true, refund: refund, pocketCoins: row.pocket_coins });
       }
 
       if (request.method === "POST" && path === "/bots/equip") {
