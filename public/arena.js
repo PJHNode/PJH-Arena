@@ -276,7 +276,7 @@
         btn.addEventListener("click", () => openScanModal(btn.dataset.scan));
       });
       listEl.querySelectorAll("button[data-attack]").forEach((btn) => {
-        btn.addEventListener("click", () => doAttack(btn.dataset.attack, btn));
+        btn.addEventListener("click", () => openAttackSequence(btn.dataset.attack));
       });
     } catch (e) { listEl.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
@@ -288,6 +288,7 @@
         "<h3>🔎 PRACTICE SCAN — " + escapeHtml(r.realName) + " (Lv." + r.level + ")</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
         (r.online ? "" : '<div class="scan-row">대기 중인 Property 수익 <b style="color:var(--stamina);">+' + fmt(r.offlinePendingCoins) + "</b></div>") +
+        '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">소모 스태미나 <b>' + r.staminaCost + "</b></div>" +
@@ -296,17 +297,120 @@
     } catch (e) { toast(e.message, true); }
   }
 
-  async function doAttack(targetUserId, btn) {
-    btn.disabled = true;
+  // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
+  //    실제 검증/계산은 항상 서버가 다시 한다. ──
+  const STANCE_META = {
+    aggressive: { label: "공격형", icon: "⚔️", hint: "ATK+25% / DEF-15%" },
+    defensive:  { label: "방어형", icon: "🛡️", hint: "ATK-15% / DEF+25%" },
+    ambush:     { label: "기습형", icon: "🗡️", hint: "치명타 +10%" },
+  };
+
+  let attackAnimId = null;
+  function stopAttackAnimation() { if (attackAnimId) { cancelAnimationFrame(attackAnimId); attackAnimId = null; } }
+  function closeAttackModal() { stopAttackAnimation(); $("attackModal").style.display = "none"; }
+
+  // ── 공격 시퀀스 진입점 — 태세 선택 → 3라운드 타이밍 미니게임 → 결과, 순서로 진행한다.
+  //    첫 화면을 위해 정찰(스태미나 소모 없음)을 한 번 조용히 호출해 상대의 평소 태세를 보여준다. ──
+  async function openAttackSequence(targetUserId) {
+    $("attackModal").style.display = "flex";
+    $("attackModalBody").innerHTML = '<p class="dim">정보 조회 중...</p>';
     try {
-      const r = await api("/arena/attack", { method: "POST", body: { targetUserId } });
-      const bonusNote = r.offlineBonusCollected > 0 ? " (Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨)" : "";
-      if (r.attackerWins) toast((r.isCrit ? "💥 CRITICAL! " : "✅ ") + "침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인" + bonusNote);
-      else toast("❌ 침투 실패..." + bonusNote, true);
+      const scan = await api("/arena/scan", { method: "POST", body: { targetUserId } });
+      renderStanceStep(targetUserId, scan);
+    } catch (e) {
+      $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  function renderStanceStep(targetUserId, scan) {
+    const body = $("attackModalBody");
+    body.innerHTML =
+      "<h3>⚔️ ATTACK SEQUENCE — " + escapeHtml(scan.realName) + "</h3>" +
+      '<p class="stance-hint">' + (scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.") + "</p>" +
+      '<div class="stance-grid">' +
+      Object.keys(STANCE_META).map((id) => {
+        const m = STANCE_META[id];
+        return '<button class="stance-btn" data-stance="' + id + '"><span class="stance-icon">' + m.icon + "</span>" + m.label + '<span class="stance-mult">' + m.hint + "</span></button>";
+      }).join("") +
+      "</div>";
+    body.querySelectorAll("button[data-stance]").forEach((btn) => {
+      btn.addEventListener("click", () => startTimingRounds(targetUserId, btn.dataset.stance));
+    });
+  }
+
+  // ── 3라운드 타이밍 미니게임 — 좌우로 왕복하는 마커를 초록 구간(스윗스팟)에서 멈춰야 정확도가
+  //    높다. 정확도는 서버에서 ±15% 배율로만 반영되므로(bounded), 스탯 차이를 완전히 뒤집진
+  //    못하지만 비슷한 상대끼리는 이 한 방으로 승부가 갈릴 수 있다. ──
+  function startTimingRounds(targetUserId, stance) {
+    const timingScores = [];
+    function runRound(roundIndex) {
+      const body = $("attackModalBody");
+      const sweetStart = 30 + Math.random() * 40; // 30~70% 구간 어딘가에 스윗스팟 시작
+      const sweetWidth = 16;
+      body.innerHTML =
+        '<div class="timing-wrap">' +
+        '<div class="round-dots">' + [0, 1, 2].map((i) => '<div class="round-dot' + (i === roundIndex ? " active" : "") + '">' + (i + 1) + "</div>").join("") + "</div>" +
+        '<div class="timing-round-label">라운드 ' + (roundIndex + 1) + ' / 3 — 초록 구간에서 STOP!</div>' +
+        '<div class="timing-track"><div class="timing-sweetspot" style="left:' + sweetStart + '%; width:' + sweetWidth + '%;"></div><div class="timing-marker" id="timingMarker" style="left:0%;"></div></div>' +
+        '<button class="timing-stop-btn" id="timingStopBtn">STOP</button>' +
+        "</div>";
+
+      const marker = $("timingMarker");
+      const stopBtn = $("timingStopBtn");
+      const startTime = performance.now();
+      const periodMs = 1100;
+      function tick(now) {
+        const t = ((now - startTime) % periodMs) / periodMs;
+        const pos = t < 0.5 ? t * 2 : (1 - t) * 2; // 0→1→0 삼각파 왕복
+        marker.style.left = (pos * 100) + "%";
+        attackAnimId = requestAnimationFrame(tick);
+      }
+      attackAnimId = requestAnimationFrame(tick);
+
+      stopBtn.addEventListener("click", () => {
+        stopAttackAnimation();
+        const markerPct = parseFloat(marker.style.left);
+        const sweetCenter = sweetStart + sweetWidth / 2;
+        const dist = Math.abs(markerPct - sweetCenter);
+        const accuracy = Math.max(0, Math.round(100 - dist * 2.2));
+        timingScores.push(accuracy);
+
+        marker.style.background = accuracy >= 70 ? "var(--energy)" : accuracy >= 40 ? "var(--stamina)" : "var(--danger)";
+        stopBtn.disabled = true;
+        stopBtn.textContent = accuracy + "점!";
+
+        setTimeout(() => {
+          if (roundIndex < 2) runRound(roundIndex + 1);
+          else finishAttack(targetUserId, stance, timingScores);
+        }, 550);
+      }, { once: true });
+    }
+    runRound(0);
+  }
+
+  async function finishAttack(targetUserId, stance, timingScores) {
+    const body = $("attackModalBody");
+    body.innerHTML = '<p class="dim" style="text-align:center;">침투 시퀀스 분석 중...</p>';
+    try {
+      const r = await api("/arena/attack", { method: "POST", body: { targetUserId, stance, timingScores } });
+      const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
+      body.innerHTML =
+        '<div class="round-dots">' + r.rounds.map((rd) => '<div class="round-dot ' + (rd.win ? "win" : "lose") + '">' + (rd.win ? "✓" : "✗") + "</div>").join("") + "</div>" +
+        '<div class="attack-result-title ' + (r.attackerWins ? "win" : "lose") + '">' +
+        (r.attackerWins ? (r.sweep ? "🏆 완벽한 승리!" : "✅ 침투 성공") + (r.isCrit ? " · CRITICAL!" : "") : "❌ 침투 실패") +
+        "</div>" +
+        '<div class="attack-result-detail">' +
+        (r.attackerWins ? "약탈 +" + fmt(r.coinsDelta) + " 코인" : "약탈 실패") +
+        (bonusNote ? "<br>" + bonusNote : "") +
+        "</div>" +
+        '<button class="attack-close-btn" id="attackResultCloseBtn">확인</button>';
       state = r.state; renderHeader();
       if (currentTab === "pvp") renderPvpTab();
-    } catch (e) { toast(e.message, true); }
-    finally { btn.disabled = false; }
+      $("attackResultCloseBtn").addEventListener("click", closeAttackModal);
+    } catch (e) {
+      body.innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
+      $("attackResultCloseBtn").addEventListener("click", closeAttackModal);
+    }
   }
 
   // 아이템 하나의 능력치 표시 문구 — 상점/봇/인벤토리에서 공용으로 쓴다.
@@ -597,6 +701,8 @@
     initStatButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
+    $("attackModalClose").addEventListener("click", closeAttackModal);
+    $("attackModal").addEventListener("click", (e) => { if (e.target.id === "attackModal") closeAttackModal(); });
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
     const cta = $("loggedOutCta");
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());

@@ -157,6 +157,29 @@ const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
 const BASE_CRIT_PCT = 5;
 const CRIT_MULTIPLIER = 1.5;
+
+// ── 전투 태세(가위바위보) — 공격자가 매 전투마다 고른다. 서로 물고 무는 3종이라 상대의
+//    "평소 태세"(last_stance, 가장 최근 공격 시 골랐던 태세)를 알면 유리한 태세로 맞설 수 있다
+//    (Practice Scan에서 공개). 방어자의 실시간 DEF 자체는 태세 영향을 안 받는다 — 방어자는
+//    오프라인일 수도 있어서 "지금 이 순간 뭘 골랐는지"가 존재하지 않기 때문에, last_stance는
+//    어디까지나 "이 사람 패턴 읽기"용 힌트로만 쓰인다. ──
+const STANCES = {
+  aggressive: { label: "공격형", atkMult: 1.25, defMult: 0.85, beats: "ambush" },
+  defensive:  { label: "방어형", atkMult: 0.85, defMult: 1.25, beats: "aggressive" },
+  ambush:     { label: "기습형", atkMult: 1.00, defMult: 0.90, beats: "defensive" },
+};
+const STANCE_RPS_BONUS = 0.15; // 상성으로 이기면 +15%, 지면 -15%
+
+// ── 공격 시퀀스(3라운드 타이밍 미니게임) — 클라이언트가 라운드마다 0~100 정확도를 보내오면
+//    ±15% 폭의 배율로 반영한다. 클라이언트가 값을 조작해도 최대 1.15배까지만 영향을 주므로
+//    (게임 점수 위조 방지와 동일한 "완벽 차단은 아니지만 최소한의 안전장치" 철학), 스탯 차이를
+//    완전히 뒤집을 순 없고 어디까지나 보정 수준으로만 작용한다. 3판 중 2판 이상 이기면 전투 승리,
+//    3판 전승(스윕)이면 약탈 보너스를 추가로 준다. ──
+const PVP_ROUNDS = 3;
+function timingMultiplier(score) {
+  const s = clamp(Number(score) || 50, 0, 100);
+  return 0.85 + (s / 100) * 0.3;
+}
 const PVP_STAMINA_COST_ONLINE = 1, PVP_STAMINA_COST_OFFLINE = 2;
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
@@ -232,6 +255,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN max_energy INTEGER NOT NULL DEFAULT 50"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN max_stamina INTEGER NOT NULL DEFAULT 10"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN stat_points INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_stance TEXT"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -518,11 +542,12 @@ export default {
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
             offlinePendingCoins: bonusPocket,
+            lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
             staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
           });
         }
-        return json({ targets: targets, myStamina: me.stamina });
+        return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
       }
 
       if (request.method === "POST" && path === "/arena/scan") {
@@ -546,15 +571,24 @@ export default {
 
         return json({
           targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, online: online, offlinePendingCoins: offlinePendingCoins,
+          lastStance: target.last_stance || null, lastStanceLabel: target.last_stance ? STANCES[target.last_stance].label : null,
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
         });
       }
 
+      // ── POST /arena/attack { targetUserId, stance, timingScores: [n,n,n] } ──
+      //    stance: 'aggressive'|'defensive'|'ambush' — 이번 전투에서만 적용되는 태세.
+      //    timingScores: 클라이언트 타이밍 미니게임 결과(라운드당 0~100 정확도). 3판 2선승제로
+      //    승부를 가르고, 3판 전승(스윕)이면 약탈 보너스가 추가로 붙는다. ──
       if (request.method === "POST" && path === "/arena/attack") {
         const body = await request.json().catch(function () { return {}; });
         const targetUserId = String(body.targetUserId || "");
         if (targetUserId === user.userId) return json({ error: "자기 자신은 공격할 수 없습니다." }, 400);
+        const stanceId = body.stance;
+        const stance = STANCES[stanceId];
+        if (!stance) return json({ error: "전투 태세를 선택하세요." }, 400);
+        const timingScores = Array.isArray(body.timingScores) ? body.timingScores : [];
 
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
@@ -575,16 +609,36 @@ export default {
           offlineBonus = await collectProperty(env, defender);
         }
 
+        // 상성 보너스 — 상대의 "평소 태세"(last_stance)를 상대로 유리한 태세를 골랐는지에 따라
+        // 공격자의 전투력에 ±15%가 붙는다. 상대가 아직 한 번도 공격한 적이 없으면(last_stance
+        // 없음) 상성 자체가 성립하지 않아 보정 없음.
+        let rpsMod = 0;
+        if (defender.last_stance && STANCES[defender.last_stance]) {
+          if (stance.beats === defender.last_stance) rpsMod = STANCE_RPS_BONUS;
+          else if (STANCES[defender.last_stance].beats === stanceId) rpsMod = -STANCE_RPS_BONUS;
+        }
+
         const attackerCombat = await totalCombatStats(env, attacker);
         const defenderCombat = await totalCombatStats(env, defender);
-        const attackerPower = attackerCombat.atk * randMult();
-        const defenderPower = defenderCombat.def * randMult();
-        const attackerWins = attackerPower > defenderPower;
-        const isCrit = attackerWins && Math.random() * 100 < attackerCombat.crit;
+
+        let attackerRoundWins = 0;
+        const rounds = [];
+        for (let i = 0; i < PVP_ROUNDS; i++) {
+          const timing = timingMultiplier(timingScores[i]);
+          const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult();
+          const defPower = defenderCombat.def * randMult();
+          const roundWin = atkPower > defPower;
+          if (roundWin) attackerRoundWins++;
+          rounds.push({ round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100) });
+        }
+        const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
+        const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
+        const isCrit = attackerWins && Math.random() * 100 < (attackerCombat.crit + (stanceId === "ambush" ? 10 : 0));
 
         let coinsDelta = 0;
         if (attackerWins) {
-          coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * (isCrit ? CRIT_MULTIPLIER : 1));
+          let plunderMult = 1 + (isCrit ? CRIT_MULTIPLIER - 1 : 0) + (sweep ? 0.2 : 0);
+          coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * plunderMult);
           coinsDelta = Math.min(coinsDelta, defender.pocket_coins);
           defender.pocket_coins -= coinsDelta;
           attacker.pocket_coins += coinsDelta;
@@ -599,8 +653,8 @@ export default {
 
         await env.DB.batch([
           env.DB.prepare(
-            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
-          ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, attacker.plunder_wins,
+            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, attacker.plunder_wins, stanceId,
                  attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id),
           env.DB.prepare(
             "UPDATE arena_users SET hp=?, pocket_coins=?, shield_until=? WHERE user_id=?"
@@ -612,7 +666,11 @@ export default {
         await insertLog(env, defender.user_id, "pvp_defend", attacker.user_id, attacker.real_name, attackerWins ? "lose" : "win", attackerWins ? -coinsDelta : 0, attackerWins ? -PVP_WIN_DEF_HP_LOSS : -PVP_LOSE_DEF_HP_LOSS);
 
         const combat = await totalCombatStats(env, attacker);
-        return json({ ok: true, attackerWins: attackerWins, isCrit: isCrit, coinsDelta: coinsDelta, offlineBonusCollected: offlineBonus, state: publicState(attacker, combat) });
+        return json({
+          ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: coinsDelta,
+          rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
+          offlineBonusCollected: offlineBonus, state: publicState(attacker, combat),
+        });
       }
 
       if (request.method === "POST" && path === "/bank/deposit") {

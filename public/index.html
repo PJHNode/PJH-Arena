@@ -212,6 +212,36 @@
   .scan-winrate { text-align: center; margin-top: 16px; font-size: 12px; color: var(--sub); }
   .scan-winrate span { display: block; font-size: 30px; color: var(--accent); }
 
+  /* Attack Sequence modal (스탠스 선택 + 3라운드 타이밍 미니게임) */
+  #attackModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); align-items: center; justify-content: center; z-index: 1100; }
+  .attack-box { background: var(--surface); border: 1px solid var(--danger); width: 360px; padding: 20px; position: relative; }
+  .attack-box h3 { margin: 0 0 14px; font-size: 13px; color: var(--danger); }
+  .stance-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .stance-btn {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text); padding: 10px 4px;
+    font-family: inherit; font-size: 11px; text-align: center; cursor: pointer;
+  }
+  .stance-btn:hover { border-color: var(--cyan); }
+  .stance-btn .stance-icon { font-size: 18px; display: block; margin-bottom: 4px; }
+  .stance-btn .stance-mult { display: block; font-size: 9px; color: var(--sub); margin-top: 3px; }
+  .stance-hint { font-size: 11px; color: var(--sub); margin-bottom: 14px; text-align: center; }
+  .timing-wrap { text-align: center; }
+  .timing-round-label { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
+  .timing-track { position: relative; height: 30px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 14px; overflow: hidden; }
+  .timing-sweetspot { position: absolute; top: 0; bottom: 0; background: rgba(0,255,157,0.25); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+  .timing-marker { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--danger); }
+  .timing-stop-btn { width: 100%; background: var(--danger); color: #fff; border: none; font-weight: bold; padding: 12px; font-size: 13px; letter-spacing: 0.05em; }
+  .round-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; }
+  .round-dot { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--sub); }
+  .round-dot.win { border-color: var(--energy); color: var(--energy); }
+  .round-dot.lose { border-color: var(--danger); color: var(--danger); }
+  .round-dot.active { border-color: var(--cyan); color: var(--cyan); }
+  .attack-result-title { text-align: center; font-size: 16px; font-weight: bold; margin: 10px 0; }
+  .attack-result-title.win { color: var(--energy); }
+  .attack-result-title.lose { color: var(--danger); }
+  .attack-result-detail { font-size: 11px; color: var(--sub); text-align: center; margin-bottom: 14px; }
+  .attack-close-btn { width: 100%; background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 10px; }
+
   /* Toast */
   #toastLayer { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
   .arena-toast {
@@ -397,6 +427,13 @@
   <div class="scan-box">
     <button id="scanModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
     <div id="scanModalBody"></div>
+  </div>
+</div>
+
+<div id="attackModal">
+  <div class="attack-box">
+    <button id="attackModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
+    <div id="attackModalBody"></div>
   </div>
 </div>
 
