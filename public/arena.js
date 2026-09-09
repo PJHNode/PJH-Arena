@@ -232,6 +232,7 @@
     property: renderPropertyTab,
     bank: renderBankTab,
     research: renderResearchTab,
+    trade: renderTradeTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
   };
@@ -443,11 +444,15 @@
       const expeditionBtn = withButton && p.expeditionEligible && galaxyExpeditionUnlocked
         ? '<button class="btn-ghost" data-expedition="' + p.id + '" style="margin-top:6px;width:100%;"' + (state.stamina < 2 ? " disabled" : "") + ">🛰️ 원정 보내기 (⚡2)</button>"
         : "";
+      // 내 제국 칸에서만 — 홈 행성 제외, 내가 정복해 둔 야생 행성은 포기할 수 있다.
+      const abandonBtn = !withButton && p.mine && !p.isHome
+        ? '<button class="btn-ghost" data-abandon="' + p.id + '" style="margin-top:6px;width:100%;">포기하기</button>'
+        : "";
       return (
         '<div class="planet-card ' + cls + '">' +
         '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
         '<div class="planet-card-owner">' + ownerLine + "</div>" +
-        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn +
+        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn + abandonBtn +
         "</div>"
       );
     }
@@ -457,9 +462,10 @@
       ? empire.map((p) => planetCard(p, false)).join("")
       : '<p class="galaxy-empire-empty">아직 정복한 행성이 없습니다. 아래에서 첫 행성을 노려보세요.</p>';
 
-    // 정복 대상 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출.
+    // 정복 대상 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출. 이제 남의 홈 행성도
+    // 공격 대상에 포함된다(내 것만 "내 제국" 쪽으로 빠지고 여기선 제외).
     const targets = data.planets.filter((p) => {
-      if (p.isHome || p.mine) return false;
+      if (p.mine) return false;
       // 정복된 행성은 원래의 봇 난이도 정보가 사라지므로(bot_tier가 NULL이 됨), 난이도 필터는
       // 아직 봇이 지키고 있는 행성에만 적용된다 — 유저 소유 행성은 난이도 필터와 무관하게 남는다.
       if (galaxyTierFilter !== "all" && p.botTier && p.botTier !== galaxyTierFilter) return false;
@@ -479,6 +485,18 @@
     });
     grid.querySelectorAll("button[data-expedition]").forEach((btn) => {
       btn.addEventListener("click", () => sendExpedition(btn.dataset.expedition, btn));
+    });
+    empireGrid.querySelectorAll("button[data-abandon]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("이 행성을 포기하시겠습니까? 대기 수익은 먼저 정산됩니다.")) return;
+        btn.disabled = true;
+        try {
+          const r = await api("/planets/abandon", { method: "POST", body: { planetId: btn.dataset.abandon } });
+          toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 정산 후 포기 완료" : "포기 완료");
+          state.pocketCoins = r.pocketCoins; renderHeader();
+          galaxyCache = null; renderGalaxyTab();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      });
     });
   }
 
@@ -743,10 +761,11 @@
     const grid = panel.querySelector(".shop-grid");
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
-      const { items, nextRotationAt, diamonds, diamondExchangeCost } = await api("/shop");
+      const { items, nextRotationAt, diamonds, diamondExchangeCost, rerollCost } = await api("/shop");
       shopNextRotationAt = nextRotationAt;
       $("shopDiamondBalance").textContent = "💎 " + fmt(diamonds);
       $("shopExchangeCost").textContent = fmt(diamondExchangeCost);
+      $("shopRerollCost").textContent = fmt(rerollCost);
       grid.innerHTML = items.map((it) => {
         const capped = it.maxOwned && it.owned >= it.maxOwned;
         const soldOut = it.totalStock != null && it.remainingStock <= 0;
@@ -779,8 +798,7 @@
 
   function initShopButtons() {
     const btn = $("exchangeDiamondBtn");
-    if (!btn) return;
-    btn.addEventListener("click", async () => {
+    if (btn) btn.addEventListener("click", async () => {
       btn.disabled = true;
       try {
         const r = await api("/shop/exchange-diamond", { method: "POST", body: { qty: 1 } });
@@ -788,6 +806,16 @@
         state.pocketCoins = r.pocketCoins; renderHeader(); renderShopTab();
       } catch (e) { toast(e.message, true); }
       btn.disabled = false;
+    });
+    const rerollBtn = $("rerollShopBtn");
+    if (rerollBtn) rerollBtn.addEventListener("click", async () => {
+      rerollBtn.disabled = true;
+      try {
+        const r = await api("/shop/reroll", { method: "POST" });
+        toast("🎲 상점 리롤 완료!");
+        renderShopTab();
+      } catch (e) { toast(e.message, true); }
+      rerollBtn.disabled = false;
     });
   }
 
@@ -1074,6 +1102,150 @@
     });
   }
 
+  // ── Trade — 유저 간 코인+아이템 거래. "내가 줄 것"은 내 인벤토리(장착 중인 건 빼고 남는
+  //    수량)에서 고르고, "내가 받을 것"은 상대 인벤토리를 볼 수 없으니 전체 카탈로그에서
+  //    고른다(상대가 실제로 갖고 있는지는 승낙 시점에 서버가 검증). ──
+  let tradeOfferItems = [];
+  let tradeRequestItems = [];
+
+  function itemSelectOptions(items, showAvailable) {
+    return items.map((it) => (
+      '<option value="' + it.id + '">[' + it.rarityLabel + "] " + escapeHtml(it.name) + (showAvailable ? " (보유 " + it.available + ")" : "") + "</option>"
+    )).join("");
+  }
+
+  function renderTradeItemLists() {
+    function chip(it, idx, side) {
+      return '<div class="trade-item-chip"><span>' + escapeHtml(it.name) + " x" + it.qty + '</span><button data-remove="' + side + ":" + idx + '">×</button></div>';
+    }
+    $("tradeOfferItemList").innerHTML = tradeOfferItems.map((it, i) => chip(it, i, "offer")).join("");
+    $("tradeRequestItemList").innerHTML = tradeRequestItems.map((it, i) => chip(it, i, "request")).join("");
+    document.querySelectorAll("#panel-trade button[data-remove]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const [side, idxStr] = btn.dataset.remove.split(":");
+        const idx = parseInt(idxStr, 10);
+        if (side === "offer") tradeOfferItems.splice(idx, 1); else tradeRequestItems.splice(idx, 1);
+        renderTradeItemLists();
+      });
+    });
+  }
+
+  async function renderTradeTab() {
+    const panel = $("panel-trade");
+    try {
+      const [inv, catalog, data] = await Promise.all([api("/inventory"), getShopCatalog(), api("/trade")]);
+      $("tradeCoinCap").textContent = fmt(data.coinCap);
+
+      const ownable = inv.items.filter((it) => it.available > 0);
+      $("tradeOfferItemSelect").innerHTML = '<option value="">아이템 선택...</option>' + itemSelectOptions(ownable, true);
+      $("tradeRequestItemSelect").innerHTML = '<option value="">아이템 선택...</option>' + itemSelectOptions(Object.values(catalog), false);
+      renderTradeItemLists();
+
+      function itemsLabel(items) {
+        return items.map((it) => { const c = catalog[it.itemId]; return escapeHtml(c ? c.name : it.itemId) + " x" + it.qty; }).join(", ");
+      }
+      function sideLine(coins, items) {
+        const parts = [];
+        if (coins > 0) parts.push("💰" + fmt(coins));
+        const il = itemsLabel(items);
+        if (il) parts.push(il);
+        return parts.length ? parts.join(" + ") : "(없음)";
+      }
+
+      $("tradeIncomingList").innerHTML = data.incoming.length ? data.incoming.map((t) => (
+        '<div class="trade-row incoming">' +
+        '<div class="trade-row-parties">' + escapeHtml(t.fromName) + " → 나</div>" +
+        '<div class="trade-row-side">상대가 줌: ' + sideLine(t.offerCoins, t.offerItems) + "</div>" +
+        '<div class="trade-row-side">내가 줘야 함: ' + sideLine(t.requestCoins, t.requestItems) + "</div>" +
+        '<div class="trade-row-actions"><button class="btn-primary" data-accept="' + t.id + '">승낙</button><button class="btn-ghost" data-decline="' + t.id + '">거절</button></div>' +
+        "</div>"
+      )).join("") : '<p class="dim">받은 요청이 없습니다.</p>';
+
+      $("tradeOutgoingList").innerHTML = data.outgoing.length ? data.outgoing.map((t) => (
+        '<div class="trade-row outgoing">' +
+        '<div class="trade-row-parties">나 → ' + escapeHtml(t.toName) + "</div>" +
+        '<div class="trade-row-side">내가 줌: ' + sideLine(t.offerCoins, t.offerItems) + "</div>" +
+        '<div class="trade-row-side">상대가 줘야 함: ' + sideLine(t.requestCoins, t.requestItems) + "</div>" +
+        '<div class="trade-row-actions"><button class="btn-ghost" data-cancel="' + t.id + '">취소</button></div>' +
+        "</div>"
+      )).join("") : '<p class="dim">보낸 요청이 없습니다.</p>';
+
+      $("tradeHistoryList").innerHTML = data.history.length ? data.history.map((t) => {
+        const statusLabel = t.status === "accepted" ? '<span style="color:var(--energy);">✅ 성사</span>' : t.status === "declined" ? '<span style="color:var(--danger);">❌ 거절됨</span>' : '<span class="dim">🚫 취소됨</span>';
+        return '<div class="trade-row"><div class="trade-row-parties">' + escapeHtml(t.fromName) + " ↔ " + escapeHtml(t.toName) + " · " + statusLabel + "</div></div>";
+      }).join("") : '<p class="dim">거래 내역이 없습니다.</p>';
+
+      panel.querySelectorAll("button[data-accept]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/trade/accept", { method: "POST", body: { tradeId: btn.dataset.accept } });
+            toast("거래 성사!"); state = r.state; renderHeader(); renderTradeTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      panel.querySelectorAll("button[data-decline]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try { await api("/trade/decline", { method: "POST", body: { tradeId: btn.dataset.decline } }); toast("거절했습니다."); renderTradeTab(); }
+          catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      panel.querySelectorAll("button[data-cancel]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try { await api("/trade/cancel", { method: "POST", body: { tradeId: btn.dataset.cancel } }); toast("취소했습니다."); renderTradeTab(); }
+          catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { $("tradeIncomingList").innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initTradeButtons() {
+    const addOffer = $("tradeOfferItemAddBtn");
+    if (addOffer) addOffer.addEventListener("click", async () => {
+      const sel = $("tradeOfferItemSelect");
+      const itemId = sel.value;
+      if (!itemId) return;
+      const qty = Math.max(1, parseInt($("tradeOfferItemQty").value, 10) || 1);
+      const catalog = await getShopCatalog();
+      const inv = await api("/inventory");
+      const owned = inv.items.find((it) => it.id === itemId);
+      if (!owned || qty > owned.available) return toast("보유 수량을 초과했습니다.", true);
+      tradeOfferItems.push({ itemId: itemId, qty: qty, name: catalog[itemId] ? catalog[itemId].name : itemId });
+      renderTradeItemLists();
+    });
+    const addRequest = $("tradeRequestItemAddBtn");
+    if (addRequest) addRequest.addEventListener("click", async () => {
+      const sel = $("tradeRequestItemSelect");
+      const itemId = sel.value;
+      if (!itemId) return;
+      const qty = Math.max(1, parseInt($("tradeRequestItemQty").value, 10) || 1);
+      const catalog = await getShopCatalog();
+      tradeRequestItems.push({ itemId: itemId, qty: qty, name: catalog[itemId] ? catalog[itemId].name : itemId });
+      renderTradeItemLists();
+    });
+    const sendBtn = $("tradeSendBtn");
+    if (sendBtn) sendBtn.addEventListener("click", async () => {
+      const toUserId = $("tradeToUserId").value.trim();
+      if (!toUserId) return toast("상대 아이디를 입력하세요.", true);
+      const offerCoins = parseInt($("tradeOfferCoins").value, 10) || 0;
+      const requestCoins = parseInt($("tradeRequestCoins").value, 10) || 0;
+      sendBtn.disabled = true;
+      try {
+        await api("/trade/request", {
+          method: "POST",
+          body: { toUserId: toUserId, offerCoins: offerCoins, offerItems: tradeOfferItems, requestCoins: requestCoins, requestItems: tradeRequestItems },
+        });
+        toast("거래 요청을 보냈습니다!");
+        tradeOfferItems = []; tradeRequestItems = [];
+        $("tradeToUserId").value = ""; $("tradeOfferCoins").value = ""; $("tradeRequestCoins").value = "";
+        renderTradeTab();
+      } catch (e) { toast(e.message, true); }
+      sendBtn.disabled = false;
+    });
+  }
+
   function initBankForm() {
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -1142,6 +1314,7 @@
         else if (l.kind === "planet_attack") { icon = attackWon ? "🌍" : "🛡️"; desc = (attackWon ? "행성 정복: " : "행성 공격 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "planet_lost") { icon = "💥"; desc = "행성을 빼앗김: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "planet_expedition") { icon = attackWon ? "🛰️" : "🛰️"; desc = (attackWon ? "원정 성공: " : "원정 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
           '<div class="log-row"><span>' + icon + "</span><span>" + desc + '</span><span class="' + coinCls + '">' +
@@ -1161,6 +1334,7 @@
     initGalaxyButtons();
     initShopButtons();
     initResearchButtons();
+    initTradeButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);

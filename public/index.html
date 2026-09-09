@@ -104,6 +104,7 @@
   .content { flex: 1; padding: 20px; overflow-y: auto; }
   .tab-panel { display: none; }
   .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
+  .panel-subtitle { font-size: 12px; color: var(--sub); margin: 22px 0 8px; font-weight: bold; }
 
   .accent-text { color: var(--accent); }
 
@@ -146,6 +147,27 @@
   .research-rarity-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin: 10px 0 14px; }
   .research-rarity-row { background: var(--surface-2); border: 1px solid var(--border); padding: 6px 8px; font-size: 10px; text-align: center; }
   .research-rarity-row b { display: block; font-size: 12px; margin-top: 2px; }
+
+  /* Trade */
+  .trade-composer { background: var(--surface); border: 1px solid var(--border); padding: 16px; margin-bottom: 10px; }
+  .trade-composer-title { font-weight: bold; font-size: 13px; margin-bottom: 10px; }
+  .trade-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .trade-column-title { font-size: 11px; color: var(--sub); margin-bottom: 6px; font-weight: bold; }
+  .trade-column input[type="number"] { width: 100%; margin-bottom: 8px; }
+  .trade-item-add { display: flex; gap: 6px; margin-bottom: 8px; }
+  .trade-item-add select { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 10px; padding: 6px; }
+  .trade-item-add input { width: 60px; flex-shrink: 0; }
+  .trade-item-list { display: flex; flex-direction: column; gap: 4px; }
+  .trade-item-chip { display: flex; justify-content: space-between; align-items: center; background: var(--surface-2); border: 1px solid var(--border); padding: 4px 8px; font-size: 10px; }
+  .trade-item-chip button { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 12px; padding: 0 4px; }
+  .trade-list { display: flex; flex-direction: column; gap: 8px; }
+  .trade-row { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 12px; font-size: 11px; }
+  .trade-row.incoming { border-left-color: var(--energy); }
+  .trade-row.outgoing { border-left-color: var(--cyan); }
+  .trade-row-parties { font-weight: bold; margin-bottom: 6px; }
+  .trade-row-side { color: var(--sub); margin-bottom: 2px; }
+  .trade-row-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .trade-row-actions button { flex: 1; }
 
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
@@ -392,6 +414,7 @@
       <button class="side-tab" data-tab="property">Property</button>
       <button class="side-tab" data-tab="bank">Secure Bank</button>
       <button class="side-tab" data-tab="research">Research</button>
+      <button class="side-tab" data-tab="trade">Trade</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
@@ -464,6 +487,11 @@
               <p class="dim" style="margin:6px 0 10px;">코인 <b id="shopExchangeCost">10,000</b>개 → 다이아 1개</p>
               <button class="btn-primary" id="exchangeDiamondBtn" style="width:100%;">교환하기</button>
             </div>
+            <div class="diamond-exchange-card" style="margin-top:14px;border-left-color:var(--stamina);">
+              <div class="diamond-exchange-title" style="color:var(--stamina);">🎲 상점 리롤</div>
+              <p class="dim" style="margin:0 0 10px;">지금 목록이 마음에 안 들면 다이아 <b id="shopRerollCost">2</b>개로 즉시 다시 뽑기(다음 자연 로테이션 시각은 그대로).</p>
+              <button class="btn-primary" id="rerollShopBtn" style="width:100%;">리롤하기</button>
+            </div>
           </div>
         </div>
       </div>
@@ -527,6 +555,46 @@
           <p class="dim">해금하면 Galaxy Map의 정예/악몽/극한 등급 행성에 원정을 보낼 수 있습니다 — 태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정하므로, 자리에 없어도(오프라인이어도) 가능합니다. 결과는 나중에 Hack Log 최상단에서 확인하세요.</p>
           <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">20</span>)</button>
         </div>
+      </div>
+
+      <div class="tab-panel" id="panel-trade">
+        <p class="panel-title">🤝 TRADE</p>
+        <p class="dim" style="margin-bottom:14px;">한 거래에서 오가는 코인은 두 사람 중 <b>레벨이 더 낮은 쪽</b> 자산(포켓+뱅크)의 1/3(현재 <span id="tradeCoinCap">0</span>)을 넘을 수 없습니다 — 고인물이 초보를 코인으로 그냥 키워주는 걸 막기 위한 제한입니다.</p>
+
+        <div class="trade-composer">
+          <div class="trade-composer-title">새 거래 제안</div>
+          <input id="tradeToUserId" type="text" placeholder="상대 아이디" style="width:100%;margin-bottom:12px;" />
+          <div class="trade-columns">
+            <div class="trade-column">
+              <div class="trade-column-title">📤 내가 줄 것</div>
+              <input id="tradeOfferCoins" type="number" placeholder="코인 (선택)" />
+              <div class="trade-item-add">
+                <select id="tradeOfferItemSelect"></select>
+                <input id="tradeOfferItemQty" type="number" placeholder="수량" min="1" value="1" />
+                <button class="btn-ghost" id="tradeOfferItemAddBtn">+</button>
+              </div>
+              <div class="trade-item-list" id="tradeOfferItemList"></div>
+            </div>
+            <div class="trade-column">
+              <div class="trade-column-title">📥 내가 받을 것</div>
+              <input id="tradeRequestCoins" type="number" placeholder="코인 (선택)" />
+              <div class="trade-item-add">
+                <select id="tradeRequestItemSelect"></select>
+                <input id="tradeRequestItemQty" type="number" placeholder="수량" min="1" value="1" />
+                <button class="btn-ghost" id="tradeRequestItemAddBtn">+</button>
+              </div>
+              <div class="trade-item-list" id="tradeRequestItemList"></div>
+            </div>
+          </div>
+          <button class="btn-primary" id="tradeSendBtn" style="width:100%;margin-top:12px;">거래 요청 보내기</button>
+        </div>
+
+        <p class="panel-subtitle">📥 받은 요청</p>
+        <div class="trade-list" id="tradeIncomingList"><p class="dim">불러오는 중...</p></div>
+        <p class="panel-subtitle">📤 보낸 요청</p>
+        <div class="trade-list" id="tradeOutgoingList"></div>
+        <p class="panel-subtitle">📜 최근 내역</p>
+        <div class="trade-list" id="tradeHistoryList"></div>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">

@@ -104,7 +104,7 @@ const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic
 // 사이 0.15, mythic는 legendary·secret 사이 0.025). forbidden은 0이라 기본 로테이션에는
 // 아예 안 뜨고, 연구로 얻는 보너스(레벨당 +2%)가 쌓여야만 언젠가 뜰 수 있다.
 const RARITY_META = {
-  common:    { chance: 0.65,  maxSlots: 3, label: "COMMON",    color: "#9a9a9a" },
+  common:    { chance: 1,     maxSlots: 3, label: "COMMON",    color: "#9a9a9a" }, // 항상 뜸(요청 반영)
   uncommon:  { chance: 0.20,  maxSlots: 2, label: "UNCOMMON",  color: "#4cd137" },
   rare:      { chance: 0.15,  maxSlots: 1, label: "RARE",      color: "#00d4ff" },
   epic:      { chance: 0.10,  maxSlots: 1, label: "EPIC",      color: "#b060e8" },
@@ -216,6 +216,50 @@ function computeAttackStaminaCost(attackerLevel, defenderLevel, online) {
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
 const DIAMOND_EXCHANGE_COIN_COST = 10000; // 코인 10,000개 -> 다이아 1개(단방향, 코인 싱크)
+const SHOP_REROLL_DIAMOND_COST = 2; // 다이아 2개로 자연 타이머 안 기다리고 내 상점 즉시 리롤
+
+// ── Trade — 유저 간 코인+아이템 동시 거래. "고인물이 초보를 코인으로 그냥 키워주는" 것을
+//    막기 위해, 한 번에 오가는 코인은 두 사람 중 레벨이 더 낮은 쪽 자산의 1/3을 넘을 수 없다.
+//    "지금까지 얻은 코인의 총합"을 정확히 추적하려면 코인이 늘어나는 모든 지점(작업/PvP/행성/
+//    Property 등)을 다 건드려야 해서 위험이 크므로, 대신 "현재 총자산(포켓+뱅크)"으로 대체했다
+//    — 실제 누적 수익보다 항상 작거나 같은 값이라(다 쓰고 나면 줄어드니) 오히려 더 보수적인
+//    상한이 된다. ──
+const TRADE_COIN_CAP_DIVISOR = 3;
+const TRADE_MAX_PENDING_OUTGOING = 10;
+function tradeCoinCap(row) { return Math.floor((row.pocket_coins + row.bank_coins) / TRADE_COIN_CAP_DIVISOR); }
+function validateTradeCoinAmounts(fromRow, toRow, offerCoins, requestCoins) {
+  const lowerRow = fromRow.level <= toRow.level ? fromRow : toRow;
+  const cap = tradeCoinCap(lowerRow);
+  if (offerCoins > cap) return "제안한 코인이 너무 많습니다 — 레벨이 더 낮은 쪽 자산의 1/3(" + fmtNum(cap) + ")을 넘을 수 없습니다.";
+  if (requestCoins > cap) return "요구한 코인이 너무 많습니다 — 레벨이 더 낮은 쪽 자산의 1/3(" + fmtNum(cap) + ")을 넘을 수 없습니다.";
+  return null;
+}
+function parseTradeItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(function (it) { return { itemId: String(it && it.itemId || ""), qty: parseInt(it && it.qty, 10) }; })
+    .filter(function (it) { return SHOP_ITEMS[it.itemId] && Number.isInteger(it.qty) && it.qty > 0; });
+}
+async function checkItemAvailability(env, userId, items) {
+  const equippedCount = await equippedCountMap(env, userId);
+  for (const it of items) {
+    const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(userId, it.itemId).first();
+    const available = (owned ? owned.qty : 0) - (equippedCount[it.itemId] || 0);
+    if (available < it.qty) return SHOP_ITEMS[it.itemId].name + "이(가) 부족합니다(장착 중인 건 제외하고 " + available + "개 보유).";
+  }
+  return null;
+}
+async function transferTradeItems(env, fromUserId, toUserId, items) {
+  const ops = [];
+  for (const it of items) {
+    ops.push(env.DB.prepare("UPDATE arena_inventory SET qty = qty - ? WHERE user_id=? AND item_id=?").bind(it.qty, fromUserId, it.itemId));
+    ops.push(env.DB.prepare(
+      "INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + ?"
+    ).bind(toUserId, it.itemId, it.qty, it.qty));
+  }
+  if (ops.length) await env.DB.batch(ops);
+  await env.DB.prepare("DELETE FROM arena_inventory WHERE qty <= 0").run();
+}
 const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
@@ -298,13 +342,17 @@ const PLANET_ATTACK_STAMINA_COST = 2;
 // 예전엔 strong(110/95)이 사실상 최고 난이도였는데, 레벨 30 정도만 돼도 장비+봇 몇 기만으로
 // 가볍게 이겨버린다는 피드백을 받아서 그 위로 3단계(정예/악몽/극한)를 더 얹었다. 극한은
 // 등장 확률 2%로 아주 드물지만, 뜨면 왕급 장비 없이는 사실상 못 이기는 수준으로 잡았다.
+// 악몽/극한이 리롤마다 너무 자주 뜬다는 피드백으로 가중치를 크게 낮췄다 — 48개 행성 기준
+// 기대값이 악몽은 회당 ~0.7기(뜨는 리롤 절반 정도), 극한은 ~0.24기(리롤 5번 중 1번꼴)라
+// "뜨면 특별한" 수준까지 희소해졌다. 각 리롤은 이전 결과와 완전히 무관한 새 추첨이라(seed가
+// 슬롯+시간구간으로만 정해짐) 낮은 확률에 걸리지 않으면 그 즉시 사라지고 다시 안 뜬다.
 const PLANET_BOT_TIERS = {
-  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 15,   weight: 0.35 },
-  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 50,   weight: 0.27 },
-  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 160,  weight: 0.18 },
-  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 400,  weight: 0.12 },
-  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 1000, weight: 0.06 },
-  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 2800, weight: 0.02 },
+  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 15,   weight: 0.40 },
+  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 50,   weight: 0.30 },
+  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 160,  weight: 0.20 },
+  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 400,  weight: 0.08 },
+  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 1000, weight: 0.015 },
+  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 2800, weight: 0.005 },
 };
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
 // 아직 아무도 정복하지 않은 행성은 15분마다 난이도가 통째로 리롤된다(슬롯 번호+시간 구간으로
@@ -360,10 +408,12 @@ function effectiveRarityChance(rarity, researchLevel) {
 
 // ── 상점은 이제 유저별 로컬 로테이션이다(예전엔 전 서버 공용이라 모두가 같은 상점을 봤음) —
 //    씨앗에 userId 해시를 섞어서 같은 4분 구간에도 사람마다 다른 상점이 뜨게 한다. 재고
-//    테이블(arena_shop_stock)도 (user_id, item_id, bucket) 단위로 따로 관리한다. ──
-function computeShopRotation(nowMs, userId, researchLevel) {
+//    테이블(arena_shop_stock)도 (user_id, item_id, bucket) 단위로 따로 관리한다. rerollNonce는
+//    다이아로 즉시 리롤(POST /shop/reroll)할 때만 바뀌는 값 — 자연 타이머(bucket)는 그대로
+//    두고 아이템 목록만 다시 뽑는다(재고 카운터는 bucket 기준이라 리롤해도 초기화 안 됨). ──
+function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
   const bucket = Math.floor((nowMs || Date.now()) / SHOP_ROTATION_MS);
-  const rng = mulberry32((bucket ^ hashStr(userId || "")) | 0);
+  const rng = mulberry32((bucket ^ hashStr(userId || "") ^ (rerollNonce || 0)) | 0);
   const byRarity = {};
   for (const id in SHOP_ITEMS) {
     const item = SHOP_ITEMS[id];
@@ -432,6 +482,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN diamonds INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -465,6 +516,17 @@ async function ensureSchema(env) {
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_shop_stock2 (user_id TEXT NOT NULL, item_id TEXT NOT NULL, bucket INTEGER NOT NULL, bought INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, item_id, bucket))"
   );
+  // arena_trades — 유저 간 거래(코인+아이템 동시 제안). offer_items/request_items는
+  // [{itemId,qty}] JSON 문자열로 저장한다(품목 수가 가변적이라 별도 테이블보다 이쪽이 간단).
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+    "from_user_id TEXT NOT NULL, from_name TEXT NOT NULL, to_user_id TEXT NOT NULL, to_name TEXT NOT NULL, " +
+    "offer_coins INTEGER NOT NULL DEFAULT 0, offer_items TEXT NOT NULL DEFAULT '[]', " +
+    "request_coins INTEGER NOT NULL DEFAULT 0, request_items TEXT NOT NULL DEFAULT '[]', " +
+    "status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, resolved_at INTEGER)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_trades_to ON arena_trades(to_user_id, status)"); } catch (e) {}
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_trades_from ON arena_trades(from_user_id, status)"); } catch (e) {}
   schemaReady = true;
 }
 
@@ -723,7 +785,11 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   }
   const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
   const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
-  const newCoinsPerHour = isBotPlanet ? PLANET_BOT_TIERS[effectiveTierKey].coinsPerHour : planet.coins_per_hour;
+  // 홈 행성은 coins_per_hour가 항상 0(순수 거점이라 수익이 없음)이라, 정복해서 일반 행성으로
+  // 강등시킬 때 그대로 0을 물려주면 "빼앗아도 쓸모없는 행성"이 된다 — medium 등급 시세를
+  // 기본값으로 붙여준다(적당히 쓸만한 수준, 과하지 않게).
+  const newCoinsPerHour = isBotPlanet ? PLANET_BOT_TIERS[effectiveTierKey].coinsPerHour
+    : planet.is_home ? PLANET_BOT_TIERS.medium.coinsPerHour : planet.coins_per_hour;
 
   let captured = false, lootCoins = 0;
   if (attackerWins) {
@@ -739,8 +805,10 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     const ownedCount = (ownedCountRow && ownedCountRow.cnt) || 0;
     if (ownedCount < PLANET_MAX_OWNED_WILD) {
       captured = true;
+      // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
+      // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
       await env.DB.prepare(
-        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
+        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
       ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
     }
     attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
@@ -1057,6 +1125,137 @@ export default {
         return json({ ok: true, state: publicState(row, combat) });
       }
 
+      // ══════════════════════════════════════════════════════════
+      //  Trade — 유저 간 거래. 요청(pending) → 상대가 승낙(accepted)하면 그 순간 코인+아이템이
+      //  동시에 오간다. 거절(declined)/취소(cancelled)는 아무 일도 안 일어난다.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /trade — 받은 요청(내가 to)/보낸 요청(내가 from) 중 대기중인 것 + 최근 처리 내역. ──
+      if (request.method === "GET" && path === "/trade") {
+        const incoming = await env.DB.prepare("SELECT * FROM arena_trades WHERE to_user_id = ? AND status = 'pending' ORDER BY created_at DESC").bind(user.userId).all();
+        const outgoing = await env.DB.prepare("SELECT * FROM arena_trades WHERE from_user_id = ? AND status = 'pending' ORDER BY created_at DESC").bind(user.userId).all();
+        const history = await env.DB.prepare(
+          "SELECT * FROM arena_trades WHERE (to_user_id = ? OR from_user_id = ?) AND status != 'pending' ORDER BY resolved_at DESC LIMIT 15"
+        ).bind(user.userId, user.userId).all();
+        function fmtRow(r) {
+          return {
+            id: r.id, fromUserId: r.from_user_id, fromName: r.from_name, toUserId: r.to_user_id, toName: r.to_name,
+            offerCoins: r.offer_coins, offerItems: JSON.parse(r.offer_items || "[]"),
+            requestCoins: r.request_coins, requestItems: JSON.parse(r.request_items || "[]"),
+            status: r.status, createdAt: r.created_at, resolvedAt: r.resolved_at,
+          };
+        }
+        return json({
+          incoming: incoming.results.map(fmtRow), outgoing: outgoing.results.map(fmtRow), history: history.results.map(fmtRow),
+          coinCap: tradeCoinCap(await loadOrCreateUser(env, user.userId, user.realName)),
+        });
+      }
+
+      // ── POST /trade/request { toUserId, offerCoins, offerItems, requestCoins, requestItems } ──
+      if (request.method === "POST" && path === "/trade/request") {
+        const body = await request.json().catch(function () { return {}; });
+        const toUserId = String(body.toUserId || "").trim();
+        if (!toUserId || toUserId === user.userId) return json({ error: "올바른 상대를 지정하세요." }, 400);
+        const offerCoins = Math.max(0, parseInt(body.offerCoins, 10) || 0);
+        const requestCoins = Math.max(0, parseInt(body.requestCoins, 10) || 0);
+        const offerItems = parseTradeItems(body.offerItems);
+        const requestItems = parseTradeItems(body.requestItems);
+        if (offerCoins === 0 && requestCoins === 0 && !offerItems.length && !requestItems.length) {
+          return json({ error: "제안할 코인이나 아이템을 하나 이상 넣으세요." }, 400);
+        }
+
+        const fromRow = await loadOrCreateUser(env, user.userId, user.realName);
+        const toRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(toUserId).first();
+        if (!toRow) return json({ error: "상대를 찾을 수 없습니다(아직 접속 기록이 없을 수 있습니다)." }, 404);
+
+        if (fromRow.pocket_coins < offerCoins) return json({ error: "제안한 코인만큼 보유하고 있지 않습니다." }, 400);
+        const itemErr = await checkItemAvailability(env, user.userId, offerItems);
+        if (itemErr) return json({ error: itemErr }, 400);
+        const coinErr = validateTradeCoinAmounts(fromRow, toRow, offerCoins, requestCoins);
+        if (coinErr) return json({ error: coinErr }, 400);
+
+        const pendingCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_trades WHERE from_user_id = ? AND status = 'pending'").bind(user.userId).first();
+        if ((pendingCountRow && pendingCountRow.cnt) >= TRADE_MAX_PENDING_OUTGOING) {
+          return json({ error: "대기 중인 보낸 거래 요청이 너무 많습니다(최대 " + TRADE_MAX_PENDING_OUTGOING + "개)." }, 400);
+        }
+
+        const now = Date.now();
+        await env.DB.prepare(
+          "INSERT INTO arena_trades (from_user_id, from_name, to_user_id, to_name, offer_coins, offer_items, request_coins, request_items, status, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+        ).bind(user.userId, user.realName, toUserId, toRow.real_name, offerCoins, JSON.stringify(offerItems), requestCoins, JSON.stringify(requestItems), now).run();
+
+        return json({ ok: true });
+      }
+
+      // ── POST /trade/accept { tradeId } — 받은 요청만 승낙할 수 있다. 승낙 순간 다시 한번
+      //    전부 재검증한다(요청 이후 상대가 코인을 다 쓰거나 레벨이 바뀌었을 수 있으므로). ──
+      if (request.method === "POST" && path === "/trade/accept") {
+        const body = await request.json().catch(function () { return {}; });
+        const tradeId = parseInt(body.tradeId, 10);
+        const trade = await env.DB.prepare("SELECT * FROM arena_trades WHERE id = ?").bind(tradeId).first();
+        if (!trade || trade.status !== "pending") return json({ error: "이미 처리됐거나 존재하지 않는 거래입니다." }, 400);
+        if (trade.to_user_id !== user.userId) return json({ error: "받은 요청만 승낙할 수 있습니다." }, 403);
+
+        const fromRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(trade.from_user_id).first();
+        const toRow = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!fromRow) return json({ error: "상대를 찾을 수 없습니다." }, 400);
+
+        const offerItems = JSON.parse(trade.offer_items || "[]");
+        const requestItems = JSON.parse(trade.request_items || "[]");
+
+        if (fromRow.pocket_coins < trade.offer_coins) return json({ error: "상대가 제안한 코인을 더 이상 보유하고 있지 않습니다." }, 400);
+        if (toRow.pocket_coins < trade.request_coins) return json({ error: "요구받은 코인을 보유하고 있지 않습니다." }, 400);
+        const fromItemErr = await checkItemAvailability(env, trade.from_user_id, offerItems);
+        if (fromItemErr) return json({ error: "상대 쪽 아이템 문제: " + fromItemErr }, 400);
+        const toItemErr = await checkItemAvailability(env, user.userId, requestItems);
+        if (toItemErr) return json({ error: toItemErr }, 400);
+        const coinErr = validateTradeCoinAmounts(fromRow, toRow, trade.offer_coins, trade.request_coins);
+        if (coinErr) return json({ error: coinErr }, 400);
+
+        const now = Date.now();
+        const newFromCoins = fromRow.pocket_coins - trade.offer_coins + trade.request_coins;
+        const newToCoins = toRow.pocket_coins - trade.request_coins + trade.offer_coins;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(newFromCoins, trade.from_user_id),
+          env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(newToCoins, user.userId),
+          env.DB.prepare("UPDATE arena_trades SET status='accepted', resolved_at=? WHERE id=?").bind(now, tradeId),
+        ]);
+        if (offerItems.length) await transferTradeItems(env, trade.from_user_id, user.userId, offerItems);
+        if (requestItems.length) await transferTradeItems(env, user.userId, trade.from_user_id, requestItems);
+
+        const coinsNoteFrom = trade.request_coins - trade.offer_coins;
+        const coinsNoteTo = trade.offer_coins - trade.request_coins;
+        await insertLog(env, trade.from_user_id, "trade", user.userId, user.realName, "done", coinsNoteFrom, 0);
+        await insertLog(env, user.userId, "trade", trade.from_user_id, trade.from_name, "done", coinsNoteTo, 0);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, state: publicState(row, combat) });
+      }
+
+      // ── POST /trade/decline { tradeId } — 받은 요청 거절(상대에게 알림은 따로 없음, 그냥 사라짐). ──
+      if (request.method === "POST" && path === "/trade/decline") {
+        const body = await request.json().catch(function () { return {}; });
+        const tradeId = parseInt(body.tradeId, 10);
+        const trade = await env.DB.prepare("SELECT * FROM arena_trades WHERE id = ?").bind(tradeId).first();
+        if (!trade || trade.status !== "pending") return json({ error: "이미 처리됐거나 존재하지 않는 거래입니다." }, 400);
+        if (trade.to_user_id !== user.userId) return json({ error: "받은 요청만 거절할 수 있습니다." }, 403);
+        await env.DB.prepare("UPDATE arena_trades SET status='declined', resolved_at=? WHERE id=?").bind(Date.now(), tradeId).run();
+        return json({ ok: true });
+      }
+
+      // ── POST /trade/cancel { tradeId } — 내가 보낸 요청 취소. ──
+      if (request.method === "POST" && path === "/trade/cancel") {
+        const body = await request.json().catch(function () { return {}; });
+        const tradeId = parseInt(body.tradeId, 10);
+        const trade = await env.DB.prepare("SELECT * FROM arena_trades WHERE id = ?").bind(tradeId).first();
+        if (!trade || trade.status !== "pending") return json({ error: "이미 처리됐거나 존재하지 않는 거래입니다." }, 400);
+        if (trade.from_user_id !== user.userId) return json({ error: "내가 보낸 요청만 취소할 수 있습니다." }, 403);
+        await env.DB.prepare("UPDATE arena_trades SET status='cancelled', resolved_at=? WHERE id=?").bind(Date.now(), tradeId).run();
+        return json({ ok: true });
+      }
+
       // ── GET /items — 로테이션과 무관한 SHOP_ITEMS 전체 카탈로그(이름/등급/타입 조회용).
       //    이미 보유 중인 아이템은 지금 상점(rotation)에 안 떠 있을 수도 있으므로, 장착 드롭다운
       //    등에서 "이미 장착된 아이템"의 이름/등급을 보여주려면 로테이션과 무관한 전체 목록이 필요하다. ──
@@ -1078,7 +1277,7 @@ export default {
         const ownedMap = {};
         ownedRes.results.forEach(function (o) { ownedMap[o.item_id] = o.qty; });
         const equippedCount = await equippedCountMap(env, user.userId);
-        const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level);
+        const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level, row0.shop_reroll_nonce);
         const stockRes = await env.DB.prepare("SELECT item_id, bought FROM arena_shop_stock2 WHERE user_id = ? AND bucket = ?").bind(user.userId, rotation.bucket).all();
         const boughtMap = {};
         stockRes.results.forEach(function (s) { boughtMap[s.item_id] = s.bought; });
@@ -1095,7 +1294,10 @@ export default {
             totalStock: totalStock, remainingStock: remainingStock,
           });
         });
-        return json({ items: items, nextRotationAt: rotation.nextRotationAt, rotationMs: SHOP_ROTATION_MS, diamonds: row0.diamonds, diamondExchangeCost: DIAMOND_EXCHANGE_COIN_COST });
+        return json({
+          items: items, nextRotationAt: rotation.nextRotationAt, rotationMs: SHOP_ROTATION_MS,
+          diamonds: row0.diamonds, diamondExchangeCost: DIAMOND_EXCHANGE_COIN_COST, rerollCost: SHOP_REROLL_DIAMOND_COST,
+        });
       }
 
       // ── POST /shop/exchange-diamond — 코인 → 다이아 교환(단방향). qty로 여러 개 한 번에 가능. ──
@@ -1111,13 +1313,25 @@ export default {
         return json({ ok: true, pocketCoins: row.pocket_coins, diamonds: row.diamonds });
       }
 
+      // ── POST /shop/reroll — 다이아 2개로 자연 타이머를 기다리지 않고 내 상점 목록만 즉시
+      //    다시 뽑는다. rerollNonce를 1 늘리는 게 전부라 다음 자연 로테이션 시각(nextRotationAt)
+      //    자체는 안 바뀐다 — "지금 이 목록이 마음에 안 들 때 한 번 더 보는" 용도. ──
+      if (request.method === "POST" && path === "/shop/reroll") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.diamonds < SHOP_REROLL_DIAMOND_COST) return json({ error: "다이아가 부족합니다. (필요 " + SHOP_REROLL_DIAMOND_COST + ")" }, 400);
+        row.diamonds -= SHOP_REROLL_DIAMOND_COST;
+        row.shop_reroll_nonce += 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, shop_reroll_nonce=? WHERE user_id=?").bind(row.diamonds, row.shop_reroll_nonce, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds });
+      }
+
       if (request.method === "POST" && path === "/shop/buy") {
         const body = await request.json().catch(function () { return {}; });
         const itemId = body.itemId;
         const item = SHOP_ITEMS[itemId];
         if (!item) return json({ error: "알 수 없는 아이템입니다." }, 400);
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level);
+        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce);
         if (rotation.itemIds.indexOf(itemId) === -1) return json({ error: "지금 상점에 없는 아이템입니다(로테이션이 바뀌었어요)." }, 400);
 
         if (row.pocket_coins < item.price) return json({ error: "코인이 부족합니다." }, 400);
@@ -1149,9 +1363,10 @@ export default {
 
       if (request.method === "GET" && path === "/inventory") {
         const res = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
+        const equippedCount = await equippedCountMap(env, user.userId);
         const items = res.results.map(function (r) {
           const item = SHOP_ITEMS[r.item_id];
-          return Object.assign({ id: r.item_id, qty: r.qty }, item, {
+          return Object.assign({ id: r.item_id, qty: r.qty, available: r.qty - (equippedCount[r.item_id] || 0) }, item, {
             rarityLabel: item ? RARITY_META[item.rarity].label : null,
             rarityColor: item ? RARITY_META[item.rarity].color : null,
           });
@@ -1451,7 +1666,8 @@ export default {
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             coinsPerHour = t.coinsPerHour;
-          } else if (p.owner_user_id && !p.is_home) {
+          } else if (p.owner_user_id) {
+            // 홈 행성도 이제 공격 대상이라(요청 반영) 주인의 실전 전투력을 그대로 보여준다.
             if (!ownerCombatCache[p.owner_user_id]) {
               const ownerRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.owner_user_id).first();
               ownerCombatCache[p.owner_user_id] = ownerRow ? await totalCombatStats(env, ownerRow) : null;
@@ -1466,7 +1682,7 @@ export default {
             botTier: tierKey, botTierLabel: tierKey ? PLANET_BOT_TIERS[tierKey].label : null,
             combatStats: combatStats,
             coinsPerHour: coinsPerHour, pendingCoins: pendingCoins,
-            attackable: !p.is_home && !mine,
+            attackable: !mine,
             expeditionEligible: !!(tierKey && ["elite", "nightmare", "apex"].indexOf(tierKey) !== -1),
           };
         }));
@@ -1502,6 +1718,33 @@ export default {
         return json({ ok: true, collected: total, pocketCoins: row.pocket_coins });
       }
 
+      // ── POST /planets/abandon { planetId } — 정복한 야생 행성을 포기한다(홈 행성은 포기 불가 —
+      //    ensureHomePlanet이 어차피 하나 없으면 새로 만들어주므로 포기해도 의미가 없고, 유저를
+      //    거점 없는 상태로 만들지 않기 위해 막아둔다). 먼저 대기 수익을 정산해준 뒤 소유권을
+      //    풀어서 다시 무주인(PVE 봇이 지키는) 행성으로 되돌린다 — 이제 아무나(자신 포함) 다시
+      //    정복할 수 있고 PLANET_MAX_OWNED_WILD 한도에서도 바로 빠진다. ──
+      if (request.method === "POST" && path === "/planets/abandon") {
+        const body = await request.json().catch(function () { return {}; });
+        const planetId = parseInt(body.planetId, 10);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ? AND owner_user_id = ?").bind(planetId, user.userId).first();
+        if (!planet) return json({ error: "내가 소유한 행성이 아닙니다." }, 400);
+        if (planet.is_home) return json({ error: "홈 행성은 포기할 수 없습니다." }, 400);
+
+        const now = Date.now();
+        const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
+        const collected = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
+        if (collected > 0) {
+          row.pocket_coins += collected;
+          await env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id).run();
+        }
+        await env.DB.prepare(
+          "UPDATE arena_planets SET owner_user_id=NULL, owner_name=NULL, coins_per_hour=0, last_collect=?, captured_at=NULL WHERE id=?"
+        ).bind(now, planet.id).run();
+
+        return json({ ok: true, collected: collected, pocketCoins: row.pocket_coins });
+      }
+
       // ── POST /planets/attack — 야생 행성(봇 또는 다른 유저 소유)을 상대로 기존 PvP 전투
       //    엔진(태세+3라운드 타이밍 미니게임)을 그대로 재사용해 싸운다. 이기면 정복(한도 내에서)
       //    + 그동안 쌓인 수익 약탈, 지면 HP만 깎인다. 홈 행성은 애초에 대상에서 제외. ──
@@ -1519,7 +1762,8 @@ export default {
 
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
         if (!planet) return json({ error: "존재하지 않는 행성입니다." }, 404);
-        if (planet.is_home) return json({ error: "홈 행성은 공격할 수 없습니다." }, 400);
+        // 홈 행성도 이제 공격 대상이다 — 정복하면 그 즉시 일반 행성으로 강등되고(is_home=0),
+        // 원래 주인은 다음 접속 때 ensureHomePlanet이 새 홈 행성을 자동으로 만들어준다.
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
 
         const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
