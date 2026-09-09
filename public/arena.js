@@ -201,6 +201,7 @@
   let currentTab = "jobs";
   const TAB_RENDERERS = {
     jobs: renderJobsTab,
+    galaxy: renderGalaxyTab,
     pvp: renderPvpTab,
     shop: renderShopTab,
     bots: renderBotsTab,
@@ -339,6 +340,57 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  // ── Galaxy Map — 각자의 홈 행성(공격 불가) + 야생 행성(PVE 봇 또는 다른 유저가 정복해 둔 것)
+  //    목록. 야생 행성 공격은 PvP와 똑같은 태세+타이밍 시퀀스를 그대로 재사용한다. ──
+  async function renderGalaxyTab() {
+    if (!state) return;
+    const panel = $("panel-galaxy");
+    const grid = panel.querySelector(".planet-grid");
+    grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
+    try {
+      const { planets, myOwnedWild, maxOwnedWild } = await api("/planets");
+      $("galaxyOwnedCount").textContent = myOwnedWild;
+      $("galaxyMaxOwned").textContent = maxOwnedWild;
+      $("galaxyMaxOwned2").textContent = maxOwnedWild;
+      const pendingTotal = planets.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
+      $("galaxyPending").textContent = fmt(pendingTotal);
+      grid.innerHTML = planets.map((p) => {
+        const cls = p.isHome ? "home" : p.mine ? "mine" : "";
+        const ownerLine = p.isHome ? "🏠 홈 행성" : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "";
+        const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
+        const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
+        const btn = p.attackable
+          ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
+          : '<button class="btn-ghost" disabled>' + (p.isHome ? "홈 행성" : "내 행성") + "</button>";
+        return (
+          '<div class="planet-card ' + cls + '">' +
+          '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
+          '<div class="planet-card-owner">' + ownerLine + "</div>" +
+          tierLine + rateLine + btn +
+          "</div>"
+        );
+      }).join("");
+      grid.querySelectorAll("button[data-planet]").forEach((btn) => {
+        const planet = planets.find((p) => String(p.id) === btn.dataset.planet);
+        btn.addEventListener("click", () => openPlanetAttackSequence(planet));
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initGalaxyButtons() {
+    const btn = $("galaxyCollectBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await api("/planets/collect", { method: "POST" });
+        toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 수거" : "수거할 대기 수익이 없습니다.");
+        state.pocketCoins = r.pocketCoins; renderHeader(); renderGalaxyTab();
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    });
+  }
+
   // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
   //    실제 검증/계산은 항상 서버가 다시 한다. ──
   const STANCE_META = {
@@ -352,23 +404,34 @@
   function closeAttackModal() { stopAttackAnimation(); $("attackModal").style.display = "none"; }
 
   // ── 공격 시퀀스 진입점 — 태세 선택 → 3라운드 타이밍 미니게임 → 결과, 순서로 진행한다.
+  //    PvP(상대 유저)와 Galaxy Map(행성 정복) 둘 다 같은 시퀀스를 쓴다 — ctx.mode로 어느 쪽인지
+  //    구분해서 마지막에 다른 엔드포인트(/arena/attack vs /planets/attack)를 호출한다.
   //    첫 화면을 위해 정찰(스태미나 소모 없음)을 한 번 조용히 호출해 상대의 평소 태세를 보여준다. ──
   async function openAttackSequence(targetUserId) {
     $("attackModal").style.display = "flex";
     $("attackModalBody").innerHTML = '<p class="dim">정보 조회 중...</p>';
     try {
       const scan = await api("/arena/scan", { method: "POST", body: { targetUserId } });
-      renderStanceStep(targetUserId, scan);
+      renderStanceStep({ mode: "pvp", targetUserId: targetUserId }, scan.realName,
+        scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.");
     } catch (e) {
       $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
     }
   }
 
-  function renderStanceStep(targetUserId, scan) {
+  function openPlanetAttackSequence(planet) {
+    $("attackModal").style.display = "flex";
+    const hint = planet.botTier
+      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다."
+      : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b> — 정복하면 그동안 쌓인 수익을 약탈합니다.";
+    renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
+  }
+
+  function renderStanceStep(ctx, displayName, hint) {
     const body = $("attackModalBody");
     body.innerHTML =
-      "<h3>⚔️ ATTACK SEQUENCE — " + escapeHtml(scan.realName) + "</h3>" +
-      '<p class="stance-hint">' + (scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.") + "</p>" +
+      "<h3>⚔️ ATTACK SEQUENCE — " + escapeHtml(displayName) + "</h3>" +
+      '<p class="stance-hint">' + hint + "</p>" +
       '<div class="stance-grid">' +
       Object.keys(STANCE_META).map((id) => {
         const m = STANCE_META[id];
@@ -376,14 +439,14 @@
       }).join("") +
       "</div>";
     body.querySelectorAll("button[data-stance]").forEach((btn) => {
-      btn.addEventListener("click", () => startTimingRounds(targetUserId, btn.dataset.stance));
+      btn.addEventListener("click", () => startTimingRounds(ctx, btn.dataset.stance));
     });
   }
 
   // ── 3라운드 타이밍 미니게임 — 좌우로 왕복하는 마커를 초록 구간(스윗스팟)에서 멈춰야 정확도가
   //    높다. 정확도는 서버에서 ±15% 배율로만 반영되므로(bounded), 스탯 차이를 완전히 뒤집진
   //    못하지만 비슷한 상대끼리는 이 한 방으로 승부가 갈릴 수 있다. ──
-  function startTimingRounds(targetUserId, stance) {
+  function startTimingRounds(ctx, stance) {
     const timingScores = [];
     function runRound(roundIndex) {
       const body = $("attackModalBody");
@@ -423,19 +486,23 @@
 
         setTimeout(() => {
           if (roundIndex < 2) runRound(roundIndex + 1);
-          else finishAttack(targetUserId, stance, timingScores);
+          else finishAttack(ctx, stance, timingScores);
         }, 550);
       }, { once: true });
     }
     runRound(0);
   }
 
-  async function finishAttack(targetUserId, stance, timingScores) {
+  async function finishAttack(ctx, stance, timingScores) {
     const body = $("attackModalBody");
     body.innerHTML = '<p class="dim" style="text-align:center;">침투 시퀀스 분석 중...</p>';
     try {
-      const r = await api("/arena/attack", { method: "POST", body: { targetUserId, stance, timingScores } });
-      const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
+      const isPlanet = ctx.mode === "planet";
+      const endpoint = isPlanet ? "/planets/attack" : "/arena/attack";
+      const payload = isPlanet
+        ? { planetId: ctx.planetId, stance: stance, timingScores: timingScores }
+        : { targetUserId: ctx.targetUserId, stance: stance, timingScores: timingScores };
+      const r = await api(endpoint, { method: "POST", body: payload });
       const rpsNote = r.rpsMod > 0 ? " · 상성 우위 +" + Math.round(r.rpsMod * 100) + "%" : r.rpsMod < 0 ? " · 상성 열세 " + Math.round(r.rpsMod * 100) + "%" : "";
       // 전투 진행 수치 — 라운드별 내 공격력 vs 상대 방어력, 타이밍 정확도를 그대로 보여준다.
       const roundDetailHtml =
@@ -449,6 +516,15 @@
           "</div>"
         ).join("") +
         "</div>";
+      let resultDetail;
+      if (isPlanet) {
+        resultDetail = r.attackerWins
+          ? (r.captured ? "🌍 행성 정복! " : "(정복 한도 초과 — 약탈만) ") + "+" + fmt(r.lootCoins) + " 코인 약탈"
+          : "정복 실패";
+      } else {
+        const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
+        resultDetail = (r.attackerWins ? "약탈 +" + fmt(r.coinsDelta) + " 코인" : "약탈 실패") + (bonusNote ? "<br>" + bonusNote : "");
+      }
       body.innerHTML =
         '<div class="round-dots">' + r.rounds.map((rd) => '<div class="round-dot ' + (rd.win ? "win" : "lose") + '">' + (rd.win ? "✓" : "✗") + "</div>").join("") + "</div>" +
         '<div class="attack-stat-line">내 ATK ' + fmt(r.myAtk) + " (" + escapeHtml(r.stanceLabel) + ")" + rpsNote + " · 상대 DEF " + fmt(r.theirDef) + "</div>" +
@@ -456,13 +532,11 @@
         '<div class="attack-result-title ' + (r.attackerWins ? "win" : "lose") + '">' +
         (r.attackerWins ? (r.sweep ? "🏆 완벽한 승리!" : "✅ 침투 성공") + (r.isCrit ? " · CRITICAL!" : "") : "❌ 침투 실패") +
         "</div>" +
-        '<div class="attack-result-detail">' +
-        (r.attackerWins ? "약탈 +" + fmt(r.coinsDelta) + " 코인" : "약탈 실패") +
-        (bonusNote ? "<br>" + bonusNote : "") +
-        "</div>" +
+        '<div class="attack-result-detail">' + resultDetail + "</div>" +
         '<button class="attack-close-btn" id="attackResultCloseBtn">확인</button>';
       state = r.state; renderHeader();
-      if (currentTab === "pvp") renderPvpTab();
+      if (!isPlanet && currentTab === "pvp") renderPvpTab();
+      if (isPlanet && currentTab === "galaxy") renderGalaxyTab();
       $("attackResultCloseBtn").addEventListener("click", closeAttackModal);
     } catch (e) {
       body.innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
@@ -476,12 +550,9 @@
     if (it.type === "armor") return "DEF +" + it.value;
     if (it.type === "core") return "치명타 +" + it.value + "%";
     if (it.effect === "stamina") return "Stamina +" + it.value;
-    if (it.effect === "stamina_full") return "Stamina 100% 회복";
     if (it.effect === "energy") return "Energy +" + it.value;
-    if (it.effect === "energy_full") return "Energy 100% 회복";
     if (it.effect === "heal_flat") return "HP +" + it.value;
-    if (it.effect === "heal_full") return "HP 100% 회복";
-    if (it.effect === "heal_and_energy_full") return "HP+Energy 100% 회복";
+    if (it.effect === "heal_and_energy") return "HP +" + it.value + " · Energy +" + it.value2;
     if (it.effect === "self_shield") return Math.round(it.value / 3600000) + "시간 자가 보호막";
     return "";
   }
@@ -506,14 +577,19 @@
       shopNextRotationAt = nextRotationAt;
       grid.innerHTML = items.map((it) => {
         const capped = it.maxOwned && it.owned >= it.maxOwned;
+        const soldOut = it.totalStock != null && it.remainingStock <= 0;
+        const disabled = capped || soldOut || state.pocketCoins < it.price;
+        const btnLabel = soldOut ? "품절" : capped ? "보유 한도" : "구매";
+        const stockLine = it.totalStock != null ? '<div class="shop-card-type" style="color:' + (soldOut ? "var(--danger)" : "var(--sub)") + ';">재고 ' + it.remainingStock + " / " + it.totalStock + "</div>" : "";
         return (
         '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
         '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned + (it.maxOwned ? "/" + it.maxOwned : "") : (it.maxOwned ? " · 최대 " + it.maxOwned + "개" : "")) + "</div>" +
+        stockLine +
         '<div class="rarity-badge" style="color:' + it.rarityColor + '">' + it.rarityLabel + "</div>" +
         '<div class="shop-card-stat">' + itemStatLabel(it) + "</div>" +
         '<div class="shop-card-price">💰 ' + fmt(it.price) + "</div>" +
-        '<button class="btn-primary" data-buy="' + it.id + '"' + (capped || state.pocketCoins < it.price ? " disabled" : "") + ">" + (capped ? "보유 한도" : "구매") + "</button></div>"
+        '<button class="btn-primary" data-buy="' + it.id + '"' + (disabled ? " disabled" : "") + ">" + btnLabel + "</button></div>"
         );
       }).join("");
       grid.querySelectorAll("button[data-buy]").forEach((btn) => {
@@ -659,7 +735,9 @@
           '<div class="property-card-owned">보유 ' + d.owned + "대</div>" +
           '<div class="property-card-price">💰 ' + fmt(d.price) + "</div>" +
           '<button class="btn-primary" data-buydevice="' + d.id + '"' + (atCap || state.pocketCoins < d.price ? " disabled" : "") + ">" +
-          (atCap ? "한도 도달" : "구매") + "</button></div>"
+          (atCap ? "한도 도달" : "구매") + "</button>" +
+          (d.owned > 0 ? '<button class="btn-ghost" data-selldevice="' + d.id + '" style="margin-top:6px;">되팔기 (💰' + fmt(Math.floor(d.price * 0.5)) + ")</button>" : "") +
+          "</div>"
         )).join("");
       grid.querySelectorAll("button[data-buydevice]").forEach((btn) => {
         btn.addEventListener("click", async () => {
@@ -667,6 +745,15 @@
           try {
             const r = await api("/property/buy", { method: "POST", body: { deviceId: btn.dataset.buydevice } });
             toast("기기 구매 완료!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderPropertyTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-selldevice]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/property/sell", { method: "POST", body: { deviceId: btn.dataset.selldevice } });
+            toast("+" + fmt(r.refund) + " 코인 환불"); state.pocketCoins = r.pocketCoins; renderHeader(); renderPropertyTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });
@@ -759,6 +846,7 @@
     initBankForm();
     initLeaderboardTabs();
     initStatButtons();
+    initGalaxyButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);

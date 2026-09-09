@@ -156,6 +156,16 @@
   .property-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
   .property-card-owned { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
 
+  /* Galaxy Map */
+  .planet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .planet-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
+  .planet-card.mine { border-left-color: var(--energy); }
+  .planet-card.home { border-left-color: var(--cyan); }
+  .planet-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
+  .planet-card-owner { font-size: 10px; color: var(--sub); margin-bottom: 4px; min-height: 12px; }
+  .planet-card-tier { font-size: 10px; font-weight: bold; margin-bottom: 6px; }
+  .planet-card-rate { font-size: 11px; color: var(--energy); margin-bottom: 10px; }
+
   /* Bank */
   .bank-cards { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
   .bank-card { background: var(--surface); border: 1px solid var(--border); padding: 16px 22px; }
@@ -334,6 +344,7 @@
   <div class="app-body">
     <div class="sidebar">
       <button class="side-tab active" data-tab="jobs">Hacking Jobs</button>
+      <button class="side-tab" data-tab="galaxy">Galaxy Map</button>
       <button class="side-tab" data-tab="pvp">Arena P2P</button>
       <button class="side-tab" data-tab="shop">Hardware Shop</button>
       <button class="side-tab" data-tab="bots">Bots</button>
@@ -354,6 +365,17 @@
         </div>
       </div>
 
+
+      <div class="tab-panel" id="panel-galaxy">
+        <p class="panel-title">🌌 GALAXY MAP</p>
+        <p class="dim" style="margin-bottom:14px;">각자 공격받지 않는 홈 행성에서 시작합니다. 야생 행성은 처음엔 PVE 봇이 지키고 있고, 격파하면 정복해서 시간당 수익을 얻습니다 — 다른 유저가 정복한 행성도 다시 빼앗을 수 있습니다(최대 <span id="galaxyMaxOwned">3</span>개까지 동시 보유). 스태미나 2 소모.</p>
+        <div class="bank-cards" style="margin-bottom:14px;">
+          <div class="bank-card"><div class="label">내 야생 행성</div><div class="value"><span id="galaxyOwnedCount">0</span> / <span id="galaxyMaxOwned2">3</span></div></div>
+          <div class="bank-card"><div class="label">대기 중 수익</div><div class="value" id="galaxyPending">0</div></div>
+        </div>
+        <button class="btn-primary" id="galaxyCollectBtn" style="margin-bottom:16px;">COLLECT ALL</button>
+        <div class="planet-grid"></div>
+      </div>
 
       <div class="tab-panel" id="panel-pvp">
         <p class="panel-title">🎯 ARENA P2P — TARGETS</p>
