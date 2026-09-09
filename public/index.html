@@ -242,6 +242,19 @@
   .attack-result-detail { font-size: 11px; color: var(--sub); text-align: center; margin-bottom: 14px; }
   .attack-close-btn { width: 100%; background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 10px; }
 
+  /* Stat upgrade modal */
+  #statModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1100; }
+  .stat-modal-box { background: var(--surface); border: 1px solid var(--stamina); width: 340px; padding: 20px; position: relative; }
+  .stat-modal-box h3 { margin: 0 0 4px; font-size: 13px; color: var(--stamina); }
+  .stat-points-avail { font-size: 11px; color: var(--sub); margin-bottom: 14px; }
+  .stat-upgrade-row { display: grid; grid-template-columns: 56px 1fr auto auto; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .stat-upgrade-row:last-child { border-bottom: none; }
+  .stat-upgrade-label { font-weight: bold; color: var(--text); }
+  .stat-upgrade-value { color: var(--sub); }
+  .stat-upgrade-value b { color: var(--accent); }
+  .stat-upgrade-cost { color: var(--stamina); font-weight: bold; white-space: nowrap; }
+  .stat-upgrade-row button { background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 6px 10px; font-size: 10px; }
+
   /* Toast */
   #toastLayer { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
   .arena-toast {
@@ -434,6 +447,14 @@
   <div class="attack-box">
     <button id="attackModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
     <div id="attackModalBody"></div>
+  </div>
+</div>
+
+<div id="statModal">
+  <div class="stat-modal-box">
+    <button id="statModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
+    <h3>🔺 스탯 강화</h3>
+    <div id="statModalBody"></div>
   </div>
 </div>
 

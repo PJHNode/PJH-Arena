@@ -121,21 +121,62 @@
     else $("downedBanner").style.display = "none";
   }
 
-  // ── 스탯 강화 버튼 — 정확한 비용은 서버가 다시 계산해서 검증하므로 여기서는 그냥 요청만 보낸다.
-  //    비용 부족/스탯 불명 등은 서버 에러 메시지를 그대로 토스트로 띄운다. ──
-  function initStatButtons() {
-    function upgrade(stat) {
-      return async () => {
+  // ── 스탯 강화 — 헤더의 + 버튼을 누르면 바로 강화하는 대신, 세 스탯 전부의 "현재값 → 강화 시
+  //    얼마나 느는지 → 필요 포인트"를 한눈에 보여주는 모달을 띄운다. 정확한 비용은 서버가 항상
+  //    다시 계산해서 검증하므로, 여기 클라이언트 쪽 계산은 어디까지나 "미리보기"용이다. ──
+  const STAT_DEFS = [
+    { key: "hp",      label: "HP",      current: (s) => s.maxHp,      increment: 20, base: 100 },
+    { key: "energy",  label: "ENERGY",  current: (s) => s.maxEnergy,  increment: 10, base: 50 },
+    { key: "stamina", label: "STAMINA", current: (s) => s.maxStamina, increment: 2,  base: 10 },
+  ];
+  function statUpgradeCostPreview(base, current) {
+    if (current >= base * 5) return 5;
+    if (current >= base * 4) return 4;
+    if (current >= base * 3) return 3;
+    return 2;
+  }
+
+  function renderStatModal() {
+    if (!state) return;
+    const body = $("statModalBody");
+    body.innerHTML =
+      '<p class="stat-points-avail">보유 포인트: <b style="color:var(--stamina);font-size:14px;">' + state.statPoints + "</b></p>" +
+      STAT_DEFS.map((d) => {
+        const current = d.current(state);
+        const cost = statUpgradeCostPreview(d.base, current);
+        const canAfford = state.statPoints >= cost;
+        return (
+          '<div class="stat-upgrade-row">' +
+          '<span class="stat-upgrade-label">' + d.label + "</span>" +
+          '<span class="stat-upgrade-value">' + current + " → <b>" + (current + d.increment) + "</b> (+" + d.increment + ")</span>" +
+          '<span class="stat-upgrade-cost">' + cost + "P</span>" +
+          '<button data-upgrade-stat="' + d.key + '"' + (canAfford ? "" : " disabled") + ">강화</button>" +
+          "</div>"
+        );
+      }).join("");
+    body.querySelectorAll("button[data-upgrade-stat]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
         try {
-          const r = await api("/stats/upgrade", { method: "POST", body: { stat } });
+          const r = await api("/stats/upgrade", { method: "POST", body: { stat: btn.dataset.upgradeStat } });
           toast("스탯 강화 완료! (-" + r.cost + " 포인트)");
-          state = r.state; renderHeader();
-        } catch (e) { toast(e.message, true); }
-      };
-    }
-    $("upgradeHpBtn").addEventListener("click", upgrade("hp"));
-    $("upgradeEnergyBtn").addEventListener("click", upgrade("energy"));
-    $("upgradeStaminaBtn").addEventListener("click", upgrade("stamina"));
+          state = r.state; renderHeader(); renderStatModal();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      });
+    });
+  }
+
+  function openStatModal() {
+    renderStatModal();
+    $("statModal").style.display = "flex";
+  }
+
+  function initStatButtons() {
+    $("upgradeHpBtn").addEventListener("click", openStatModal);
+    $("upgradeEnergyBtn").addEventListener("click", openStatModal);
+    $("upgradeStaminaBtn").addEventListener("click", openStatModal);
+    $("statModalClose").addEventListener("click", () => { $("statModal").style.display = "none"; });
+    $("statModal").addEventListener("click", (e) => { if (e.target.id === "statModal") $("statModal").style.display = "none"; });
   }
 
   // ── 상단 통합 위젯 바 — 게임/사이트 관련 지표만(시세 위젯은 제외). PJH-Hub의 공개 프로필 API를
@@ -266,10 +307,10 @@
         '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
         (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
-        '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "%</div>" +
+        '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
         '<button class="btn-ghost" data-scan="' + t.userId + '">SCAN</button>' +
-        '<button class="btn-danger" data-attack="' + t.userId + '"' + (state.stamina < t.staminaCost ? " disabled" : "") + ">ATTACK</button>" +
+        '<button class="btn-danger" data-attack="' + t.userId + '"' + (state.stamina < t.staminaCost || t.attackCapped ? " disabled" : "") + ">" + (t.attackCapped ? "한도 도달" : "ATTACK") + "</button>" +
         "</div>"
       )).join("");
       listEl.querySelectorAll("button[data-scan]").forEach((btn) => {
@@ -292,6 +333,7 @@
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">소모 스태미나 <b>' + r.staminaCost + "</b></div>" +
+        '<div class="scan-row">오늘 공격 횟수 <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
         '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>";
       $("scanModal").style.display = "flex";
     } catch (e) { toast(e.message, true); }

@@ -151,7 +151,11 @@ const SHOP_ITEMS = {
 };
 
 const PVP_LEVEL_RANGE = 15;
-const PVP_SHIELD_MS = 12 * 60 * 60 * 1000;
+// 예전엔 공격당하면 자동으로 12시간 보호막이 붙어서 그 사람이 전체 유저의 타겟 목록에서
+// 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 24시간 안에 몇 번까지 노릴 수 있는지"만
+// 공격자별로 제한한다(아래 PVP_MAX_ATTACKS_PER_TARGET_PER_DAY). 소비재로 사는 자가 보호막
+// (stealth_cloak 등, shield_until 컬럼)은 이것과 별개로 그대로 유효하다.
+const PVP_MAX_ATTACKS_PER_TARGET_PER_DAY = 5;
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
@@ -265,6 +269,7 @@ async function ensureSchema(env) {
     "opponent_id TEXT, opponent_name TEXT, result TEXT, coins_delta INTEGER NOT NULL DEFAULT 0, hp_delta INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)"
   );
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_logs_user ON arena_logs(user_id, created_at)"); } catch (e) {}
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_logs_user_opponent ON arena_logs(user_id, opponent_id, created_at)"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_bots (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, " +
     "equipped_weapon TEXT, equipped_armor TEXT, equipped_core TEXT, created_at INTEGER NOT NULL)"
@@ -403,6 +408,17 @@ async function isTargetOnline(env, userId) {
   }
 }
 
+// ── 같은 (공격자, 방어자) 쌍이 최근 24시간 안에 몇 번 붙었는지 — arena_logs에 이미 매 PvP
+// 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다. 24시간이 지난 기록은 자연히 창밖으로
+// 밀려나 다시 카운트에서 빠지므로("슬라이딩 윈도우") 별도 리셋 로직이 필요 없다. ──
+async function countRecentAttacks(env, attackerId, defenderId) {
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = 'pvp_attack' AND created_at > ?"
+  ).bind(attackerId, defenderId, dayAgo).first();
+  return (row && row.cnt) || 0;
+}
+
 async function pendingPropertyIncome(env, row) {
   const res = await env.DB.prepare("SELECT device_id, qty FROM arena_devices WHERE user_id = ?").bind(row.user_id).all();
   const results = res.results;
@@ -539,12 +555,15 @@ export default {
           }
           let wins = 0;
           for (let i = 0; i < 300; i++) if (myCombat.atk * randMult() > tCombat.def * randMult()) wins++;
+          const attacksUsed = await countRecentAttacks(env, user.userId, t.user_id);
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
             offlinePendingCoins: bonusPocket,
             lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
             staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
+            attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+            attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
           });
         }
         return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
@@ -568,12 +587,15 @@ export default {
         let wins = 0;
         const rounds = 1000;
         for (let i = 0; i < rounds; i++) if (myCombat.atk * randMult() > tCombat.def * randMult()) wins++;
+        const attacksUsed = await countRecentAttacks(env, user.userId, target.user_id);
 
         return json({
           targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, online: online, offlinePendingCoins: offlinePendingCoins,
           lastStance: target.last_stance || null, lastStanceLabel: target.last_stance ? STANCES[target.last_stance].label : null,
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
+          attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+          attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
         });
       }
 
@@ -598,6 +620,14 @@ export default {
         if (defender.hp <= 0) return json({ error: "이미 다운된 대상입니다." }, 400);
         if (defender.shield_until > Date.now()) return json({ error: "대상이 보호막 상태입니다." }, 400);
         if (Math.abs(attacker.level - defender.level) > PVP_LEVEL_RANGE) return json({ error: "레벨 차이가 너무 큽니다." }, 400);
+
+        // 같은 상대를 24시간 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
+        // 공격을 당해도 상대가 목록에서 아예 사라지지는 않는다(예전의 "피격 시 12시간 자동 보호막"은
+        // 폐지, 소비재로 직접 사는 자가 보호막(shield_until)만 그대로 유효).
+        const attackCount = await countRecentAttacks(env, attacker.user_id, defender.user_id);
+        if (attackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY) {
+          return json({ error: "이 상대는 24시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_DAY + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
+        }
 
         const defenderOnline = await isTargetOnline(env, defender.user_id);
         const staminaCost = defenderOnline ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE;
@@ -649,7 +679,6 @@ export default {
           defender.hp = clamp(defender.hp - PVP_LOSE_DEF_HP_LOSS, 0, defender.max_hp);
           attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
         }
-        defender.shield_until = Date.now() + PVP_SHIELD_MS;
 
         await env.DB.batch([
           env.DB.prepare(
