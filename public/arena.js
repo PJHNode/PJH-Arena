@@ -327,11 +327,12 @@
       const { targets } = await api("/arena/targets");
       if (!targets.length) { listEl.innerHTML = '<p class="dim">현재 공격 가능한 대상이 없습니다.</p>'; return; }
       listEl.innerHTML = targets.map((t) => {
-        // 지금 당장 공격은 못 해도(보호막/다운/한도 초과) 목록에서 사라지진 않는다 — 이유만 표시.
+        // 지금 당장 공격은 못 해도(보호막/다운/한도 초과/레벨차 초과) 목록에서 사라지진 않는다 — 이유만 표시.
         const statusNote = t.shielded ? '<span style="color:var(--cyan);"> 🛡️ 보호막 중</span>'
-          : t.downed ? '<span style="color:var(--danger);"> 💀 다운 상태</span>' : "";
+          : t.downed ? '<span style="color:var(--danger);"> 💀 다운 상태</span>'
+          : t.levelGapExceeded ? '<span style="color:var(--sub);"> ⚠️ 레벨차 초과</span>' : "";
         const attackDisabled = state.stamina < t.staminaCost || !t.attackable;
-        const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
+        const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : t.levelGapExceeded ? "레벨차" : "ATTACK";
         return (
         '<div class="pvp-row">' +
         '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
@@ -356,6 +357,7 @@
   async function openScanModal(targetUserId) {
     try {
       const r = await api("/arena/scan", { method: "POST", body: { targetUserId } });
+      state = r.state; renderHeader(); // 정찰도 이제 스태미나 1을 쓴다 — 헤더 수치 바로 반영
       $("scanModalBody").innerHTML =
         "<h3>🔎 PRACTICE SCAN — " + escapeHtml(r.realName) + " (Lv." + r.level + ")</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
@@ -363,15 +365,14 @@
         '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
-        '<div class="scan-row">소모 스태미나 <b>' + r.staminaCost + "</b></div>" +
+        '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapExceeded ? ' style="color:var(--danger);"' : '') + '>' + (r.levelGapExceeded ? "레벨차 초과(공격 불가)" : r.staminaCost) + "</b></div>" +
         '<div class="scan-row">오늘 공격 횟수 <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
-        '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>";
+        '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>" +
+        '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>';
       $("scanModal").style.display = "flex";
     } catch (e) { toast(e.message, true); }
   }
 
-  // ── Galaxy Map — 각자의 홈 행성(공격 불가) + 야생 행성(PVE 봇 또는 다른 유저가 정복해 둔 것)
-  //    목록. 야생 행성 공격은 PvP와 똑같은 태세+타이밍 시퀀스를 그대로 재사용한다. ──
   // ── Galaxy Map — 48개 야생 행성을 한 화면에 다 쏟아내면 뭘 해야 할지 알기 어렵다는 피드백이
   //    있어서, "내 제국"(홈 + 이미 정복한 행성)과 "정복 대상"을 아예 다른 섹션으로 나누고,
   //    정복 대상 쪽엔 난이도/유형 필터 + 처음엔 12개만 보여주는 "더 보기"를 둬서 한눈에 훑을
@@ -507,16 +508,20 @@
   // ── 공격 시퀀스 진입점 — 태세 선택 → 3라운드 타이밍 미니게임 → 결과, 순서로 진행한다.
   //    PvP(상대 유저)와 Galaxy Map(행성 정복) 둘 다 같은 시퀀스를 쓴다 — ctx.mode로 어느 쪽인지
   //    구분해서 마지막에 다른 엔드포인트(/arena/attack vs /planets/attack)를 호출한다.
-  //    첫 화면을 위해 정찰(스태미나 소모 없음)을 한 번 조용히 호출해 상대의 평소 태세를 보여준다. ──
+  //    첫 화면을 위해 정찰을 한 번 호출해 상대의 평소 태세를 보여준다 — 정찰도 스태미나 1을 쓴다. ──
   async function openAttackSequence(targetUserId) {
     $("attackModal").style.display = "flex";
     $("attackModalBody").innerHTML = '<p class="dim">정보 조회 중...</p>';
     try {
       const scan = await api("/arena/scan", { method: "POST", body: { targetUserId } });
+      state = scan.state; renderHeader();
+      if (scan.levelGapExceeded) throw new Error("레벨 차이가 너무 큽니다.");
       renderStanceStep({ mode: "pvp", targetUserId: targetUserId }, scan.realName,
         scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.");
     } catch (e) {
-      $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+      $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
+      const closeBtn = $("attackResultCloseBtn");
+      if (closeBtn) closeBtn.addEventListener("click", closeAttackModal);
     }
   }
 

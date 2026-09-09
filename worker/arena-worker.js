@@ -117,33 +117,36 @@ const ITEM_TYPE_META = {
 };
 
 // 장착 가능한 아이템(무장/방어/코어) — 타입 3종 x 등급 8종 = 24개.
+// 가격 곡선 — 예전엔 등급이 오를수록 배율이 오히려 3x→2.1x로 줄어들어서(선형에 가까움) 고티어가
+// 너무 쌌다. 이제 등급마다 배율 자체가 점점 커지도록 다시 짰다(common만 50으로 그대로 두고,
+// forbidden은 800만/코어는 2,400만까지). 코어는 기존처럼 무기/방어 가격의 3배를 유지.
 const SHOP_ITEMS = {
-  rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,    value: 5 },
-  packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 150,   value: 10 },
-  plasma_cannon:    { name: "플라즈마 캐논",         type: "weapon", rarity: "rare",      price: 400,   value: 20 },
-  hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 1000,  value: 35 },
-  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 2500,  value: 60 },
-  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 6000,  value: 100 },
-  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 14000, value: 160 },
-  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 30000, value: 250 },
+  rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
+  packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
+  plasma_cannon:    { name: "플라즈마 캐논",         type: "weapon", rarity: "rare",      price: 900,      value: 20 },
+  hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 4500,     value: 35 },
+  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 25000,    value: 60 },
+  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 150000,   value: 100 },
+  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 1000000,  value: 160 },
+  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 8000000,  value: 250 },
 
-  basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,    value: 5 },
-  packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 150,   value: 10 },
-  nano_composite:   { name: "나노 복합 장갑",         type: "armor", rarity: "rare",      price: 400,   value: 20 },
-  ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 1000,  value: 35 },
-  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 2500,  value: 60 },
-  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 6000,  value: 100 },
-  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 14000, value: 160 },
-  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 30000, value: 250 },
+  basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
+  packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
+  nano_composite:   { name: "나노 복합 장갑",         type: "armor", rarity: "rare",      price: 900,      value: 20 },
+  ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 4500,     value: 35 },
+  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 25000,    value: 60 },
+  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 150000,   value: 100 },
+  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 1000000,  value: 160 },
+  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 8000000,  value: 250 },
 
-  overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,   value: 2 },
-  tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 450,   value: 4 },
-  quantum_core:       { name: "양자 연산 장치",      type: "core", rarity: "rare",      price: 1200,  value: 8 },
-  neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 3000,  value: 14 },
-  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 7500,  value: 24 },
-  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 18000, value: 40 },
-  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 42000, value: 64 },
-  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 90000, value: 100 },
+  overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
+  tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
+  quantum_core:       { name: "양자 연산 장치",      type: "core", rarity: "rare",      price: 2700,     value: 8 },
+  neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 13500,    value: 14 },
+  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 75000,    value: 24 },
+  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 450000,   value: 40 },
+  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 3000000,  value: 64 },
+  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 24000000, value: 100 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },
@@ -191,6 +194,20 @@ function timingMultiplier(score) {
   return 0.85 + (s / 100) * 0.3;
 }
 const PVP_STAMINA_COST_ONLINE = 1, PVP_STAMINA_COST_OFFLINE = 2;
+const SCAN_STAMINA_COST = 1; // 정찰도 이제 공짜가 아니다
+// 레벨 차이가 5 이상 나는데 내가 더 높으면(약자 괴롭히기) 스태미나가 훨씬 더 든다 —
+// 5~9면 2, 10~19면 4, 20+면 8. 반대로 내가 더 낮은 쪽을 노리는 건(도전) 불리하지 않게 그대로 둔다.
+function bullyStaminaSurcharge(attackerLevel, defenderLevel) {
+  const gap = attackerLevel - defenderLevel;
+  if (gap >= 20) return 8;
+  if (gap >= 10) return 4;
+  if (gap >= 5) return 2;
+  return 0;
+}
+function computeAttackStaminaCost(attackerLevel, defenderLevel, online) {
+  const base = online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE;
+  return Math.max(base, bullyStaminaSurcharge(attackerLevel, defenderLevel));
+}
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
 const STARTING_ENERGY = BASE_MAX_ENERGY;
@@ -271,17 +288,26 @@ const PROPERTY_DEVICES = {
 const PLANET_COUNT = 48;
 const PLANET_MAX_OWNED_WILD = 3; // 홈 행성 제외, 한 유저가 동시에 정복해 둘 수 있는 야생 행성 수
 const PLANET_ATTACK_STAMINA_COST = 2;
+// 예전엔 strong(110/95)이 사실상 최고 난이도였는데, 레벨 30 정도만 돼도 장비+봇 몇 기만으로
+// 가볍게 이겨버린다는 피드백을 받아서 그 위로 3단계(정예/악몽/극한)를 더 얹었다. 극한은
+// 등장 확률 2%로 아주 드물지만, 뜨면 왕급 장비 없이는 사실상 못 이기는 수준으로 잡았다.
 const PLANET_BOT_TIERS = {
-  weak:   { label: "약함", atk: 18,  def: 15,  crit: 5,  coinsPerHour: 15,  weight: 0.5 },
-  medium: { label: "보통", atk: 55,  def: 48,  crit: 10, coinsPerHour: 50,  weight: 0.35 },
-  strong: { label: "강함", atk: 110, def: 95,  crit: 15, coinsPerHour: 140, weight: 0.15 },
+  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 15,   weight: 0.35 },
+  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 50,   weight: 0.27 },
+  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 160,  weight: 0.18 },
+  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 400,  weight: 0.12 },
+  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 1000, weight: 0.06 },
+  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 2800, weight: 0.02 },
 };
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
 function rollPlanetTier() {
   const r = Math.random();
-  if (r < PLANET_BOT_TIERS.weak.weight) return "weak";
-  if (r < PLANET_BOT_TIERS.weak.weight + PLANET_BOT_TIERS.medium.weight) return "medium";
-  return "strong";
+  let cum = 0;
+  for (const key in PLANET_BOT_TIERS) {
+    cum += PLANET_BOT_TIERS[key].weight;
+    if (r < cum) return key;
+  }
+  return "weak"; // 부동소수점 오차 안전망
 }
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -700,11 +726,11 @@ export default {
         const me = await loadOrCreateUser(env, user.userId, user.realName);
         const myCombat = await totalCombatStats(env, me);
         const now = Date.now();
-        // 공격 불가능한 상대(자가 보호막 중, 다운 상태, 오늘 공격 한도 초과)라도 목록에서 아예
-        // 사라지진 않는다 — 그냥 ATTACK 버튼만 비활성화되고 사유가 표시된다.
+        // 공격 불가능한 상대(자가 보호막 중, 다운 상태, 오늘 공격 한도 초과, 레벨 차이 초과)라도
+        // 목록에서 아예 사라지진 않는다 — 그냥 ATTACK 버튼만 비활성화되고 사유가 표시된다.
         const res = await env.DB.prepare(
-          "SELECT * FROM arena_users WHERE user_id != ? AND level BETWEEN ? AND ? ORDER BY RANDOM() LIMIT 20"
-        ).bind(user.userId, me.level - PVP_LEVEL_RANGE, me.level + PVP_LEVEL_RANGE).all();
+          "SELECT * FROM arena_users WHERE user_id != ? ORDER BY RANDOM() LIMIT 20"
+        ).bind(user.userId).all();
 
         const targets = [];
         for (const t of res.results) {
@@ -721,15 +747,16 @@ export default {
           const shielded = t.shield_until > now;
           const downed = t.hp <= 0;
           const attackCapped = attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY;
+          const levelGapExceeded = Math.abs(me.level - t.level) > PVP_LEVEL_RANGE;
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
             offlinePendingCoins: bonusPocket,
             lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
-            staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
+            staminaCost: computeAttackStaminaCost(me.level, t.level, online),
             attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
-            attackCapped: attackCapped, shielded: shielded, downed: downed,
-            attackable: !shielded && !downed && !attackCapped,
+            attackCapped: attackCapped, shielded: shielded, downed: downed, levelGapExceeded: levelGapExceeded,
+            attackable: !shielded && !downed && !attackCapped && !levelGapExceeded,
           });
         }
         return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
@@ -739,8 +766,15 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const targetUserId = String(body.targetUserId || "");
         const me = await loadOrCreateUser(env, user.userId, user.realName);
+        if (me.stamina < SCAN_STAMINA_COST) return json({ error: "스태미나가 부족합니다. (정찰에 " + SCAN_STAMINA_COST + " 필요)" }, 400);
         const target = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(targetUserId).first();
         if (!target) return json({ error: "대상을 찾을 수 없습니다." }, 404);
+
+        // 정찰도 이제 스태미나를 소모한다 — 정보만 보고 공짜로 간만 보는 걸 막기 위함.
+        me.stamina -= SCAN_STAMINA_COST;
+        await env.DB.prepare(
+          "UPDATE arena_users SET stamina=?, energy=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(me.stamina, me.energy, me.hp, me.last_energy_tick, me.last_stamina_tick, me.last_hp_tick, me.user_id).run();
 
         const myCombat = await totalCombatStats(env, me);
         const tCombat = await totalCombatStats(env, target);
@@ -754,14 +788,18 @@ export default {
         const rounds = 1000;
         for (let i = 0; i < rounds; i++) if (myCombat.atk * randMult() > tCombat.def * randMult()) wins++;
         const attacksUsed = await countRecentAttacks(env, user.userId, target.user_id);
+        const combat = await totalCombatStats(env, me);
 
         return json({
           targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, online: online, offlinePendingCoins: offlinePendingCoins,
           lastStance: target.last_stance || null, lastStanceLabel: target.last_stance ? STANCES[target.last_stance].label : null,
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
-          staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
+          staminaCost: computeAttackStaminaCost(me.level, target.level, online),
+          scanStaminaCost: SCAN_STAMINA_COST,
           attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
           attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+          levelGapExceeded: Math.abs(me.level - target.level) > PVP_LEVEL_RANGE,
+          state: publicState(me, combat),
         });
       }
 
@@ -796,8 +834,8 @@ export default {
         }
 
         const defenderOnline = await isTargetOnline(env, defender.user_id);
-        const staminaCost = defenderOnline ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE;
-        if (attacker.stamina < staminaCost) return json({ error: "스태미나가 부족합니다." }, 400);
+        const staminaCost = computeAttackStaminaCost(attacker.level, defender.level, defenderOnline);
+        if (attacker.stamina < staminaCost) return json({ error: "스태미나가 부족합니다. (필요 " + staminaCost + ")" }, 400);
         attacker.stamina -= staminaCost;
 
         let offlineBonus = 0;
@@ -1072,8 +1110,15 @@ export default {
         const rolled = rollBotGacha(body.tier);
         row.pocket_coins -= tierDef.price;
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
-        await env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=? WHERE id=?")
-          .bind(rolled.weapon, rolled.armor, rolled.core, botId).run();
+        // 가챠로 나온 3개는 인벤토리에도 정식으로 한 벌씩 쌓아둔다(장착과 별개) — 이래야 나중에
+        // 이 봇을 되팔아도(장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가 사라지지
+        // 않고, 다른 슬롯에 다시 꺼내 쓸 수도 있다.
+        await env.DB.batch([
+          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.weapon),
+          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.armor),
+          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.core),
+          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, botId),
+        ]);
 
         return json({
           ok: true, pocketCoins: row.pocket_coins,
@@ -1083,9 +1128,9 @@ export default {
       }
 
       // ── POST /bots/sell { botId } — 모집 당시 낸 비용(recruit_cost)의 BOT_SELL_RATE(50%)만
-      //    환불하고 그 봇을 삭제한다. 장착돼 있던 장비는 인벤토리에서 산 것이었다면(수동 장착)
-      //    그대로 인벤토리 보유 수량에 남아있으니 다른 슬롯에 다시 쓸 수 있다 — 가챠로 만들어진
-      //    장비는 그 봇 전용이라 봇과 함께 사라진다(애초에 인벤토리에 들어간 적이 없음). ──
+      //    환불하고 그 봇을 삭제한다. 장착돼 있던 장비(수동 장착이든 가챠든 이제 둘 다 인벤토리에
+      //    정식으로 보유 중이므로)는 인벤토리 수량 그대로 남아있으니 다른 슬롯에 다시 쓸 수
+      //    있다 — 봇의 equipped_* 참조만 사라질 뿐 인벤토리 쪽 소유 자체는 건드리지 않는다. ──
       if (request.method === "POST" && path === "/bots/sell") {
         const body = await request.json().catch(function () { return {}; });
         const botId = parseInt(body.botId, 10);
