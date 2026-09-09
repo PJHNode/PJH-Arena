@@ -5,18 +5,33 @@
   const ARENA_API = "https://arena.chaostatix.workers.dev";
   const FORUM_API = "https://forum.chaostatix.workers.dev";
 
+  // 서버 RARITY_ORDER와 동일 순서(낮은 등급→높은 등급) — 봇 카드의 "대표 등급"을 고를 때만 씀.
+  const RARITY_ORDER_CLIENT = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden"];
+
   const JOB_META = {
-    low:    { label: "LOW",    icon: "📡" },
-    medium: { label: "MEDIUM", icon: "🛰️" },
-    high:   { label: "HIGH",   icon: "🖥️" },
-    master: { label: "MASTER", icon: "🧠" },
+    trivial:   { label: "TRIVIAL",   icon: "📶" },
+    low:       { label: "LOW",       icon: "📡" },
+    guarded:   { label: "GUARDED",   icon: "🔒" },
+    medium:    { label: "MEDIUM",    icon: "🛰️" },
+    corporate: { label: "CORPORATE", icon: "🏢" },
+    high:      { label: "HIGH",      icon: "🖥️" },
+    fortress:  { label: "FORTRESS",  icon: "🏰" },
+    master:    { label: "MASTER",    icon: "🧠" },
+    apex:      { label: "APEX",      icon: "🌐" },
+    legendary: { label: "LEGENDARY", icon: "👑" },
   };
   // 서버 상수와 동일한 값(표시용) — 실제 검증/보상 롤은 항상 서버에서 다시 계산한다.
   const JOB_TIERS = {
-    low:    { minLevel: 1,  energyCost: 10, coinMin: 100, coinMax: 150,  xp: 15 },
-    medium: { minLevel: 5,  energyCost: 20, coinMin: 250, coinMax: 350,  xp: 35 },
-    high:   { minLevel: 10, energyCost: 35, coinMin: 500, coinMax: 700,  xp: 70 },
-    master: { minLevel: 20, energyCost: 50, coinMin: 900, coinMax: 1300, xp: 120 },
+    trivial:   { minLevel: 1,  energyCost: 5,  coinMin: 40,   coinMax: 60,   xp: 8 },
+    low:       { minLevel: 1,  energyCost: 10, coinMin: 100,  coinMax: 150,  xp: 15 },
+    guarded:   { minLevel: 3,  energyCost: 15, coinMin: 180,  coinMax: 250,  xp: 25 },
+    medium:    { minLevel: 5,  energyCost: 20, coinMin: 250,  coinMax: 350,  xp: 35 },
+    corporate: { minLevel: 8,  energyCost: 28, coinMin: 400,  coinMax: 550,  xp: 55 },
+    high:      { minLevel: 10, energyCost: 35, coinMin: 500,  coinMax: 700,  xp: 70 },
+    fortress:  { minLevel: 15, energyCost: 42, coinMin: 700,  coinMax: 950,  xp: 95 },
+    master:    { minLevel: 20, energyCost: 50, coinMin: 900,  coinMax: 1300, xp: 120 },
+    apex:      { minLevel: 28, energyCost: 50, coinMin: 1500, coinMax: 2000, xp: 180 },
+    legendary: { minLevel: 35, energyCost: 50, coinMin: 2500, coinMax: 3400, xp: 260 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -105,6 +120,14 @@
     $("energyText").textContent = state.energy + " / " + state.maxEnergy;
     $("staminaBar").style.width = (state.stamina / state.maxStamina) * 100 + "%";
     $("staminaText").textContent = state.stamina + " / " + state.maxStamina;
+
+    // 완전 회복까지 남은 시간 — 서버가 매 /state마다 다시 계산해서 내려주는 ms를 절대 시각으로
+    // 바꿔 저장해 두고, 1초마다 로컬에서 카운트다운만 갱신한다(그래야 폴링 사이에도 매끄럽게 줄어듦).
+    const now = Date.now();
+    hpFullAt = state.hpFullInMs == null ? null : (state.hpFullInMs <= 0 ? 0 : now + state.hpFullInMs);
+    energyFullAt = state.energyFullInMs <= 0 ? 0 : now + state.energyFullInMs;
+    staminaFullAt = state.staminaFullInMs <= 0 ? 0 : now + state.staminaFullInMs;
+    renderResourceEtas();
 
     $("atkText").textContent = state.atk;
     $("defText").textContent = state.def;
@@ -571,6 +594,18 @@
     return m > 0 ? m + "분 " + (s % 60) + "초" : s + "초";
   }
 
+  // ── HP/Energy/Stamina 완전 회복까지 남은 시간 표시 — renderHeader가 절대 시각을 세팅해두면
+  // 1초마다 그 시각까지 남은 시간만 다시 계산해서 보여준다(다음 /state 폴링을 기다릴 필요 없음). ──
+  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0;
+  function renderResourceEtas() {
+    const now = Date.now();
+    const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
+    if (hpEl) hpEl.textContent = hpFullAt == null ? "회복 불가(아이템 필요)" : hpFullAt > now ? "완충 " + fmtCountdown(hpFullAt - now) : "";
+    if (energyEl) energyEl.textContent = energyFullAt > now ? "완충 " + fmtCountdown(energyFullAt - now) : "";
+    if (staminaEl) staminaEl.textContent = staminaFullAt > now ? "완충 " + fmtCountdown(staminaFullAt - now) : "";
+  }
+  setInterval(renderResourceEtas, 1000);
+
   let shopNextRotationAt = 0;
   // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착).
   //    상점은 4분마다 통째로 리롤되는 공용 로테이션이라, 카운트다운이 0이 되면 자동으로 다시 그린다. ──
@@ -663,12 +698,25 @@
   }
 
   // ── Bots ──
+  // 봇 가챠 — 봇 칸을 모집한 뒤 이 3등급 중 하나를 사면 무장/방어/코어 3슬롯이 한 번에 랜덤으로
+  // 채워진다(값/확률표는 서버와 동일, 표시용). 등급이 오를수록 값이 100배씩 뛰는 대신 높은
+  // 희귀도가 나올 확률도 크게 좋아진다.
+  const BOT_GACHA_META = {
+    basic:    { label: "Basic",    price: 1000 },
+    advanced: { label: "Advanced", price: 100000 },
+    premium:  { label: "Premium",  price: 10000000 },
+  };
+  let botsTabLoadedOnce = false;
   async function renderBotsTab() {
     const panel = $("panel-bots");
     const el = panel.querySelector(".bot-roster");
-    el.innerHTML = '<p class="dim">불러오는 중...</p>';
+    // 최초 진입 때만 로딩 문구를 보여준다 — 장착/가챠 후 다시 그릴 때 여기서 매번 잠깐 비웠다가
+    // 다시 채우면 화면이 통째로 리셋되는 것처럼 느껴진다(실제로 그런 피드백을 받음). 갱신 시엔
+    // 기존 화면을 그대로 둔 채 새 데이터가 준비되면 한 번에 갈아끼운다.
+    if (!botsTabLoadedOnce) el.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const [data, catalog] = await Promise.all([api("/bots"), getShopCatalog()]);
+      botsTabLoadedOnce = true;
 
       function slotRow(target, slotType, label, equippedId) {
         const options = data.availableItems.filter((it) => it.type === slotType);
@@ -681,6 +729,33 @@
         );
       }
 
+      // 봇의 "성능 등급" — 장착된 3개 중 가장 희귀한 등급을 그 봇의 대표 색/이펙트로 쓴다.
+      function bestRarityOf(weaponId, armorId, coreId) {
+        let best = null, bestIdx = -1;
+        [weaponId, armorId, coreId].forEach((id) => {
+          const it = id ? catalog[id] : null;
+          if (!it) return;
+          const idx = RARITY_ORDER_CLIENT.indexOf(it.rarity);
+          if (idx > bestIdx) { bestIdx = idx; best = it; }
+        });
+        return best; // { rarity, rarityLabel, rarityColor } 또는 null(3슬롯 다 비어있음)
+      }
+      function botCardStyleAttrs(rarityInfo) {
+        if (!rarityInfo) return { style: "", cls: "", tag: "" };
+        const glow = ["legendary", "mythic", "secret", "forbidden"].indexOf(rarityInfo.rarity) !== -1;
+        return {
+          style: 'style="border-color:' + rarityInfo.rarityColor + ';--glow-color:' + rarityInfo.rarityColor + ';"',
+          cls: glow ? " glow-pulse" : "",
+          tag: '<div class="bot-card-rarity-tag" style="color:' + rarityInfo.rarityColor + ';">' + rarityInfo.rarityLabel + " GRADE</div>",
+        };
+      }
+      function gachaRow(botId) {
+        return '<div class="bot-gacha-row">' + Object.keys(BOT_GACHA_META).map((tier) => {
+          const m = BOT_GACHA_META[tier];
+          return '<button class="bot-gacha-btn" data-gacha="' + botId + '" data-tier="' + tier + '"' + (state.pocketCoins < m.price ? " disabled" : "") + ">" + m.label + "<br>💰" + fmt(m.price) + "</button>";
+        }).join("") + "</div>";
+      }
+
       let html = '<div class="bot-card player"><div class="bot-card-title">🧑‍💻 YOU</div>' +
         slotRow("player", "weapon", "무장", data.player.equippedWeapon) +
         slotRow("player", "armor", "방어", data.player.equippedArmor) +
@@ -688,10 +763,14 @@
         "</div>";
 
       data.bots.forEach((b, i) => {
-        html += '<div class="bot-card"><div class="bot-card-title">🤖 BOT #' + (i + 1) + '</div>' +
+        const rarityInfo = bestRarityOf(b.equipped_weapon, b.equipped_armor, b.equipped_core);
+        const attrs = botCardStyleAttrs(rarityInfo);
+        html += '<div class="bot-card' + attrs.cls + '" ' + attrs.style + '><div class="bot-card-title">🤖 BOT #' + (i + 1) + '</div>' +
+          attrs.tag +
           slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
           slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
           slotRow(String(b.id), "core", "코어", b.equipped_core) +
+          gachaRow(b.id) +
           "</div>";
       });
 
@@ -712,6 +791,16 @@
             toast("장착 정보가 갱신됐습니다.");
             await refreshState(); renderBotsTab();
           } catch (e) { toast(e.message, true); renderBotsTab(); }
+        });
+      });
+      el.querySelectorAll("button[data-gacha]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/bots/gacha", { method: "POST", body: { botId: btn.dataset.gacha, tier: btn.dataset.tier } });
+            toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급!");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });
       const recruitBtn = el.querySelector("#recruitBotBtn");

@@ -70,6 +70,7 @@
   .resource-label { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 3px; }
   .resource-label span:first-child { flex-shrink: 0; }
   .resource-label span:nth-child(2) { flex: 1; text-align: right; }
+  .resource-eta { flex-shrink: 0; font-size: 10px; color: var(--cyan); opacity: 0.85; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
   .resource-fill.hp { background: var(--hp); }
@@ -147,6 +148,13 @@
   .bot-slot.slot-core { border-left-color: #b060e8; }
   .bot-slot select { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 10px; padding: 4px 6px; max-width: 130px; }
   .bot-recruit-card { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); padding: 20px; color: var(--sub); font-size: 12px; text-align: center; }
+  .bot-card { transition: border-color 0.3s, box-shadow 0.3s; }
+  .bot-card.glow-pulse { animation: botGlow 1.8s ease-in-out infinite; }
+  @keyframes botGlow { 0%, 100% { box-shadow: 0 0 6px var(--glow-color, transparent); } 50% { box-shadow: 0 0 18px var(--glow-color, transparent); } }
+  .bot-gacha-row { display: flex; gap: 6px; margin-top: 10px; }
+  .bot-gacha-btn { flex: 1; font-size: 9px; padding: 6px 2px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); text-align: center; line-height: 1.4; }
+  .bot-gacha-btn:disabled { opacity: 0.4; }
+  .bot-card-rarity-tag { font-size: 9px; font-weight: bold; margin-bottom: 8px; }
 
   /* Property */
   .property-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
@@ -322,15 +330,15 @@
 <div id="appShell" style="display:none; flex:1; flex-direction:column; min-height:0;">
   <div class="resource-bar-row">
     <div class="resource">
-      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span><button class="stat-plus-btn" id="upgradeHpBtn" title="HP 강화">+</button></div>
+      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span><span class="resource-eta" id="hpEta"></span><button class="stat-plus-btn" id="upgradeHpBtn" title="HP 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill hp" id="hpBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>ENERGY</span><span id="energyText">50 / 50</span><button class="stat-plus-btn" id="upgradeEnergyBtn" title="에너지 강화">+</button></div>
+      <div class="resource-label"><span>ENERGY</span><span id="energyText">50 / 50</span><span class="resource-eta" id="energyEta"></span><button class="stat-plus-btn" id="upgradeEnergyBtn" title="에너지 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill energy" id="energyBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span><button class="stat-plus-btn" id="upgradeStaminaBtn" title="스태미나 강화">+</button></div>
+      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span><span class="resource-eta" id="staminaEta"></span><button class="stat-plus-btn" id="upgradeStaminaBtn" title="스태미나 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill stamina" id="staminaBar"></div></div>
     </div>
     <div class="atk-def-row">

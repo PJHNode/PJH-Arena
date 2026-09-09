@@ -60,10 +60,16 @@ function baseDefFor(level) { return 10 + level * 2; }
 function nextExpFor(level) { return level * 100; }
 
 const JOB_TIERS = {
-  low:    { label: "Low",    minLevel: 1,  energyCost: 10, coinMin: 100, coinMax: 150,  xp: 15 },
-  medium: { label: "Medium", minLevel: 5,  energyCost: 20, coinMin: 250, coinMax: 350,  xp: 35 },
-  high:   { label: "High",   minLevel: 10, energyCost: 35, coinMin: 500, coinMax: 700,  xp: 70 },
-  master: { label: "Master", minLevel: 20, energyCost: 50, coinMin: 900, coinMax: 1300, xp: 120 },
+  trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 5,  coinMin: 40,   coinMax: 60,   xp: 8 },
+  low:       { label: "Low",       minLevel: 1,  energyCost: 10, coinMin: 100,  coinMax: 150,  xp: 15 },
+  guarded:   { label: "Guarded",   minLevel: 3,  energyCost: 15, coinMin: 180,  coinMax: 250,  xp: 25 },
+  medium:    { label: "Medium",    minLevel: 5,  energyCost: 20, coinMin: 250,  coinMax: 350,  xp: 35 },
+  corporate: { label: "Corporate", minLevel: 8,  energyCost: 28, coinMin: 400,  coinMax: 550,  xp: 55 },
+  high:      { label: "High",      minLevel: 10, energyCost: 35, coinMin: 500,  coinMax: 700,  xp: 70 },
+  fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 700,  coinMax: 950,  xp: 95 },
+  master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 900,  coinMax: 1300, xp: 120 },
+  apex:      { label: "Apex",      minLevel: 28, energyCost: 50, coinMin: 1500, coinMax: 2000, xp: 180 },
+  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 2500, coinMax: 3400, xp: 260 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -194,15 +200,65 @@ const BOT_COST_GROWTH = 2.5;
 const BOT_MAX_COUNT = 10;
 function botRecruitCost(currentCount) { return Math.round(BOT_BASE_COST * Math.pow(BOT_COST_GROWTH, currentCount)); }
 
+// ── 봇 가챠 — 봇 칸을 산 뒤(위 recruit) 그 봇의 3슬롯(무장/방어/코어)을 한 번에 랜덤으로 채운다.
+//    가격이 100배씩 뛸 때마다 등급 확률표도 확 좋아진다(낮은 가챠는 legendary가 사실상 상한선,
+//    제일 비싼 가챠는 common이 아예 안 나오고 legendary 이상이 절반 가까이 나온다). ──
+const BOT_GACHA_TIERS = {
+  basic:    { label: "Basic",    price: 1000,
+    table: { common: 0.70, uncommon: 0.20, rare: 0.05,  epic: 0.04,  legendary: 0.01,  mythic: 0,     secret: 0,     forbidden: 0 } },
+  advanced: { label: "Advanced", price: 100000,
+    table: { common: 0.20, uncommon: 0.30, rare: 0.25,  epic: 0.15,  legendary: 0.07,  mythic: 0.025, secret: 0.004, forbidden: 0.001 } },
+  premium:  { label: "Premium",  price: 10000000,
+    table: { common: 0,    uncommon: 0.05, rare: 0.15,  epic: 0.25,  legendary: 0.25,  mythic: 0.18,  secret: 0.08,  forbidden: 0.04 } },
+};
+// 타입x등급 조합마다 SHOP_ITEMS에 정확히 하나씩 있으므로(3종 x 8등급 = 24개), 롤한 등급이
+// 정해지면 아이템도 하나로 정해진다.
+const EQUIP_ITEM_BY_TYPE_RARITY = {};
+for (const _id in SHOP_ITEMS) {
+  const _it = SHOP_ITEMS[_id];
+  if (_it.type === "weapon" || _it.type === "armor" || _it.type === "core") {
+    (EQUIP_ITEM_BY_TYPE_RARITY[_it.type] = EQUIP_ITEM_BY_TYPE_RARITY[_it.type] || {})[_it.rarity] = _id;
+  }
+}
+function rollGachaRarity(table) {
+  const r = Math.random();
+  let cum = 0;
+  for (const rarity of RARITY_ORDER) {
+    cum += table[rarity] || 0;
+    if (r < cum) return rarity;
+  }
+  return RARITY_ORDER[RARITY_ORDER.length - 1]; // 부동소수점 오차로 못 걸렸을 때의 안전망
+}
+function rollBotGacha(tierKey) {
+  const tier = BOT_GACHA_TIERS[tierKey];
+  const slots = ["weapon", "armor", "core"];
+  const result = {};
+  let bestIdx = -1;
+  for (const slot of slots) {
+    const rarity = rollGachaRarity(tier.table);
+    result[slot] = EQUIP_ITEM_BY_TYPE_RARITY[slot][rarity];
+    const idx = RARITY_ORDER.indexOf(rarity);
+    if (idx > bestIdx) bestIdx = idx;
+  }
+  result.bestRarity = RARITY_ORDER[bestIdx];
+  return result;
+}
+
 const PROPERTY_MAX_ACCRUAL_MS = 24 * 60 * 60 * 1000;
 const PROPERTY_MAX_DEVICES = 6;
 const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무한 사고팔기로 코인 복사 방지)
 const PROPERTY_DEVICES = {
+  proxy_relay:     { name: "Proxy Relay",          price: 200,   coinsPerHour: 3 },
   botnet_node:     { name: "Botnet Node",          price: 500,   coinsPerHour: 5 },
+  gpu_rig:         { name: "GPU Mining Rig",       price: 1000,  coinsPerHour: 12 },
   packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,  coinsPerHour: 18 },
+  darkpool_bot:    { name: "Darkpool Trading Bot",  price: 2800,  coinsPerHour: 38 },
   asic_farm:       { name: "Mining ASIC Farm",     price: 4000,  coinsPerHour: 55 },
+  neural_farm:     { name: "Neural Farm Cluster",  price: 7000,  coinsPerHour: 105 },
   cloud_scraper:   { name: "Cloud Scraper Array",  price: 10000, coinsPerHour: 150 },
+  fusion_reactor:  { name: "Fusion Reactor Node",  price: 17000, coinsPerHour: 280 },
   quantum_miner:   { name: "Quantum Miner",        price: 25000, coinsPerHour: 400 },
+  dyson_node:      { name: "Dyson Swarm Node",     price: 60000, coinsPerHour: 1050 },
 };
 
 // ── 행성 기반 성간 전쟁(Galaxy Map) ── 각 유저는 공격받지 않는 "홈 행성"(is_home=1)을
@@ -411,6 +467,15 @@ function applyRegen(row, now) {
   return out;
 }
 
+// 완전 회복까지 남은 시간(ms) — applyRegen이 이미 꽉 찬 틱만큼은 다 반영해 둔 상태이므로,
+// (필요한 틱 수 * 틱 간격) - (마지막 틱 이후 이미 지난 시간)만 계산하면 된다.
+function msUntilFull(current, max, regenPerTick, tickMs, lastTick, now) {
+  if (current >= max) return 0;
+  const ticksNeeded = Math.ceil((max - current) / regenPerTick);
+  const elapsedIntoTick = now - lastTick;
+  return Math.max(0, ticksNeeded * tickMs - elapsedIntoTick);
+}
+
 async function persistRegen(env, row) {
   await env.DB.prepare(
     "UPDATE arena_users SET energy=?, stamina=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
@@ -465,10 +530,16 @@ async function totalCombatStats(env, row) {
 }
 
 function publicState(row, combat) {
+  const now = Date.now();
+  // HP는 0(다운) 상태면 아예 회복이 안 되므로(applyRegen 참고 — 아이템으로만 회복 가능) null.
+  const hpFullInMs = row.hp <= 0 ? null : msUntilFull(row.hp, row.max_hp, Math.round(row.max_hp * HP_REGEN_PCT), HP_TICK_MS, row.last_hp_tick, now);
+  const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, ENERGY_TICK_MS, row.last_energy_tick, now);
+  const staminaFullInMs = msUntilFull(row.stamina, row.max_stamina, STAMINA_REGEN_PER_TICK, STAMINA_TICK_MS, row.last_stamina_tick, now);
   return {
     userId: row.user_id, realName: row.real_name,
     level: row.level, xp: row.xp, nextExp: nextExpFor(row.level),
     hp: row.hp, maxHp: row.max_hp, energy: row.energy, maxEnergy: row.max_energy, stamina: row.stamina, maxStamina: row.max_stamina,
+    hpFullInMs: hpFullInMs, energyFullInMs: energyFullInMs, staminaFullInMs: staminaFullInMs,
     statPoints: row.stat_points,
     pocketCoins: row.pocket_coins, bankCoins: row.bank_coins,
     atk: combat.atk, def: combat.def, crit: combat.crit, botCount: combat.botCount,
@@ -976,6 +1047,33 @@ export default {
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = pocket_coins - ? WHERE user_id = ?").bind(cost, user.userId).run();
         await env.DB.prepare("INSERT INTO arena_bots (user_id, created_at) VALUES (?, ?)").bind(user.userId, Date.now()).run();
         return json({ ok: true, cost: cost, pocketCoins: row.pocket_coins - cost });
+      }
+
+      // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯을 한 번에 랜덤으로
+      //    채운다(기존에 장착돼 있던 건 덮어씀 — 재가챠 업그레이드 용도로도 쓸 수 있게). 인벤토리
+      //    재고와 무관하게 가챠가 직접 아이템을 만들어 붙여준다. ──
+      if (request.method === "POST" && path === "/bots/gacha") {
+        const body = await request.json().catch(function () { return {}; });
+        const tierDef = BOT_GACHA_TIERS[body.tier];
+        if (!tierDef) return json({ error: "알 수 없는 가챠 등급입니다." }, 400);
+        const botId = parseInt(body.botId, 10);
+        const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.pocket_coins < tierDef.price) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(tierDef.price) + ")" }, 400);
+
+        const rolled = rollBotGacha(body.tier);
+        row.pocket_coins -= tierDef.price;
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
+        await env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=? WHERE id=?")
+          .bind(rolled.weapon, rolled.armor, rolled.core, botId).run();
+
+        return json({
+          ok: true, pocketCoins: row.pocket_coins,
+          weapon: rolled.weapon, armor: rolled.armor, core: rolled.core,
+          bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
+        });
       }
 
       if (request.method === "POST" && path === "/bots/equip") {
