@@ -210,6 +210,8 @@ function computeAttackStaminaCost(attackerLevel, defenderLevel, online) {
 }
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
+const DIAMOND_EXCHANGE_COIN_COST = 10000; // 코인 10,000개 -> 다이아 1개(단방향, 코인 싱크)
+const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
 const BOT_BASE_COST = 2000;
@@ -300,14 +302,26 @@ const PLANET_BOT_TIERS = {
   apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 2800, weight: 0.02 },
 };
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
-function rollPlanetTier() {
-  const r = Math.random();
+// 아직 아무도 정복하지 않은 행성은 15분마다 난이도가 통째로 리롤된다(슬롯 번호+시간 구간으로
+// 시드하는 결정론적 뽑기라 저장 없이 매번 다시 계산해도 같은 결과가 나온다) — 정복되고 나면
+// bot_tier가 NULL이 되면서 리롤 대상에서 완전히 빠진다(그때부턴 주인의 실제 전투력이 곧 난이도).
+const PLANET_REROLL_MS = 15 * 60 * 1000;
+function planetRerollBucket(nowMs) { return Math.floor((nowMs || Date.now()) / PLANET_REROLL_MS); }
+function pickTierFromRng(rng) {
+  const r = rng();
   let cum = 0;
   for (const key in PLANET_BOT_TIERS) {
     cum += PLANET_BOT_TIERS[key].weight;
     if (r < cum) return key;
   }
   return "weak"; // 부동소수점 오차 안전망
+}
+function effectivePlanetTier(slotIndex, nowMs) {
+  const bucket = planetRerollBucket(nowMs);
+  return pickTierFromRng(mulberry32((slotIndex ^ bucket) | 0));
+}
+function rollPlanetTier() {
+  return pickTierFromRng(Math.random); // 최초 시드용 — 어차피 미정복 상태론 위 effectivePlanetTier로 계속 덮임
 }
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -323,9 +337,28 @@ function mulberry32(seed) {
   };
 }
 
-function computeShopRotation(nowMs) {
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}
+
+// ── 연구(Research) — 상점 행운 연구 레벨만큼 rare 이상 등급의 "뜰 확률"에 고정 보너스가
+//    붙는다(등급별 상한 1.0). 레벨업 비용은 매번 RESEARCH_SHOP_GROWTH배씩 뛴다. ──
+const RESEARCH_SHOP_BONUS_PER_LEVEL = 0.02;
+const RESEARCH_SHOP_BASE_COST = 10;
+const RESEARCH_SHOP_GROWTH = 1.6;
+function researchShopUpgradeCost(level) { return Math.round(RESEARCH_SHOP_BASE_COST * Math.pow(RESEARCH_SHOP_GROWTH, level)); }
+function effectiveRarityChance(rarity, researchLevel) {
+  return clamp(RARITY_META[rarity].chance + (researchLevel || 0) * RESEARCH_SHOP_BONUS_PER_LEVEL, 0, 1);
+}
+
+// ── 상점은 이제 유저별 로컬 로테이션이다(예전엔 전 서버 공용이라 모두가 같은 상점을 봤음) —
+//    씨앗에 userId 해시를 섞어서 같은 4분 구간에도 사람마다 다른 상점이 뜨게 한다. 재고
+//    테이블(arena_shop_stock)도 (user_id, item_id, bucket) 단위로 따로 관리한다. ──
+function computeShopRotation(nowMs, userId, researchLevel) {
   const bucket = Math.floor((nowMs || Date.now()) / SHOP_ROTATION_MS);
-  const rng = mulberry32(bucket);
+  const rng = mulberry32((bucket ^ hashStr(userId || "")) | 0);
   const byRarity = {};
   for (const id in SHOP_ITEMS) {
     const item = SHOP_ITEMS[id];
@@ -334,9 +367,10 @@ function computeShopRotation(nowMs) {
   const itemIds = [];
   for (const rarity of RARITY_ORDER) {
     const meta = RARITY_META[rarity];
+    const chance = effectiveRarityChance(rarity, researchLevel);
     const pool = (byRarity[rarity] || []).slice();
     if (!pool.length) continue;
-    if (rng() > meta.chance) continue;
+    if (rng() > chance) continue;
     const slots = Math.min(meta.maxSlots, pool.length);
     for (let i = 0; i < slots; i++) {
       const idx = Math.floor(rng() * pool.length);
@@ -349,12 +383,8 @@ function computeShopRotation(nowMs) {
 // ── 상점 재고 — 장착 아이템(무기/방어/코어)과 소비재 전부, 로테이션(bucket)마다 아이템별로
 //    1~3개 중 하나가 시드되어 다 팔리면 그 로테이션 동안은 품절. 등급이 높을수록 "떴다 하면
 //    딱 1개"일 확률이 훨씬 높아진다(희귀할수록 더 귀해야 하니까) — COMMON은 1개 50%/2개
-//    35%/3개 15%인 반면 FORBIDDEN은 1개 99%로 사실상 항상 1개만 나온다. ──
-function hashStr(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
-}
+//    35%/3개 15%인 반면 FORBIDDEN은 1개 99%로 사실상 항상 1개만 나온다. 상점이 유저별
+//    로컬이 되면서 재고도 유저별로 따로 씨앗을 섞는다. ──
 const STOCK_WEIGHTS_BY_RARITY = {
   common:    { one: 0.50, two: 0.35, three: 0.15 },
   uncommon:  { one: 0.60, two: 0.30, three: 0.10 },
@@ -365,9 +395,9 @@ const STOCK_WEIGHTS_BY_RARITY = {
   secret:    { one: 0.97, two: 0.025, three: 0.005 },
   forbidden: { one: 0.99, two: 0.009, three: 0.001 },
 };
-function rollItemStock(itemId, bucket, rarity) {
+function rollItemStock(itemId, bucket, rarity, userId) {
   const w = STOCK_WEIGHTS_BY_RARITY[rarity] || STOCK_WEIGHTS_BY_RARITY.common;
-  const rng = mulberry32((bucket ^ hashStr(itemId)) | 0);
+  const rng = mulberry32((bucket ^ hashStr(itemId) ^ hashStr(userId || "")) | 0);
   const r = rng();
   if (r < w.one) return 1;
   if (r < w.one + w.two) return 2;
@@ -394,6 +424,9 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN max_stamina INTEGER NOT NULL DEFAULT 10"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN stat_points INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_stance TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN diamonds INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -420,8 +453,12 @@ async function ensureSchema(env) {
     "coins_per_hour INTEGER NOT NULL DEFAULT 0, last_collect INTEGER NOT NULL DEFAULT 0, captured_at INTEGER, created_at INTEGER NOT NULL)"
   );
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_planets_owner ON arena_planets(owner_user_id)"); } catch (e) {}
+  // arena_shop_stock2 — 상점이 유저별 로컬 로테이션이 되면서 재고 테이블도 (user_id, item_id,
+  // bucket) 3중 키로 바뀌었다. SQLite는 PRIMARY KEY를 ALTER로 못 바꾸므로 예전 arena_shop_stock
+  // (item_id, bucket) 2중 키 테이블은 그냥 버려두고(용량 미미, 4분짜리 휘발성 카운터) 새 이름으로
+  // 새로 만든다. ──
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS arena_shop_stock (item_id TEXT NOT NULL, bucket INTEGER NOT NULL, bought INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, bucket))"
+    "CREATE TABLE IF NOT EXISTS arena_shop_stock2 (user_id TEXT NOT NULL, item_id TEXT NOT NULL, bucket INTEGER NOT NULL, bought INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, item_id, bucket))"
   );
   schemaReady = true;
 }
@@ -569,7 +606,7 @@ function publicState(row, combat) {
     hp: row.hp, maxHp: row.max_hp, energy: row.energy, maxEnergy: row.max_energy, stamina: row.stamina, maxStamina: row.max_stamina,
     hpFullInMs: hpFullInMs, energyFullInMs: energyFullInMs, staminaFullInMs: staminaFullInMs,
     statPoints: row.stat_points,
-    pocketCoins: row.pocket_coins, bankCoins: row.bank_coins,
+    pocketCoins: row.pocket_coins, bankCoins: row.bank_coins, diamonds: row.diamonds,
     atk: combat.atk, def: combat.def, crit: combat.crit, botCount: combat.botCount,
     equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core,
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
@@ -636,6 +673,81 @@ async function equippedCountMap(env, userId) {
   const botsRes = await env.DB.prepare("SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ?").bind(userId).all();
   for (const b of botsRes.results) { bump(b.equipped_weapon); bump(b.equipped_armor); bump(b.equipped_core); }
   return counts;
+}
+
+// ── 행성 전투 판정 — /planets/attack(직접, 태세+타이밍 미니게임)과 /planets/expedition(연구로
+//    해금하는 오프라인 자동 전투, 중립 태세+평균 타이밍으로 대신 계산)이 완전히 같은 판정
+//    로직을 쓴다. attacker의 stamina/hp/pocket_coins는 여기서 갱신하지 않는다(호출부가 검증
+//    후 직접 persist) — 이 함수는 순수하게 "싸우면 어떻게 되는지"만 계산+정복/약탈 반영. ──
+async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores) {
+  const stance = STANCES[stanceId];
+  const isBotPlanet = !planet.owner_user_id;
+  const now = Date.now();
+  let defenderCombat, defenderLastStance = null, effectiveTierKey = null;
+
+  if (isBotPlanet) {
+    effectiveTierKey = effectivePlanetTier(planet.slot_index, now);
+    const t = PLANET_BOT_TIERS[effectiveTierKey];
+    defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
+  } else {
+    const defenderRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(planet.owner_user_id).first();
+    if (!defenderRow) return { error: "행성 소유자를 찾을 수 없습니다." };
+    defenderCombat = await totalCombatStats(env, defenderRow);
+    defenderLastStance = defenderRow.last_stance;
+  }
+
+  let rpsMod = 0;
+  if (defenderLastStance && STANCES[defenderLastStance]) {
+    if (stance.beats === defenderLastStance) rpsMod = STANCE_RPS_BONUS;
+    else if (STANCES[defenderLastStance].beats === stanceId) rpsMod = -STANCE_RPS_BONUS;
+  }
+
+  const attackerCombat = await totalCombatStats(env, attacker);
+  let attackerRoundWins = 0;
+  const rounds = [];
+  for (let i = 0; i < PVP_ROUNDS; i++) {
+    const timing = timingMultiplier(timingScores[i]);
+    const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult();
+    const defPower = defenderCombat.def * randMult();
+    const roundWin = atkPower > defPower;
+    if (roundWin) attackerRoundWins++;
+    rounds.push({
+      round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100),
+      atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100,
+    });
+  }
+  const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
+  const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
+  const newCoinsPerHour = isBotPlanet ? PLANET_BOT_TIERS[effectiveTierKey].coinsPerHour : planet.coins_per_hour;
+
+  let captured = false, lootCoins = 0;
+  if (attackerWins) {
+    if (isBotPlanet) {
+      lootCoins = Math.round(newCoinsPerHour * 0.5);
+    } else {
+      const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
+      lootCoins = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
+    }
+    attacker.pocket_coins += lootCoins;
+
+    const ownedCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id = ? AND is_home = 0").bind(user.userId).first();
+    const ownedCount = (ownedCountRow && ownedCountRow.cnt) || 0;
+    if (ownedCount < PLANET_MAX_OWNED_WILD) {
+      captured = true;
+      await env.DB.prepare(
+        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
+      ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
+    }
+    attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
+  } else {
+    attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
+  }
+
+  return {
+    attackerWins: attackerWins, sweep: sweep, captured: captured, lootCoins: lootCoins,
+    rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
+    attackerCombat: attackerCombat, defenderCombat: defenderCombat, isBotPlanet: isBotPlanet, effectiveTierKey: effectiveTierKey,
+  };
 }
 
 function fmtNum(n) { return Number(n || 0).toLocaleString("en-US"); }
@@ -956,18 +1068,19 @@ export default {
       }
 
       if (request.method === "GET" && path === "/shop") {
+        const row0 = await loadOrCreateUser(env, user.userId, user.realName);
         const ownedRes = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
         const ownedMap = {};
         ownedRes.results.forEach(function (o) { ownedMap[o.item_id] = o.qty; });
         const equippedCount = await equippedCountMap(env, user.userId);
-        const rotation = computeShopRotation();
-        const stockRes = await env.DB.prepare("SELECT item_id, bought FROM arena_shop_stock WHERE bucket = ?").bind(rotation.bucket).all();
+        const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level);
+        const stockRes = await env.DB.prepare("SELECT item_id, bought FROM arena_shop_stock2 WHERE user_id = ? AND bucket = ?").bind(user.userId, rotation.bucket).all();
         const boughtMap = {};
         stockRes.results.forEach(function (s) { boughtMap[s.item_id] = s.bought; });
         const entries = rotation.itemIds.map(function (id) { return [id, SHOP_ITEMS[id]]; });
         const items = sortedShopEntries(entries).map(function (pair) {
           const id = pair[0], item = pair[1];
-          const totalStock = rollItemStock(id, rotation.bucket, item.rarity);
+          const totalStock = rollItemStock(id, rotation.bucket, item.rarity, user.userId);
           const remainingStock = Math.max(0, totalStock - (boughtMap[id] || 0));
           return Object.assign({ id: id }, item, {
             rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
@@ -977,7 +1090,20 @@ export default {
             totalStock: totalStock, remainingStock: remainingStock,
           });
         });
-        return json({ items: items, nextRotationAt: rotation.nextRotationAt, rotationMs: SHOP_ROTATION_MS });
+        return json({ items: items, nextRotationAt: rotation.nextRotationAt, rotationMs: SHOP_ROTATION_MS, diamonds: row0.diamonds, diamondExchangeCost: DIAMOND_EXCHANGE_COIN_COST });
+      }
+
+      // ── POST /shop/exchange-diamond — 코인 → 다이아 교환(단방향). qty로 여러 개 한 번에 가능. ──
+      if (request.method === "POST" && path === "/shop/exchange-diamond") {
+        const body = await request.json().catch(function () { return {}; });
+        const qty = Math.max(1, parseInt(body.qty, 10) || 1);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const totalCost = DIAMOND_EXCHANGE_COIN_COST * qty;
+        if (row.pocket_coins < totalCost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(totalCost) + ")" }, 400);
+        row.pocket_coins -= totalCost;
+        row.diamonds += qty;
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins=?, diamonds=? WHERE user_id=?").bind(row.pocket_coins, row.diamonds, row.user_id).run();
+        return json({ ok: true, pocketCoins: row.pocket_coins, diamonds: row.diamonds });
       }
 
       if (request.method === "POST" && path === "/shop/buy") {
@@ -985,10 +1111,10 @@ export default {
         const itemId = body.itemId;
         const item = SHOP_ITEMS[itemId];
         if (!item) return json({ error: "알 수 없는 아이템입니다." }, 400);
-        const rotation = computeShopRotation();
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level);
         if (rotation.itemIds.indexOf(itemId) === -1) return json({ error: "지금 상점에 없는 아이템입니다(로테이션이 바뀌었어요)." }, 400);
 
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.pocket_coins < item.price) return json({ error: "코인이 부족합니다." }, 400);
 
         // 아이템별 최대 보유 개수(maxOwned) — 예: 에너지 드링크는 최대 2개까지만 들고 있을 수 있다.
@@ -999,12 +1125,12 @@ export default {
           }
         }
 
-        // 상점 재고(로테이션당 1~3개, 장착 아이템도 포함) — 조건부 UPDATE(bought < total)로
-        // 품절 이후엔 아무도 더 못 사게 막는다. changes가 0이면 이번 로테이션 재고가 이미 다 팔린 것.
-        const totalStock = rollItemStock(itemId, rotation.bucket, item.rarity);
+        // 상점 재고(로테이션당 1~3개, 장착 아이템도 포함, 이제 유저별로 따로) — 조건부
+        // UPDATE(bought < total)로 품절 이후엔 나 자신도 더 못 사게 막는다.
+        const totalStock = rollItemStock(itemId, rotation.bucket, item.rarity, user.userId);
         const stockRes = await env.DB.prepare(
-          "INSERT INTO arena_shop_stock (item_id, bucket, bought) VALUES (?, ?, 1) ON CONFLICT(item_id, bucket) DO UPDATE SET bought = bought + 1 WHERE bought < ?"
-        ).bind(itemId, rotation.bucket, totalStock).run();
+          "INSERT INTO arena_shop_stock2 (user_id, item_id, bucket, bought) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, item_id, bucket) DO UPDATE SET bought = bought + 1 WHERE bought < ?"
+        ).bind(user.userId, itemId, rotation.bucket, totalStock).run();
         if (!stockRes.meta.changes) return json({ error: "품절된 아이템입니다. 다음 로테이션을 기다려주세요." }, 400);
 
         row.pocket_coins -= item.price;
@@ -1185,6 +1311,54 @@ export default {
         return json({ ok: true });
       }
 
+      // ══════════════════════════════════════════════════════════
+      //  Research — 다이아(diamonds)로 진행하는 연구. 코인과 완전히 분리된 특수 재화라
+      //  코인 인플레이션과 무관하게 "얼마나 오래 했는지"를 보여주는 별도 진행도로 쓴다.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /research — 현재 다이아, 상점 행운 연구 레벨/다음 비용/등급별 현재 확률,
+      //    원정 연구 해금 여부/비용을 한 번에 내려준다. ──
+      if (request.method === "GET" && path === "/research") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const rarityChances = {};
+        RARITY_ORDER.forEach(function (r) { rarityChances[r] = effectiveRarityChance(r, row.research_shop_level); });
+        return json({
+          diamonds: row.diamonds,
+          shopLevel: row.research_shop_level,
+          shopUpgradeCost: researchShopUpgradeCost(row.research_shop_level),
+          rarityChances: rarityChances,
+          rarityLabels: Object.fromEntries(RARITY_ORDER.map(function (r) { return [r, RARITY_META[r].label]; })),
+          rarityColors: Object.fromEntries(RARITY_ORDER.map(function (r) { return [r, RARITY_META[r].color]; })),
+          expeditionUnlocked: !!row.research_expedition_unlocked,
+          expeditionUnlockCost: RESEARCH_EXPEDITION_UNLOCK_COST,
+        });
+      }
+
+      // ── POST /research/shop-upgrade — 다이아를 써서 상점 행운 연구 레벨을 1 올린다.
+      //    비용은 매 레벨 RESEARCH_SHOP_GROWTH배씩 뛰어서 위로 갈수록 훨씬 비싸진다. ──
+      if (request.method === "POST" && path === "/research/shop-upgrade") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const cost = researchShopUpgradeCost(row.research_shop_level);
+        if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
+        row.diamonds -= cost;
+        row.research_shop_level += 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_shop_level=? WHERE user_id=?").bind(row.diamonds, row.research_shop_level, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds, shopLevel: row.research_shop_level, nextCost: researchShopUpgradeCost(row.research_shop_level) });
+      }
+
+      // ── POST /research/expedition-unlock — 다이아 1회 소모로 "원정"(오프라인 자동 전투)을
+      //    영구 해금한다. 해금되면 Galaxy Map에서 정예/악몽/극한 등급 행성에 원정을 보낼 수
+      //    있다(태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정 — 그 자리에 없어도 됨). ──
+      if (request.method === "POST" && path === "/research/expedition-unlock") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.research_expedition_unlocked) return json({ error: "이미 해금했습니다." }, 400);
+        if (row.diamonds < RESEARCH_EXPEDITION_UNLOCK_COST) return json({ error: "다이아가 부족합니다. (필요 " + RESEARCH_EXPEDITION_UNLOCK_COST + ")" }, 400);
+        row.diamonds -= RESEARCH_EXPEDITION_UNLOCK_COST;
+        row.research_expedition_unlocked = 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_expedition_unlocked=1 WHERE user_id=?").bind(row.diamonds, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds, expeditionUnlocked: true });
+      }
+
       if (request.method === "GET" && path === "/property") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const info = await pendingPropertyIncome(env, row);
@@ -1255,23 +1429,51 @@ export default {
         await ensurePlanetSeed(env);
         await ensureHomePlanet(env, user.userId, user.realName);
         const now = Date.now();
+        const rerollBucket = planetRerollBucket(now);
+        const nextRerollAt = (rerollBucket + 1) * PLANET_REROLL_MS;
         const res = await env.DB.prepare("SELECT * FROM arena_planets ORDER BY is_home DESC, slot_index ASC").all();
         let myOwnedWild = 0;
-        const planets = res.results.map(function (p) {
+        const ownerCombatCache = {};
+        const planets = await Promise.all(res.results.map(async function (p) {
           const mine = p.owner_user_id === user.userId;
           if (mine && !p.is_home) myOwnedWild++;
-          const tier = p.bot_tier ? PLANET_BOT_TIERS[p.bot_tier] : null;
+          const isUnclaimedWild = !p.is_home && !p.owner_user_id;
+          // 미정복 행성은 15분마다 리롤되는 "현재" 난이도를 그때그때 계산한다(저장된 bot_tier는
+          // 최초 시드값이라 신뢰하지 않는다) — 정복된 행성은 주인의 실전 전투력을 그대로 보여준다.
+          let tierKey = null, combatStats = null, coinsPerHour = p.coins_per_hour;
+          if (isUnclaimedWild) {
+            tierKey = effectivePlanetTier(p.slot_index, now);
+            const t = PLANET_BOT_TIERS[tierKey];
+            combatStats = { atk: t.atk, def: t.def, crit: t.crit };
+            coinsPerHour = t.coinsPerHour;
+          } else if (p.owner_user_id && !p.is_home) {
+            if (!ownerCombatCache[p.owner_user_id]) {
+              const ownerRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.owner_user_id).first();
+              ownerCombatCache[p.owner_user_id] = ownerRow ? await totalCombatStats(env, ownerRow) : null;
+            }
+            combatStats = ownerCombatCache[p.owner_user_id];
+          }
           const elapsedMs = mine && !p.is_home ? Math.min(now - p.last_collect, PROPERTY_MAX_ACCRUAL_MS) : 0;
           const pendingCoins = mine && !p.is_home ? Math.floor(p.coins_per_hour * (elapsedMs / 3600000)) : 0;
           return {
             id: p.id, name: p.name, isHome: !!p.is_home,
             ownerUserId: p.owner_user_id, ownerName: p.owner_name, mine: mine,
-            botTier: p.bot_tier, botTierLabel: tier ? tier.label : null,
-            coinsPerHour: p.coins_per_hour, pendingCoins: pendingCoins,
+            botTier: tierKey, botTierLabel: tierKey ? PLANET_BOT_TIERS[tierKey].label : null,
+            combatStats: combatStats,
+            coinsPerHour: coinsPerHour, pendingCoins: pendingCoins,
             attackable: !p.is_home && !mine,
+            expeditionEligible: !!(tierKey && ["elite", "nightmare", "apex"].indexOf(tierKey) !== -1),
           };
+        }));
+        const tierMeta = {};
+        for (const key in PLANET_BOT_TIERS) {
+          const t = PLANET_BOT_TIERS[key];
+          tierMeta[key] = { label: t.label, weight: t.weight, atk: t.atk, def: t.def, crit: t.crit, coinsPerHour: t.coinsPerHour };
+        }
+        return json({
+          planets: planets, myOwnedWild: myOwnedWild, maxOwnedWild: PLANET_MAX_OWNED_WILD, stances: STANCES,
+          tierMeta: tierMeta, nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
         });
-        return json({ planets: planets, myOwnedWild: myOwnedWild, maxOwnedWild: PLANET_MAX_OWNED_WILD, stances: STANCES });
       }
 
       // ── POST /planets/collect — 내가 정복한 야생 행성들의 누적 대기 수익을 한 번에 정산 ──
@@ -1315,83 +1517,70 @@ export default {
         if (planet.is_home) return json({ error: "홈 행성은 공격할 수 없습니다." }, 400);
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
 
-        const isBotPlanet = !planet.owner_user_id;
-        let defenderCombat, defenderLastStance = null;
-        if (isBotPlanet) {
-          const tier = PLANET_BOT_TIERS[planet.bot_tier];
-          defenderCombat = { atk: tier.atk, def: tier.def, crit: tier.crit };
-        } else {
-          const defenderRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(planet.owner_user_id).first();
-          if (!defenderRow) return json({ error: "행성 소유자를 찾을 수 없습니다." }, 400);
-          defenderCombat = await totalCombatStats(env, defenderRow);
-          defenderLastStance = defenderRow.last_stance;
-        }
-
-        let rpsMod = 0;
-        if (defenderLastStance && STANCES[defenderLastStance]) {
-          if (stance.beats === defenderLastStance) rpsMod = STANCE_RPS_BONUS;
-          else if (STANCES[defenderLastStance].beats === stanceId) rpsMod = -STANCE_RPS_BONUS;
-        }
-
-        const attackerCombat = await totalCombatStats(env, attacker);
-        let attackerRoundWins = 0;
-        const rounds = [];
-        for (let i = 0; i < PVP_ROUNDS; i++) {
-          const timing = timingMultiplier(timingScores[i]);
-          const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult();
-          const defPower = defenderCombat.def * randMult();
-          const roundWin = atkPower > defPower;
-          if (roundWin) attackerRoundWins++;
-          rounds.push({
-            round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100),
-            atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100,
-          });
-        }
-        const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
-        const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
+        const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
+        if (result.error) return json({ error: result.error }, 400);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
-        const now = Date.now();
-        let captured = false, lootCoins = 0;
-
-        if (attackerWins) {
-          if (isBotPlanet) {
-            lootCoins = Math.round(PLANET_BOT_TIERS[planet.bot_tier].coinsPerHour * 0.5);
-          } else {
-            const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
-            lootCoins = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
-          }
-          attacker.pocket_coins += lootCoins;
-
-          const ownedCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id = ? AND is_home = 0").bind(user.userId).first();
-          const ownedCount = (ownedCountRow && ownedCountRow.cnt) || 0;
-          if (ownedCount < PLANET_MAX_OWNED_WILD) {
-            captured = true;
-            await env.DB.prepare(
-              "UPDATE arena_planets SET owner_user_id=?, owner_name=?, bot_tier=NULL, last_collect=?, captured_at=? WHERE id=?"
-            ).bind(user.userId, user.realName, now, now, planet.id).run();
-          }
-          attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
-        } else {
-          attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
-        }
-
         await env.DB.prepare(
           "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
         ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id).run();
 
-        await insertLog(env, attacker.user_id, "planet_attack", isBotPlanet ? null : planet.owner_user_id, isBotPlanet ? planet.name : planet.owner_name,
-          attackerWins ? "win" : "lose", attackerWins ? lootCoins : 0, attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
-        if (!isBotPlanet && attackerWins) {
-          await insertLog(env, planet.owner_user_id, "planet_lost", user.userId, user.realName, "lose", -lootCoins, 0);
+        await insertLog(env, attacker.user_id, "planet_attack", result.isBotPlanet ? null : planet.owner_user_id, result.isBotPlanet ? planet.name : planet.owner_name,
+          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, result.attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+        if (!result.isBotPlanet && result.attackerWins) {
+          await insertLog(env, planet.owner_user_id, "planet_lost", user.userId, user.realName, "lose", -result.lootCoins, 0);
         }
 
         const combat = await totalCombatStats(env, attacker);
         return json({
-          ok: true, attackerWins: attackerWins, sweep: sweep, captured: captured, lootCoins: lootCoins,
-          capCapped: attackerWins && !captured, planetName: planet.name,
-          rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
-          myAtk: attackerCombat.atk, theirDef: defenderCombat.def, stanceLabel: stance.label,
+          ok: true, attackerWins: result.attackerWins, sweep: result.sweep, captured: result.captured, lootCoins: result.lootCoins,
+          capCapped: result.attackerWins && !result.captured, planetName: planet.name,
+          rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
+          myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
+          state: publicState(attacker, combat),
+        });
+      }
+
+      // ── POST /planets/expedition { planetId } — 연구로 해금한 "원정": 정예/악몽/극한 등급
+      //    PVE 행성에 한해 태세 선택도 타이밍 미니게임도 없이(중립 태세 "기습형" + 평균 정확도
+      //    70점 고정) 서버가 즉시 판정한다. 자리에 없어도 보낼 수 있고, 결과는 Hack Log
+      //    최상단(created_at DESC라 자동으로 그렇게 됨)에서 돌아왔을 때 확인한다. ──
+      if (request.method === "POST" && path === "/planets/expedition") {
+        const body = await request.json().catch(function () { return {}; });
+        const planetId = parseInt(body.planetId, 10);
+
+        const attacker = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!attacker.research_expedition_unlocked) return json({ error: "원정 연구를 먼저 해금하세요." }, 400);
+        if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
+        if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
+
+        const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
+        if (!planet) return json({ error: "존재하지 않는 행성입니다." }, 404);
+        if (planet.is_home) return json({ error: "홈 행성은 공격할 수 없습니다." }, 400);
+        if (planet.owner_user_id) return json({ error: "원정은 PVE 행성(봇이 지키는 곳)에서만 가능합니다." }, 400);
+
+        const tierKey = effectivePlanetTier(planet.slot_index, Date.now());
+        if (["elite", "nightmare", "apex"].indexOf(tierKey) === -1) {
+          return json({ error: "원정은 정예 이상 등급(정예/악몽/극한) 행성에서만 가능합니다." }, 400);
+        }
+
+        const stanceId = "ambush";
+        const timingScores = [70, 70, 70]; // 사람이 직접 안 하니 평균적인 정확도로 고정
+        const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
+        if (result.error) return json({ error: result.error }, 400);
+
+        attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
+        await env.DB.prepare(
+          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id).run();
+
+        await insertLog(env, attacker.user_id, "planet_expedition", null, planet.name,
+          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, result.attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+
+        const combat = await totalCombatStats(env, attacker);
+        return json({
+          ok: true, attackerWins: result.attackerWins, sweep: result.sweep, captured: result.captured, lootCoins: result.lootCoins,
+          planetName: planet.name, tierLabel: PLANET_BOT_TIERS[tierKey].label,
           state: publicState(attacker, combat),
         });
       }

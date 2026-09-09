@@ -124,6 +124,9 @@
   .pvp-stat { color: var(--sub); }
 
   /* Shop */
+  .shop-layout { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .shop-main { flex: 1; min-width: 280px; }
+  .shop-side { width: 220px; flex-shrink: 0; }
   .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .shop-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
   .shop-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
@@ -132,6 +135,17 @@
   .shop-card-stat { font-size: 11px; color: var(--sub); margin-bottom: 6px; }
   .shop-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
   .shop-countdown { font-size: 10px; color: var(--sub); margin-bottom: 12px; text-align: right; }
+  .diamond-exchange-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid #6ee7ff; padding: 14px; }
+  .diamond-exchange-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; color: #6ee7ff; }
+  .diamond-exchange-balance { font-size: 12px; }
+
+  /* Research */
+  .research-node { background: var(--surface); border: 1px solid var(--border); padding: 16px; margin-bottom: 16px; }
+  .research-node-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .research-level-tag { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); padding: 1px 8px; font-weight: normal; }
+  .research-rarity-table { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin: 10px 0 14px; }
+  .research-rarity-row { background: var(--surface-2); border: 1px solid var(--border); padding: 6px 8px; font-size: 10px; text-align: center; }
+  .research-rarity-row b { display: block; font-size: 12px; margin-top: 2px; }
 
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
@@ -174,6 +188,11 @@
   .galaxy-empire-header b { color: var(--energy); }
   .galaxy-empire-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .galaxy-empire-empty { font-size: 11px; color: var(--sub); grid-column: 1/-1; }
+  .galaxy-legend-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .galaxy-tier-legend { display: flex; gap: 6px; flex-wrap: wrap; }
+  .galaxy-tier-chip { font-size: 9px; color: var(--sub); background: var(--surface-2); border: 1px solid var(--border); padding: 3px 8px; }
+  .galaxy-reroll-countdown { font-size: 10px; color: var(--sub); }
+  .planet-card-combat { font-size: 10px; color: var(--sub); margin-bottom: 4px; }
   .galaxy-filter-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
   .galaxy-filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
   .galaxy-filter-btn { background: var(--surface); border: 1px solid var(--border); color: var(--sub); font-size: 10px; padding: 6px 10px; }
@@ -372,6 +391,7 @@
       <button class="side-tab" data-tab="inventory">Digital Inventory</button>
       <button class="side-tab" data-tab="property">Property</button>
       <button class="side-tab" data-tab="bank">Secure Bank</button>
+      <button class="side-tab" data-tab="research">Research</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
@@ -397,6 +417,11 @@
             <button class="btn-primary" id="galaxyCollectBtn">COLLECT ALL</button>
           </div>
           <div class="galaxy-empire-grid"></div>
+        </div>
+
+        <div class="galaxy-legend-row">
+          <div class="galaxy-tier-legend" id="galaxyTierLegend"></div>
+          <div class="galaxy-reroll-countdown" id="galaxyRerollCountdown"></div>
         </div>
 
         <div class="galaxy-filter-bar">
@@ -427,8 +452,20 @@
 
       <div class="tab-panel" id="panel-shop">
         <p class="panel-title">🛒 HARDWARE SHOP</p>
-        <div class="shop-countdown" id="shopCountdown"></div>
-        <div class="shop-grid"></div>
+        <div class="shop-layout">
+          <div class="shop-main">
+            <div class="shop-countdown" id="shopCountdown"></div>
+            <div class="shop-grid"></div>
+          </div>
+          <div class="shop-side">
+            <div class="diamond-exchange-card">
+              <div class="diamond-exchange-title">💎 다이아 교환</div>
+              <div class="diamond-exchange-balance">보유 다이아 <b id="shopDiamondBalance">0</b></div>
+              <p class="dim" style="margin:6px 0 10px;">코인 <b id="shopExchangeCost">10,000</b>개 → 다이아 1개</p>
+              <button class="btn-primary" id="exchangeDiamondBtn" style="width:100%;">교환하기</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="tab-panel" id="panel-bots">
@@ -463,12 +500,33 @@
         <div class="bank-form">
           <input id="depositInput" type="number" placeholder="입금할 금액" />
           <button class="btn-primary" id="depositBtn">DEPOSIT (수수료 10%)</button>
+          <button class="btn-ghost" id="depositAllBtn">ALL</button>
         </div>
         <div class="bank-form">
           <input id="withdrawInput" type="number" placeholder="출금할 금액" />
           <button class="btn-ghost" id="withdrawBtn">WITHDRAW (무료)</button>
+          <button class="btn-ghost" id="withdrawAllBtn">ALL</button>
         </div>
         <p class="dim">Bank Coins는 Arena P2P 약탈 대상에서 완전히 제외됩니다. 이자는 없으며, 입금액의 10%는 보관 수수료로 즉시 차감됩니다.</p>
+      </div>
+
+      <div class="tab-panel" id="panel-research">
+        <p class="panel-title">🔬 RESEARCH</p>
+        <p class="dim" style="margin-bottom:14px;">다이아(💎)는 코인과 완전히 분리된 특수 재화입니다 — Hardware Shop 오른쪽 패널에서 코인으로 교환할 수 있습니다.</p>
+        <div class="bank-cards" style="margin-bottom:16px;">
+          <div class="bank-card"><div class="label">보유 다이아</div><div class="value" id="researchDiamonds">💎 0</div></div>
+        </div>
+        <div class="research-node">
+          <div class="research-node-title">🍀 상점 행운 연구 <span class="research-level-tag" id="researchShopLevelTag">Lv.0</span></div>
+          <p class="dim">다이아로 상점에서 rare 이상 등급이 뜰 확률을 영구적으로 올립니다. 레벨이 오를수록 다음 레벨 비용도 크게 늘어납니다.</p>
+          <div class="research-rarity-table" id="researchRarityTable"></div>
+          <button class="btn-primary" id="researchShopUpgradeBtn">연구하기 (💎 <span id="researchShopCost">10</span>)</button>
+        </div>
+        <div class="research-node">
+          <div class="research-node-title">🛰️ 원정 연구 <span class="research-level-tag" id="researchExpeditionTag">미해금</span></div>
+          <p class="dim">해금하면 Galaxy Map의 정예/악몽/극한 등급 행성에 원정을 보낼 수 있습니다 — 태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정하므로, 자리에 없어도(오프라인이어도) 가능합니다. 결과는 나중에 Hack Log 최상단에서 확인하세요.</p>
+          <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">20</span>)</button>
+        </div>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">

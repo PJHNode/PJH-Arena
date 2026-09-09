@@ -231,6 +231,7 @@
     inventory: renderInventoryTab,
     property: renderPropertyTab,
     bank: renderBankTab,
+    research: renderResearchTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
   };
@@ -379,8 +380,10 @@
   //    수 있게 했다. 필터/더보기는 이미 받아온 목록을 다시 그리기만 할 뿐 서버를 다시 호출하지
   //    않는다 — 캐시가 없을 때만(최초 진입, 공격 후) 네트워크를 탄다. ──
   let galaxyCache = null;
+  let galaxyExpeditionUnlocked = false;
   let galaxyTierFilter = "all", galaxyTypeFilter = "all", galaxyShowCount = 12;
   const GALAXY_PAGE_SIZE = 12;
+  const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
 
   async function renderGalaxyTab() {
     if (!state) return;
@@ -388,7 +391,9 @@
       const grid = document.querySelector("#panel-galaxy .planet-grid");
       grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
       try {
-        galaxyCache = await api("/planets");
+        const [planetsData, researchData] = await Promise.all([api("/planets"), api("/research").catch(() => null)]);
+        galaxyCache = planetsData;
+        galaxyExpeditionUnlocked = !!(researchData && researchData.expeditionUnlocked);
       } catch (e) {
         grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
         return;
@@ -407,23 +412,42 @@
 
     $("galaxyOwnedCount").textContent = data.myOwnedWild;
     $("galaxyMaxOwned").textContent = data.maxOwnedWild;
+    galaxyNextRerollAt = data.nextRerollAt;
     const empire = data.planets.filter((p) => p.isHome || p.mine);
     const pendingTotal = empire.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
     $("galaxyPending").textContent = fmt(pendingTotal);
+
+    // 난이도별 등장 확률 + 다음 리롤까지 남은 시간 — 필터 바로 위에 작은 범례로 보여준다.
+    const legendEl = $("galaxyTierLegend");
+    if (legendEl && data.tierMeta) {
+      legendEl.innerHTML = TIER_ORDER_CLIENT.map((key) => {
+        const t = data.tierMeta[key];
+        return '<span class="galaxy-tier-chip">' + t.label + " " + Math.round(t.weight * 100) + "%</span>";
+      }).join("");
+    }
+
+    function statLine(p) {
+      if (!p.combatStats) return "";
+      const s = p.combatStats;
+      return '<div class="planet-card-combat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div>";
+    }
 
     function planetCard(p, withButton) {
       const cls = p.isHome ? "home" : p.mine ? "mine" : "";
       const ownerLine = p.isHome ? "🏠 홈 행성" : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "🤖 무주인 (PVE)";
       const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
       const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
-      const btn = !withButton ? "" : p.attackable
+      const attackBtn = !withButton ? "" : p.attackable
         ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
         : '<button class="btn-ghost" disabled>' + (p.isHome ? "홈 행성" : "내 행성") + "</button>";
+      const expeditionBtn = withButton && p.expeditionEligible && galaxyExpeditionUnlocked
+        ? '<button class="btn-ghost" data-expedition="' + p.id + '" style="margin-top:6px;width:100%;"' + (state.stamina < 2 ? " disabled" : "") + ">🛰️ 원정 보내기 (⚡2)</button>"
+        : "";
       return (
         '<div class="planet-card ' + cls + '">' +
         '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
         '<div class="planet-card-owner">' + ownerLine + "</div>" +
-        tierLine + rateLine + btn +
+        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn +
         "</div>"
       );
     }
@@ -453,7 +477,35 @@
       const planet = data.planets.find((p) => String(p.id) === btn.dataset.planet);
       btn.addEventListener("click", () => openPlanetAttackSequence(planet));
     });
+    grid.querySelectorAll("button[data-expedition]").forEach((btn) => {
+      btn.addEventListener("click", () => sendExpedition(btn.dataset.expedition, btn));
+    });
   }
+
+  // ── 원정(오프라인 자동 전투) — 태세/타이밍 미니게임 없이 즉시 서버 판정. 결과는 토스트로
+  //    바로 보여주되, Hack Log에도 남으니 나중에 로그 탭에서 다시 확인할 수 있다. ──
+  async function sendExpedition(planetId, btn) {
+    btn.disabled = true;
+    try {
+      const r = await api("/planets/expedition", { method: "POST", body: { planetId } });
+      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 정복" + (r.captured ? "" : "(한도 초과, 약탈만)") + " +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName), !r.attackerWins);
+      state = r.state; renderHeader();
+      galaxyCache = null; renderGalaxyTab();
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  }
+
+  let galaxyNextRerollAt = 0;
+  setInterval(() => {
+    const el = $("galaxyRerollCountdown");
+    if (!el || !galaxyNextRerollAt) return;
+    const remain = galaxyNextRerollAt - Date.now();
+    if (remain <= 0) {
+      el.textContent = "리롤 중...";
+      if (currentTab === "galaxy") { galaxyCache = null; renderGalaxyTab(); }
+      return;
+    }
+    el.textContent = "다음 난이도 리롤까지 " + fmtCountdown(remain);
+  }, 1000);
 
   function initGalaxyFilters() {
     document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
@@ -691,8 +743,10 @@
     const grid = panel.querySelector(".shop-grid");
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
-      const { items, nextRotationAt } = await api("/shop");
+      const { items, nextRotationAt, diamonds, diamondExchangeCost } = await api("/shop");
       shopNextRotationAt = nextRotationAt;
+      $("shopDiamondBalance").textContent = "💎 " + fmt(diamonds);
+      $("shopExchangeCost").textContent = fmt(diamondExchangeCost);
       grid.innerHTML = items.map((it) => {
         const capped = it.maxOwned && it.owned >= it.maxOwned;
         const soldOut = it.totalStock != null && it.remainingStock <= 0;
@@ -721,6 +775,20 @@
         });
       });
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initShopButtons() {
+    const btn = $("exchangeDiamondBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await api("/shop/exchange-diamond", { method: "POST", body: { qty: 1 } });
+        toast("💎 다이아 1개 교환 완료!");
+        state.pocketCoins = r.pocketCoins; renderHeader(); renderShopTab();
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    });
   }
 
   // 1초마다 카운트다운 갱신, 0이 되면(로테이션이 바뀌면) 상점 탭이 보이는 동안만 자동 재조회.
@@ -956,6 +1024,56 @@
     $("bankVault").textContent = fmt(state.bankCoins);
   }
 
+  // ── Research — 다이아로 상점 행운/원정(오프라인 자동 전투) 연구를 진행한다. ──
+  async function renderResearchTab() {
+    const panel = $("panel-research");
+    try {
+      const r = await api("/research");
+      $("researchDiamonds").textContent = "💎 " + fmt(r.diamonds);
+      $("researchShopLevelTag").textContent = "Lv." + r.shopLevel;
+      $("researchShopCost").textContent = fmt(r.shopUpgradeCost);
+      const upBtn = $("researchShopUpgradeBtn");
+      upBtn.disabled = r.diamonds < r.shopUpgradeCost;
+      $("researchRarityTable").innerHTML = RARITY_ORDER_CLIENT.map((rarity) => (
+        '<div class="research-rarity-row" style="color:' + r.rarityColors[rarity] + ';">' + r.rarityLabels[rarity] +
+        "<b>" + Math.round(r.rarityChances[rarity] * 1000) / 10 + "%</b></div>"
+      )).join("");
+
+      $("researchExpeditionCost").textContent = fmt(r.expeditionUnlockCost);
+      const expBtn = $("researchExpeditionUnlockBtn");
+      if (r.expeditionUnlocked) {
+        $("researchExpeditionTag").textContent = "해금됨";
+        expBtn.disabled = true;
+        expBtn.textContent = "이미 해금됨";
+      } else {
+        $("researchExpeditionTag").textContent = "미해금";
+        expBtn.disabled = r.diamonds < r.expeditionUnlockCost;
+        expBtn.innerHTML = "해금하기 (💎 <span id=\"researchExpeditionCost\">" + fmt(r.expeditionUnlockCost) + "</span>)";
+      }
+    } catch (e) { panel.querySelector(".research-node").insertAdjacentHTML("afterend", '<p class="dim">' + escapeHtml(e.message) + "</p>"); }
+  }
+
+  function initResearchButtons() {
+    const upBtn = $("researchShopUpgradeBtn");
+    if (upBtn) upBtn.addEventListener("click", async () => {
+      upBtn.disabled = true;
+      try {
+        const r = await api("/research/shop-upgrade", { method: "POST" });
+        toast("상점 행운 연구 Lv." + r.shopLevel + " 달성!");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); upBtn.disabled = false; }
+    });
+    const expBtn = $("researchExpeditionUnlockBtn");
+    if (expBtn) expBtn.addEventListener("click", async () => {
+      expBtn.disabled = true;
+      try {
+        const r = await api("/research/expedition-unlock", { method: "POST" });
+        toast("🛰️ 원정 연구 해금 완료!");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); expBtn.disabled = false; }
+    });
+  }
+
   function initBankForm() {
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -974,6 +1092,8 @@
     }
     $("depositBtn").addEventListener("click", () => deposit("depositInput"));
     $("withdrawBtn").addEventListener("click", () => withdraw("withdrawInput"));
+    $("depositAllBtn").addEventListener("click", () => { $("depositInput").value = state.pocketCoins; deposit("depositInput"); });
+    $("withdrawAllBtn").addEventListener("click", () => { $("withdrawInput").value = state.bankCoins; withdraw("withdrawInput"); });
   }
 
   // ── ⑥ Leaderboard ──
@@ -1019,6 +1139,9 @@
         if (l.kind === "job") { icon = "💾"; desc = (l.opponent_name || "") + " 작업 완료"; }
         else if (l.kind === "pvp_attack") { icon = l.result === "crit" ? "💥" : attackWon ? "⚔️" : "🛡️"; desc = (l.result === "crit" ? "크리티컬 침투 성공: " : attackWon ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "pvp_defend") { icon = l.result === "win" ? "🛡️" : "💥"; desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "planet_attack") { icon = attackWon ? "🌍" : "🛡️"; desc = (attackWon ? "행성 정복: " : "행성 공격 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "planet_lost") { icon = "💥"; desc = "행성을 빼앗김: " + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "planet_expedition") { icon = attackWon ? "🛰️" : "🛰️"; desc = (attackWon ? "원정 성공: " : "원정 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
           '<div class="log-row"><span>' + icon + "</span><span>" + desc + '</span><span class="' + coinCls + '">' +
@@ -1036,6 +1159,8 @@
     initLeaderboardTabs();
     initStatButtons();
     initGalaxyButtons();
+    initShopButtons();
+    initResearchButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);
