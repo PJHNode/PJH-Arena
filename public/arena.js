@@ -108,13 +108,34 @@
 
     $("atkText").textContent = state.atk;
     $("defText").textContent = state.def;
+    $("critText").textContent = state.crit;
     $("shieldTag").style.display = state.shielded ? "" : "none";
+
+    $("statPointsText").textContent = state.statPoints;
+    $("statPointsTag").style.display = state.statPoints > 0 ? "" : "none";
+    $("upgradeHpBtn").disabled = state.statPoints <= 0;
+    $("upgradeEnergyBtn").disabled = state.statPoints <= 0;
+    $("upgradeStaminaBtn").disabled = state.statPoints <= 0;
 
     if (state.hp <= 0) $("downedBanner").style.display = "block"; // .tab-panel과 동일한 함정: ""는 CSS의 display:none으로 되돌아감
     else $("downedBanner").style.display = "none";
+  }
 
-    const dashVault = $("dashBankVault");
-    if (dashVault) dashVault.textContent = fmt(state.bankCoins);
+  // ── 스탯 강화 버튼 — 정확한 비용은 서버가 다시 계산해서 검증하므로 여기서는 그냥 요청만 보낸다.
+  //    비용 부족/스탯 불명 등은 서버 에러 메시지를 그대로 토스트로 띄운다. ──
+  function initStatButtons() {
+    function upgrade(stat) {
+      return async () => {
+        try {
+          const r = await api("/stats/upgrade", { method: "POST", body: { stat } });
+          toast("스탯 강화 완료! (-" + r.cost + " 포인트)");
+          state = r.state; renderHeader();
+        } catch (e) { toast(e.message, true); }
+      };
+    }
+    $("upgradeHpBtn").addEventListener("click", upgrade("hp"));
+    $("upgradeEnergyBtn").addEventListener("click", upgrade("energy"));
+    $("upgradeStaminaBtn").addEventListener("click", upgrade("stamina"));
   }
 
   // ── 상단 통합 위젯 바 — 게임/사이트 관련 지표만(시세 위젯은 제외). PJH-Hub의 공개 프로필 API를
@@ -204,9 +225,6 @@
       });
     });
     renderMiningGraph();
-    renderDashboardPvp();
-    renderDashboardShop();
-    renderDashboardLog();
   }
 
   async function renderMiningGraph() {
@@ -246,7 +264,7 @@
       listEl.innerHTML = targets.map((t) => (
         '<div class="pvp-row">' +
         '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
-        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE</span>') + "</div>" +
+        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "%</div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
@@ -269,6 +287,7 @@
       $("scanModalBody").innerHTML =
         "<h3>🔎 PRACTICE SCAN — " + escapeHtml(r.realName) + " (Lv." + r.level + ")</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
+        (r.online ? "" : '<div class="scan-row">대기 중인 Property 수익 <b style="color:var(--stamina);">+' + fmt(r.offlinePendingCoins) + "</b></div>") +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">소모 스태미나 <b>' + r.staminaCost + "</b></div>" +
@@ -281,78 +300,13 @@
     btn.disabled = true;
     try {
       const r = await api("/arena/attack", { method: "POST", body: { targetUserId } });
-      if (r.attackerWins) toast((r.isCrit ? "💥 CRITICAL! " : "✅ ") + "침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인");
-      else toast("❌ 침투 실패...", true);
+      const bonusNote = r.offlineBonusCollected > 0 ? " (Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨)" : "";
+      if (r.attackerWins) toast((r.isCrit ? "💥 CRITICAL! " : "✅ ") + "침투 성공! 약탈 +" + fmt(r.coinsDelta) + " 코인" + bonusNote);
+      else toast("❌ 침투 실패..." + bonusNote, true);
       state = r.state; renderHeader();
       if (currentTab === "pvp") renderPvpTab();
-      if (currentTab === "jobs") { renderDashboardPvp(); renderDashboardLog(); }
     } catch (e) { toast(e.message, true); }
     finally { btn.disabled = false; }
-  }
-
-  // ── 홈 대시보드(Network Control Center)용 축약 위젯들 — 각 탭의 전체 화면과 별개로,
-  //    한눈에 볼 수 있는 요약본만 보여준다(최대 6건). 상세 조작은 해당 사이드바 탭에서. ──
-  async function renderDashboardPvp() {
-    const el = document.querySelector(".pvp-compact-list");
-    if (!el || !state) return;
-    el.innerHTML = '<p class="dim">타겟 스캔 중...</p>';
-    try {
-      const { targets } = await api("/arena/targets");
-      if (!targets.length) { el.innerHTML = '<p class="dim">공격 가능한 대상이 없습니다.</p>'; return; }
-      el.innerHTML = targets.slice(0, 6).map((t) => (
-        '<div class="compact-row">' +
-        '<span>' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + " · DEF " + t.def + "</span> " +
-        (t.online ? '<span style="color:var(--energy);font-size:10px;">●</span>' : '<span class="dim" style="font-size:10px;">○</span>') + "</span>" +
-        '<button class="btn-ghost" data-dscan="' + t.userId + '">SCAN</button>' +
-        '<button class="btn-danger" data-dattack="' + t.userId + '"' + (state.stamina < t.staminaCost ? " disabled" : "") + ">⚡" + t.staminaCost + "</button>" +
-        "</div>"
-      )).join("");
-      el.querySelectorAll("button[data-dscan]").forEach((btn) => btn.addEventListener("click", () => openScanModal(btn.dataset.dscan)));
-      el.querySelectorAll("button[data-dattack]").forEach((btn) => btn.addEventListener("click", () => doAttack(btn.dataset.dattack, btn)));
-    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
-  }
-
-  async function renderDashboardShop() {
-    const el = document.querySelector(".shop-compact-list");
-    if (!el || !state) return;
-    el.innerHTML = '<p class="dim">불러오는 중...</p>';
-    try {
-      const { items } = await api("/shop");
-      el.innerHTML = items.map((it) => (
-        '<div class="compact-row">' +
-        '<span>' + escapeHtml(it.name) + '<span class="dim"> 💰' + fmt(it.price) + "</span></span>" +
-        '<button class="btn-primary" data-dbuy="' + it.id + '"' + (state.pocketCoins < it.price ? " disabled" : "") + ">구매</button><span></span></div>"
-      )).join("");
-      el.querySelectorAll("button[data-dbuy]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          btn.disabled = true;
-          try {
-            const r = await api("/shop/buy", { method: "POST", body: { itemId: btn.dataset.dbuy } });
-            toast("구매 완료!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderDashboardShop();
-          } catch (e) { toast(e.message, true); btn.disabled = false; }
-        });
-      });
-    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
-  }
-
-  async function renderDashboardLog() {
-    const el = document.querySelector(".log-compact-list");
-    if (!el) return;
-    el.innerHTML = '<p class="dim">불러오는 중...</p>';
-    try {
-      const { logs } = await api("/logs");
-      if (!logs.length) { el.innerHTML = '<p class="dim">기록이 없습니다.</p>'; return; }
-      el.innerHTML = logs.slice(0, 6).map((l) => {
-        let desc = "";
-        const attackWon = l.result === "win" || l.result === "crit";
-        if (l.kind === "job") desc = (l.opponent_name || "") + " 작업 완료";
-        else if (l.kind === "pvp_attack") desc = (l.result === "crit" ? "크리티컬 성공: " : attackWon ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "");
-        else if (l.kind === "pvp_defend") desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "");
-        const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
-        return '<div class="compact-row"><span>' + desc + '</span><span class="' + coinCls + '">' +
-          (l.coins_delta ? (l.coins_delta > 0 ? "+" : "") + fmt(l.coins_delta) : "") + "</span><span></span></div>";
-      }).join("");
-    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
   // 아이템 하나의 능력치 표시 문구 — 상점/봇/인벤토리에서 공용으로 쓴다.
@@ -366,22 +320,34 @@
     if (it.effect === "energy_full") return "Energy 100% 회복";
     if (it.effect === "heal_flat") return "HP +" + it.value;
     if (it.effect === "heal_full") return "HP 100% 회복";
-    if (it.effect === "self_shield") return "1시간 자가 보호막";
+    if (it.effect === "heal_and_energy_full") return "HP+Energy 100% 회복";
+    if (it.effect === "self_shield") return Math.round(it.value / 3600000) + "시간 자가 보호막";
     return "";
   }
 
-  // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착). ──
+  // 남은 시간을 "3분 12초" 식으로 — 상점 로테이션 카운트다운에 쓴다.
+  function fmtCountdown(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const m = Math.floor(s / 60);
+    return m > 0 ? m + "분 " + (s % 60) + "초" : s + "초";
+  }
+
+  let shopNextRotationAt = 0;
+  // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착).
+  //    상점은 4분마다 통째로 리롤되는 공용 로테이션이라, 카운트다운이 0이 되면 자동으로 다시 그린다. ──
   async function renderShopTab() {
     if (!state) return;
     const panel = $("panel-shop");
     const grid = panel.querySelector(".shop-grid");
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
-      const { items } = await api("/shop");
+      const { items, nextRotationAt } = await api("/shop");
+      shopNextRotationAt = nextRotationAt;
       grid.innerHTML = items.map((it) => (
-        '<div class="shop-card">' +
+        '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
-        '<div class="shop-card-type">' + it.type.toUpperCase() + (it.owned ? " · 보유 " + it.owned : "") + "</div>" +
+        '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned : "") + "</div>" +
+        '<div class="rarity-badge" style="color:' + it.rarityColor + '">' + it.rarityLabel + "</div>" +
         '<div class="shop-card-stat">' + itemStatLabel(it) + "</div>" +
         '<div class="shop-card-price">💰 ' + fmt(it.price) + "</div>" +
         '<button class="btn-primary" data-buy="' + it.id + '"' + (state.pocketCoins < it.price ? " disabled" : "") + ">구매</button></div>"
@@ -399,6 +365,18 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // 1초마다 카운트다운 갱신, 0이 되면(로테이션이 바뀌면) 상점 탭이 보이는 동안만 자동 재조회.
+  setInterval(() => {
+    const el = $("shopCountdown");
+    if (!el || !shopNextRotationAt) return;
+    const remain = shopNextRotationAt - Date.now();
+    if (remain <= 0) {
+      if (currentTab === "shop") renderShopTab();
+      return;
+    }
+    el.textContent = "다음 로테이션까지 " + fmtCountdown(remain);
+  }, 1000);
+
   // ── ④ Digital Inventory — 소비재 사용 전용(장비 장착은 Bots 탭) ──
   async function renderInventoryTab() {
     const panel = $("panel-inventory");
@@ -409,8 +387,8 @@
       const consumables = inv.items.filter((it) => it.type === "consumable");
       if (!consumables.length) { list.innerHTML = '<p class="dim">보유한 소비재가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
       list.innerHTML = consumables.map((it) => (
-        '<div class="inv-row">' +
-        '<div class="inv-name">' + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + "</div>" +
+        '<div class="inv-row" style="border-left-color:' + it.rarityColor + '">' +
+        '<div class="inv-name">' + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
         '<div class="dim">' + itemStatLabel(it) + "</div>" +
         '<button class="btn-ghost" data-use="' + it.id + '">사용</button>' +
         "</div>"
@@ -424,12 +402,13 @@
     } catch (e) { list.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
-  // 상점 카탈로그(아이템 이름 조회용) — 한 번 받아오면 캐시. 이미 장착돼 availableItems에는
-  // 안 잡히는 아이템의 이름을 드롭다운에 표시하기 위해 필요하다.
+  // 전체 아이템 카탈로그(아이템 이름/등급 조회용, 로테이션과 무관) — 한 번 받아오면 캐시.
+  // 이미 장착된 아이템은 지금 상점 로테이션에 없을 수도 있어서, /shop이 아니라 /items(전체
+  // 카탈로그)에서 가져와야 한다.
   let shopCatalogCache = null;
   async function getShopCatalog() {
     if (!shopCatalogCache) {
-      const { items } = await api("/shop");
+      const { items } = await api("/items");
       shopCatalogCache = {};
       items.forEach((it) => { shopCatalogCache[it.id] = it; });
     }
@@ -448,10 +427,10 @@
         const options = data.availableItems.filter((it) => it.type === slotType);
         const currentItem = equippedId ? catalog[equippedId] : null;
         let optionsHtml = '<option value="">— 비어있음 —</option>';
-        if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>' + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
-        options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">' + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
+        if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>[' + (currentItem ? currentItem.rarityLabel : "") + "] " + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
+        options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">[' + it.rarityLabel + "] " + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
         return (
-          '<div class="bot-slot"><span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
+          '<div class="bot-slot slot-' + slotType + '"><span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
         );
       }
 
@@ -555,8 +534,6 @@
     }
     $("depositBtn").addEventListener("click", () => deposit("depositInput"));
     $("withdrawBtn").addEventListener("click", () => withdraw("withdrawInput"));
-    $("dashDepositBtn").addEventListener("click", () => deposit("dashDepositInput"));
-    $("dashWithdrawBtn").addEventListener("click", () => withdraw("dashWithdrawInput"));
   }
 
   // ── ⑥ Leaderboard ──
@@ -617,6 +594,7 @@
     initTabs();
     initBankForm();
     initLeaderboardTabs();
+    initStatButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.

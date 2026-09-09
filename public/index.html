@@ -67,13 +67,21 @@
   /* ── 리소스 바 (HP/Energy/Stamina) ── */
   .resource-bar-row { display: flex; gap: 20px; padding: 10px 20px; flex-wrap: wrap; background: var(--surface); border-bottom: 1px solid var(--border); }
   .resource { flex: 1; min-width: 140px; }
-  .resource-label { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .resource-label { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .resource-label span:first-child { flex-shrink: 0; }
+  .resource-label span:nth-child(2) { flex: 1; text-align: right; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
   .resource-fill.hp { background: var(--hp); }
   .resource-fill.energy { background: var(--energy); }
   .resource-fill.stamina { background: var(--stamina); }
-  .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; }
+  .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; flex-wrap: wrap; }
+  .stat-plus-btn {
+    width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: #052014;
+    border: none; font-weight: bold; font-size: 12px; flex-shrink: 0;
+  }
+  .stat-plus-btn:disabled { opacity: 0.25; }
+  .stat-points-tag { color: var(--stamina); font-weight: bold; margin-left: auto; }
 
   #downedBanner {
     display: none; background: var(--danger); color: #fff; text-align: center; font-size: 12px; padding: 6px;
@@ -96,30 +104,7 @@
   .tab-panel { display: none; }
   .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
 
-  /* Network Control Center (홈 대시보드) */
-  .ncc-grid {
-    display: grid; gap: 14px;
-    grid-template-columns: 1.3fr 1fr;
-    grid-template-areas: "jobs pvp" "bank shop" "bank log";
-  }
-  .ncc-jobs { grid-area: jobs; } .ncc-pvp { grid-area: pvp; }
-  .ncc-bank { grid-area: bank; } .ncc-shop { grid-area: shop; } .ncc-log { grid-area: log; }
-  @media (max-width: 900px) {
-    .ncc-grid { grid-template-columns: 1fr; grid-template-areas: "jobs" "pvp" "bank" "shop" "log"; }
-  }
-  .ncc-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; min-width: 0; }
-  .ncc-card-head {
-    display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--accent);
-    margin-bottom: 10px; letter-spacing: 0.03em;
-  }
-  .live-dot { color: var(--danger); font-size: 10px; animation: pulseLive 1.6s infinite; }
-  @keyframes pulseLive { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
   .accent-text { color: var(--accent); }
-  .compact-row {
-    display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 7px 0;
-    border-bottom: 1px solid var(--border); font-size: 11px;
-  }
-  .compact-row:last-child { border-bottom: none; }
 
   /* Jobs */
   .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -139,22 +124,27 @@
 
   /* Shop */
   .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
-  .shop-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
+  .shop-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
   .shop-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
-  .shop-card-type { font-size: 10px; color: var(--cyan); margin-bottom: 6px; }
+  .shop-card-type { font-size: 10px; margin-bottom: 4px; font-weight: bold; letter-spacing: 0.02em; }
+  .rarity-badge { font-size: 9px; font-weight: bold; letter-spacing: 0.04em; padding: 1px 7px; display: inline-block; margin-bottom: 6px; border: 1px solid currentColor; }
   .shop-card-stat { font-size: 11px; color: var(--sub); margin-bottom: 6px; }
   .shop-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
+  .shop-countdown { font-size: 10px; color: var(--sub); margin-bottom: 12px; text-align: right; }
 
   /* Inventory */
-  .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
 
   /* Bots */
   .bot-roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
   .bot-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
   .bot-card.player { border-color: var(--accent); }
   .bot-card-title { font-size: 12px; color: var(--accent); margin-bottom: 10px; font-weight: bold; }
-  .bot-slot { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 6px 0; border-bottom: 1px solid var(--border); gap: 6px; }
+  .bot-slot { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 6px 0 6px 8px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent; gap: 6px; }
   .bot-slot:last-child { border-bottom: none; }
+  .bot-slot.slot-weapon { border-left-color: #ff6b4a; }
+  .bot-slot.slot-armor { border-left-color: #3d8bff; }
+  .bot-slot.slot-core { border-left-color: #b060e8; }
   .bot-slot select { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 10px; padding: 4px 6px; max-width: 130px; }
   .bot-recruit-card { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); padding: 20px; color: var(--sub); font-size: 12px; text-align: center; }
 
@@ -265,24 +255,25 @@
   <p class="dim">(로그인 상태는 사이트별로 따로 저장돼요 — PJH-Hub에 로그인돼 있어도 여기서 다시 로그인해야 합니다.)</p>
   <button id="loggedOutCta">로그인 / 가입하기</button>
 </div>
-
 <div id="appShell" style="display:none; flex:1; flex-direction:column; min-height:0;">
   <div class="resource-bar-row">
     <div class="resource">
-      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span></div>
+      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span><button class="stat-plus-btn" id="upgradeHpBtn" title="HP 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill hp" id="hpBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>ENERGY</span><span id="energyText">50 / 50</span></div>
+      <div class="resource-label"><span>ENERGY</span><span id="energyText">50 / 50</span><button class="stat-plus-btn" id="upgradeEnergyBtn" title="에너지 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill energy" id="energyBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span></div>
+      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span><button class="stat-plus-btn" id="upgradeStaminaBtn" title="스태미나 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill stamina" id="staminaBar"></div></div>
     </div>
     <div class="atk-def-row">
       <span>ATK <b id="atkText">10</b></span>
       <span>DEF <b id="defText">10</b></span>
+      <span>CRIT <b id="critText">5</b>%</span>
+      <span class="stat-points-tag" id="statPointsTag" style="display:none;">🔺 스탯 포인트 <b id="statPointsText">0</b></span>
     </div>
   </div>
 
@@ -301,42 +292,14 @@
 
     <div class="content">
       <div class="tab-panel" id="panel-jobs">
-        <p class="panel-title">🖧 NETWORK CONTROL CENTER</p>
-        <div class="ncc-grid">
-          <div class="ncc-card ncc-jobs">
-            <div class="ncc-card-head"><span>⚡ Active Hacking Jobs</span></div>
-            <div class="job-grid"></div>
-            <div class="mining-wrap">
-              <p class="dim" style="margin:8px 0 6px;">PACKET MINING (최근 수익)</p>
-              <canvas id="miningCanvas" width="600" height="80"></canvas>
-            </div>
-          </div>
-          <div class="ncc-card ncc-pvp">
-            <div class="ncc-card-head"><span>🎯 Arena P2P</span><span class="live-dot">● LIVE</span></div>
-            <div class="pvp-compact-list"></div>
-          </div>
-          <div class="ncc-card ncc-bank">
-            <div class="ncc-card-head"><span>🏦 Secure Bank</span></div>
-            <div class="bank-form">
-              <input id="dashDepositInput" type="number" placeholder="Deposit → Pocket" />
-              <button class="btn-primary" id="dashDepositBtn">DEPOSIT</button>
-            </div>
-            <div class="bank-form">
-              <input id="dashWithdrawInput" type="number" placeholder="Withdraw → Pocket" />
-              <button class="btn-ghost" id="dashWithdrawBtn">WITHDRAW</button>
-            </div>
-            <div class="dim">Bank Coins: <span class="accent-text" id="dashBankVault">0</span></div>
-          </div>
-          <div class="ncc-card ncc-shop">
-            <div class="ncc-card-head"><span>🛒 Hacker Shop</span></div>
-            <div class="shop-compact-list"></div>
-          </div>
-          <div class="ncc-card ncc-log">
-            <div class="ncc-card-head"><span>📜 Hack Log</span><span class="live-dot">● LIVE</span></div>
-            <div class="log-compact-list"></div>
-          </div>
+        <p class="panel-title">⚡ ACTIVE HACKING JOBS</p>
+        <div class="job-grid"></div>
+        <div class="mining-wrap">
+          <p class="dim" style="margin:0 0 6px;">PACKET MINING (최근 수익)</p>
+          <canvas id="miningCanvas" width="600" height="80"></canvas>
         </div>
       </div>
+
 
       <div class="tab-panel" id="panel-pvp">
         <p class="panel-title">🎯 ARENA P2P — TARGETS</p>
@@ -345,6 +308,7 @@
 
       <div class="tab-panel" id="panel-shop">
         <p class="panel-title">🛒 HARDWARE SHOP</p>
+        <div class="shop-countdown" id="shopCountdown"></div>
         <div class="shop-grid"></div>
       </div>
 
