@@ -98,15 +98,20 @@ function statUpgradeCost(stat, currentMax) {
 //  아이템 등급(Rarity) — 상점 로테이션의 확률/등장 개수를 결정한다.
 // ══════════════════════════════════════════════════════════
 const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden"];
+// 기본 확률(연구 보너스 적용 전) — "1000번 뽑으면 common 650 / uncommon 200 / epic 100 /
+// legendary 40 / secret 10 / forbidden 0" 요청을 그대로 chance(=count/1000)에 반영했다.
+// rare·mythic는 명시되지 않아서 양옆 값 사이로 자연스럽게 보간했다(rare는 uncommon·epic
+// 사이 0.15, mythic는 legendary·secret 사이 0.025). forbidden은 0이라 기본 로테이션에는
+// 아예 안 뜨고, 연구로 얻는 보너스(레벨당 +2%)가 쌓여야만 언젠가 뜰 수 있다.
 const RARITY_META = {
-  common:    { chance: 1,     maxSlots: 3, label: "COMMON",    color: "#9a9a9a" },
-  uncommon:  { chance: 1,     maxSlots: 2, label: "UNCOMMON",  color: "#4cd137" },
-  rare:      { chance: 0.5,   maxSlots: 1, label: "RARE",      color: "#00d4ff" },
-  epic:      { chance: 0.25,  maxSlots: 1, label: "EPIC",      color: "#b060e8" },
-  legendary: { chance: 0.10,  maxSlots: 1, label: "LEGENDARY", color: "#ff8a3d" },
-  mythic:    { chance: 0.04,  maxSlots: 1, label: "MYTHIC",    color: "#ff3d9e" },
-  secret:    { chance: 0.015, maxSlots: 1, label: "SECRET",    color: "#ffd700" },
-  forbidden: { chance: 0.005, maxSlots: 1, label: "FORBIDDEN", color: "#ff1744" },
+  common:    { chance: 0.65,  maxSlots: 3, label: "COMMON",    color: "#9a9a9a" },
+  uncommon:  { chance: 0.20,  maxSlots: 2, label: "UNCOMMON",  color: "#4cd137" },
+  rare:      { chance: 0.15,  maxSlots: 1, label: "RARE",      color: "#00d4ff" },
+  epic:      { chance: 0.10,  maxSlots: 1, label: "EPIC",      color: "#b060e8" },
+  legendary: { chance: 0.04,  maxSlots: 1, label: "LEGENDARY", color: "#ff8a3d" },
+  mythic:    { chance: 0.025, maxSlots: 1, label: "MYTHIC",    color: "#ff3d9e" },
+  secret:    { chance: 0.01,  maxSlots: 1, label: "SECRET",    color: "#ffd700" },
+  forbidden: { chance: 0,     maxSlots: 1, label: "FORBIDDEN", color: "#ff1744" },
 };
 const SHOP_ROTATION_MS = 4 * 60 * 1000;
 
