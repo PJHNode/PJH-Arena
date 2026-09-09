@@ -263,19 +263,31 @@ function computeShopRotation(nowMs) {
   return { itemIds: itemIds, bucket: bucket, nextRotationAt: (bucket + 1) * SHOP_ROTATION_MS };
 }
 
-// ── 소비재(consumable) 전용 재고 — 로테이션(bucket)마다 아이템별로 1~3개 중 하나가 시드
-//    되어(1개 80%, 2개 15%, 3개 5%) 다 팔리면 그 로테이션 동안은 품절. 장착 아이템(무기/방어/
-//    코어)은 재고 개념이 없다(그대로 무제한). ──
+// ── 상점 재고 — 장착 아이템(무기/방어/코어)과 소비재 전부, 로테이션(bucket)마다 아이템별로
+//    1~3개 중 하나가 시드되어 다 팔리면 그 로테이션 동안은 품절. 등급이 높을수록 "떴다 하면
+//    딱 1개"일 확률이 훨씬 높아진다(희귀할수록 더 귀해야 하니까) — COMMON은 1개 50%/2개
+//    35%/3개 15%인 반면 FORBIDDEN은 1개 99%로 사실상 항상 1개만 나온다. ──
 function hashStr(s) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return h;
 }
-function rollConsumableStock(itemId, bucket) {
+const STOCK_WEIGHTS_BY_RARITY = {
+  common:    { one: 0.50, two: 0.35, three: 0.15 },
+  uncommon:  { one: 0.60, two: 0.30, three: 0.10 },
+  rare:      { one: 0.70, two: 0.23, three: 0.07 },
+  epic:      { one: 0.80, two: 0.16, three: 0.04 },
+  legendary: { one: 0.88, two: 0.10, three: 0.02 },
+  mythic:    { one: 0.93, two: 0.06, three: 0.01 },
+  secret:    { one: 0.97, two: 0.025, three: 0.005 },
+  forbidden: { one: 0.99, two: 0.009, three: 0.001 },
+};
+function rollItemStock(itemId, bucket, rarity) {
+  const w = STOCK_WEIGHTS_BY_RARITY[rarity] || STOCK_WEIGHTS_BY_RARITY.common;
   const rng = mulberry32((bucket ^ hashStr(itemId)) | 0);
   const r = rng();
-  if (r < 0.8) return 1;
-  if (r < 0.95) return 2;
+  if (r < w.one) return 1;
+  if (r < w.one + w.two) return 2;
   return 3;
 }
 
@@ -615,9 +627,11 @@ export default {
         const me = await loadOrCreateUser(env, user.userId, user.realName);
         const myCombat = await totalCombatStats(env, me);
         const now = Date.now();
+        // 공격 불가능한 상대(자가 보호막 중, 다운 상태, 오늘 공격 한도 초과)라도 목록에서 아예
+        // 사라지진 않는다 — 그냥 ATTACK 버튼만 비활성화되고 사유가 표시된다.
         const res = await env.DB.prepare(
-          "SELECT * FROM arena_users WHERE user_id != ? AND hp > 0 AND shield_until <= ? AND level BETWEEN ? AND ? ORDER BY RANDOM() LIMIT 20"
-        ).bind(user.userId, now, me.level - PVP_LEVEL_RANGE, me.level + PVP_LEVEL_RANGE).all();
+          "SELECT * FROM arena_users WHERE user_id != ? AND level BETWEEN ? AND ? ORDER BY RANDOM() LIMIT 20"
+        ).bind(user.userId, me.level - PVP_LEVEL_RANGE, me.level + PVP_LEVEL_RANGE).all();
 
         const targets = [];
         for (const t of res.results) {
@@ -631,6 +645,9 @@ export default {
           let wins = 0;
           for (let i = 0; i < 300; i++) if (myCombat.atk * randMult() > tCombat.def * randMult()) wins++;
           const attacksUsed = await countRecentAttacks(env, user.userId, t.user_id);
+          const shielded = t.shield_until > now;
+          const downed = t.hp <= 0;
+          const attackCapped = attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY;
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
             offlinePendingCoins: bonusPocket,
@@ -638,7 +655,8 @@ export default {
             estimatedVictoryPct: Math.round((wins / 300) * 100),
             staminaCost: online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE,
             attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
-            attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+            attackCapped: attackCapped, shielded: shielded, downed: downed,
+            attackable: !shielded && !downed && !attackCapped,
           });
         }
         return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
@@ -838,9 +856,8 @@ export default {
         const entries = rotation.itemIds.map(function (id) { return [id, SHOP_ITEMS[id]]; });
         const items = sortedShopEntries(entries).map(function (pair) {
           const id = pair[0], item = pair[1];
-          const isConsumable = item.type === "consumable";
-          const totalStock = isConsumable ? rollConsumableStock(id, rotation.bucket) : null;
-          const remainingStock = isConsumable ? Math.max(0, totalStock - (boughtMap[id] || 0)) : null;
+          const totalStock = rollItemStock(id, rotation.bucket, item.rarity);
+          const remainingStock = Math.max(0, totalStock - (boughtMap[id] || 0));
           return Object.assign({ id: id }, item, {
             rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
             typeLabel: ITEM_TYPE_META[item.type] ? ITEM_TYPE_META[item.type].label : null,
@@ -871,15 +888,13 @@ export default {
           }
         }
 
-        // 소비재 재고(로테이션당 1~3개) — 조건부 UPDATE(bought < total)로 품절 이후엔 아무도
-        // 더 못 사게 막는다. changes가 0이면 이번 로테이션 재고가 이미 다 팔린 것.
-        if (item.type === "consumable") {
-          const total = rollConsumableStock(itemId, rotation.bucket);
-          const stockRes = await env.DB.prepare(
-            "INSERT INTO arena_shop_stock (item_id, bucket, bought) VALUES (?, ?, 1) ON CONFLICT(item_id, bucket) DO UPDATE SET bought = bought + 1 WHERE bought < ?"
-          ).bind(itemId, rotation.bucket, total).run();
-          if (!stockRes.meta.changes) return json({ error: "품절된 아이템입니다. 다음 로테이션을 기다려주세요." }, 400);
-        }
+        // 상점 재고(로테이션당 1~3개, 장착 아이템도 포함) — 조건부 UPDATE(bought < total)로
+        // 품절 이후엔 아무도 더 못 사게 막는다. changes가 0이면 이번 로테이션 재고가 이미 다 팔린 것.
+        const totalStock = rollItemStock(itemId, rotation.bucket, item.rarity);
+        const stockRes = await env.DB.prepare(
+          "INSERT INTO arena_shop_stock (item_id, bucket, bought) VALUES (?, ?, 1) ON CONFLICT(item_id, bucket) DO UPDATE SET bought = bought + 1 WHERE bought < ?"
+        ).bind(itemId, rotation.bucket, totalStock).run();
+        if (!stockRes.meta.changes) return json({ error: "품절된 아이템입니다. 다음 로테이션을 기다려주세요." }, 400);
 
         row.pocket_coins -= item.price;
         await env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id).run();

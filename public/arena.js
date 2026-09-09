@@ -303,17 +303,24 @@
     try {
       const { targets } = await api("/arena/targets");
       if (!targets.length) { listEl.innerHTML = '<p class="dim">현재 공격 가능한 대상이 없습니다.</p>'; return; }
-      listEl.innerHTML = targets.map((t) => (
+      listEl.innerHTML = targets.map((t) => {
+        // 지금 당장 공격은 못 해도(보호막/다운/한도 초과) 목록에서 사라지진 않는다 — 이유만 표시.
+        const statusNote = t.shielded ? '<span style="color:var(--cyan);"> 🛡️ 보호막 중</span>'
+          : t.downed ? '<span style="color:var(--danger);"> 💀 다운 상태</span>' : "";
+        const attackDisabled = state.stamina < t.staminaCost || !t.attackable;
+        const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
+        return (
         '<div class="pvp-row">' +
         '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
-        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + "</div>" +
+        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + statusNote + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
         '<button class="btn-ghost" data-scan="' + t.userId + '">SCAN</button>' +
-        '<button class="btn-danger" data-attack="' + t.userId + '"' + (state.stamina < t.staminaCost || t.attackCapped ? " disabled" : "") + ">" + (t.attackCapped ? "한도 도달" : "ATTACK") + "</button>" +
+        '<button class="btn-danger" data-attack="' + t.userId + '"' + (attackDisabled ? " disabled" : "") + ">" + attackLabel + "</button>" +
         "</div>"
-      )).join("");
+        );
+      }).join("");
       listEl.querySelectorAll("button[data-scan]").forEach((btn) => {
         btn.addEventListener("click", () => openScanModal(btn.dataset.scan));
       });
