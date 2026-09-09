@@ -140,7 +140,7 @@ const SHOP_ITEMS = {
   algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 90000, value: 100 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
-  energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20 },
+  energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },
   vaccine:          { name: "급속 치료 백신",           type: "consumable", rarity: "uncommon",  price: 300,  effect: "heal_full" },
   ddos:             { name: "DDoS Booster",           type: "consumable", rarity: "uncommon",  price: 800,  effect: "stamina", value: 3 },
   mega_energy_cell: { name: "메가 에너지 셀",           type: "consumable", rarity: "rare",      price: 500,  effect: "energy_full" },
@@ -659,7 +659,12 @@ export default {
           const defPower = defenderCombat.def * randMult();
           const roundWin = atkPower > defPower;
           if (roundWin) attackerRoundWins++;
-          rounds.push({ round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100) });
+          // atkPower/defPower/timing을 그대로 내려보내 클라이언트가 "왜 이겼는지/졌는지" 라운드별
+          // 수치를 보여줄 수 있게 한다(요청: 전투 진행 수치 표시).
+          rounds.push({
+            round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100),
+            atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100,
+          });
         }
         const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
         const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
@@ -698,6 +703,7 @@ export default {
         return json({
           ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: coinsDelta,
           rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
+          myAtk: attackerCombat.atk, theirDef: defenderCombat.def, stanceLabel: stance.label,
           offlineBonusCollected: offlineBonus, state: publicState(attacker, combat),
         });
       }
@@ -774,6 +780,14 @@ export default {
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.pocket_coins < item.price) return json({ error: "코인이 부족합니다." }, 400);
+
+        // 아이템별 최대 보유 개수(maxOwned) — 예: 에너지 드링크는 최대 2개까지만 들고 있을 수 있다.
+        if (item.maxOwned) {
+          const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(user.userId, itemId).first();
+          if (owned && owned.qty >= item.maxOwned) {
+            return json({ error: item.name + "은(는) 최대 " + item.maxOwned + "개까지만 보유할 수 있습니다." }, 400);
+          }
+        }
 
         row.pocket_coins -= item.price;
         await env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id).run();

@@ -7,15 +7,19 @@
    pjh-hub에 로그인돼 있다고 Arena에도 자동 로그인되지는 않는다 — 계정만 공유,
    로그인 상태 자체는 사이트별로 별개(진짜 SSO는 아님).
 
-   pjh-hub의 heartbeat/출석체크/친구초대 등은 pjh-hub 자체 게임화 시스템
-   (forum Worker)에 속하는 기능이라 여기서는 일부러 가져오지 않았다 — Arena가
-   그 기능들도 필요해지면 그때 논의해서 추가할 것.
+   pjh-hub의 출석체크/친구초대 등은 pjh-hub 자체 게임화 시스템(forum Worker)에
+   속하는 기능이라 여기서는 가져오지 않았다. 다만 heartbeat(온라인 상태 갱신)만은
+   Arena의 PvP 온라인 판정(lastSeen, USERS KV 공유)에 직접 필요해서 예외적으로
+   가져왔다 — forum Worker의 POST /heartbeat를 그대로 호출한다(같은 SESSIONS/USERS
+   KV를 쓰므로 Arena 전용 엔드포인트를 새로 만들 필요가 없고, arena-worker.js는
+   여전히 공유 KV에 절대 쓰지 않는다는 원칙을 지킨다).
 
    사용법: <script src="./auth-widget.js"></script>
    ============================================================ */
 
 (function () {
   const AUTH_API = "https://pjh-auth.chaostatix.workers.dev";
+  const HEARTBEAT_API = "https://forum.chaostatix.workers.dev"; // board-worker.js의 POST /heartbeat — 공유 USERS KV의 lastSeen만 갱신
   const SESSION_KEY = "pjh_session"; // { token, userId, realName } — pjh-hub와 같은 키 이름(도메인이 달라 공유는 안 되지만 이름은 맞춰둠)
 
   function getSession() {
@@ -50,19 +54,35 @@
     } catch (e) {}
   }
 
+  // 온라인 상태 갱신 — pjh-hub와 똑같이 30초마다 호출(서버 쪽에서도 throttle이 있어 과금/부하
+  // 걱정은 없음). Arena에서 PvP 상대 목록의 "온라인" 판정이 바로 이 lastSeen을 본다 — 이걸
+  // 안 부르면 pjh-hub 탭을 안 열어둔 유저는 Arena를 계속 쓰고 있어도 온라인으로 안 뜬다.
+  async function heartbeat() {
+    const session = getSession();
+    if (!session || !session.token) return;
+    try {
+      await fetch(HEARTBEAT_API + "/heartbeat", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.token },
+      });
+    } catch (e) {}
+  }
+
   window.PJHAuth = {
     getSession,
     setSession,
     clearSession,
     validateSession,
+    heartbeat,
     API: AUTH_API,
   };
 
-  // 백그라운드 탭에서는 건너뛰어 유휴 탭이 많아져도 pjh-auth Worker 부하가 쌓이지 않게 한다.
+  // 백그라운드 탭에서는 건너뛰어 유휴 탭이 많아져도 Worker 부하가 쌓이지 않게 한다.
   setInterval(function () {
-    if (document.visibilityState === "visible") validateSession();
+    if (document.visibilityState === "visible") { validateSession(); heartbeat(); }
   }, 30000);
   validateSession();
+  heartbeat();
 
   // ── 아래는 로그인/가입 UI가 있는 페이지에서만 동작. DOM에 해당 요소가 없으면 조용히 종료. ──
   const loginNavBtn = document.getElementById("loginNavBtn");
@@ -203,6 +223,7 @@
       }
       clearLoginRateState();
       setSession({ token: data.token, userId: data.userId, realName: data.realName });
+      heartbeat();
       els.loginId.value = "";
       els.loginPw.value = "";
       updateAuthUI();

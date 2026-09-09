@@ -236,6 +236,17 @@
   .round-dot.win { border-color: var(--energy); color: var(--energy); }
   .round-dot.lose { border-color: var(--danger); color: var(--danger); }
   .round-dot.active { border-color: var(--cyan); color: var(--cyan); }
+  .attack-stat-line { font-size: 11px; color: var(--sub); text-align: center; margin-bottom: 10px; }
+  .round-detail-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .round-detail-row { display: grid; grid-template-columns: 24px 1fr auto auto; gap: 8px; align-items: center; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--border); padding: 5px 8px; }
+  .round-detail-row.win { border-left-color: var(--energy); }
+  .round-detail-row.lose { border-left-color: var(--danger); }
+  .round-detail-row .rd-num { color: var(--sub); font-weight: bold; }
+  .round-detail-row .rd-power { color: var(--text); }
+  .round-detail-row .rd-timing { color: var(--sub); white-space: nowrap; }
+  .round-detail-row .rd-outcome { font-weight: bold; white-space: nowrap; }
+  .round-detail-row.win .rd-outcome { color: var(--energy); }
+  .round-detail-row.lose .rd-outcome { color: var(--danger); }
   .attack-result-title { text-align: center; font-size: 16px; font-weight: bold; margin: 10px 0; }
   .attack-result-title.win { color: var(--energy); }
   .attack-result-title.lose { color: var(--danger); }

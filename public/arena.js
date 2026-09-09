@@ -436,8 +436,23 @@
     try {
       const r = await api("/arena/attack", { method: "POST", body: { targetUserId, stance, timingScores } });
       const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
+      const rpsNote = r.rpsMod > 0 ? " · 상성 우위 +" + Math.round(r.rpsMod * 100) + "%" : r.rpsMod < 0 ? " · 상성 열세 " + Math.round(r.rpsMod * 100) + "%" : "";
+      // 전투 진행 수치 — 라운드별 내 공격력 vs 상대 방어력, 타이밍 정확도를 그대로 보여준다.
+      const roundDetailHtml =
+        '<div class="round-detail-list">' +
+        r.rounds.map((rd) =>
+          '<div class="round-detail-row ' + (rd.win ? "win" : "lose") + '">' +
+          '<span class="rd-num">R' + rd.round + "</span>" +
+          '<span class="rd-power">' + fmt(rd.atkPower) + " ATK vs " + fmt(rd.defPower) + " DEF</span>" +
+          '<span class="rd-timing">타이밍 ' + rd.timingScore + "점 (x" + rd.timingMult + ")</span>" +
+          '<span class="rd-outcome">' + (rd.win ? "승" : "패") + "</span>" +
+          "</div>"
+        ).join("") +
+        "</div>";
       body.innerHTML =
         '<div class="round-dots">' + r.rounds.map((rd) => '<div class="round-dot ' + (rd.win ? "win" : "lose") + '">' + (rd.win ? "✓" : "✗") + "</div>").join("") + "</div>" +
+        '<div class="attack-stat-line">내 ATK ' + fmt(r.myAtk) + " (" + escapeHtml(r.stanceLabel) + ")" + rpsNote + " · 상대 DEF " + fmt(r.theirDef) + "</div>" +
+        roundDetailHtml +
         '<div class="attack-result-title ' + (r.attackerWins ? "win" : "lose") + '">' +
         (r.attackerWins ? (r.sweep ? "🏆 완벽한 승리!" : "✅ 침투 성공") + (r.isCrit ? " · CRITICAL!" : "") : "❌ 침투 실패") +
         "</div>" +
@@ -489,15 +504,18 @@
     try {
       const { items, nextRotationAt } = await api("/shop");
       shopNextRotationAt = nextRotationAt;
-      grid.innerHTML = items.map((it) => (
+      grid.innerHTML = items.map((it) => {
+        const capped = it.maxOwned && it.owned >= it.maxOwned;
+        return (
         '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
-        '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned : "") + "</div>" +
+        '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned + (it.maxOwned ? "/" + it.maxOwned : "") : (it.maxOwned ? " · 최대 " + it.maxOwned + "개" : "")) + "</div>" +
         '<div class="rarity-badge" style="color:' + it.rarityColor + '">' + it.rarityLabel + "</div>" +
         '<div class="shop-card-stat">' + itemStatLabel(it) + "</div>" +
         '<div class="shop-card-price">💰 ' + fmt(it.price) + "</div>" +
-        '<button class="btn-primary" data-buy="' + it.id + '"' + (state.pocketCoins < it.price ? " disabled" : "") + ">구매</button></div>"
-      )).join("");
+        '<button class="btn-primary" data-buy="' + it.id + '"' + (capped || state.pocketCoins < it.price ? " disabled" : "") + ">" + (capped ? "보유 한도" : "구매") + "</button></div>"
+        );
+      }).join("");
       grid.querySelectorAll("button[data-buy]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           btn.disabled = true;
