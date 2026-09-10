@@ -73,17 +73,19 @@ const REBIRTH_LEVEL_REQUIREMENT = 100;
 const REBIRTH_BONUS_PER_COUNT = 0.01;
 const REBIRTH_BONUS_MAX_COUNT = 10;
 
+// 코인 보상은 전부 x15 — Property 수익이 가격의 1/4(예전 대비 약 15배)로 오른 것과 밸런스를
+// 맞추기 위함. 에너지 소모/필요 레벨/XP는 그대로 둔다.
 const JOB_TIERS = {
-  trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 5,  coinMin: 40,   coinMax: 60,   xp: 8 },
-  low:       { label: "Low",       minLevel: 1,  energyCost: 10, coinMin: 100,  coinMax: 150,  xp: 15 },
-  guarded:   { label: "Guarded",   minLevel: 3,  energyCost: 15, coinMin: 180,  coinMax: 250,  xp: 25 },
-  medium:    { label: "Medium",    minLevel: 5,  energyCost: 20, coinMin: 250,  coinMax: 350,  xp: 35 },
-  corporate: { label: "Corporate", minLevel: 8,  energyCost: 28, coinMin: 400,  coinMax: 550,  xp: 55 },
-  high:      { label: "High",      minLevel: 10, energyCost: 35, coinMin: 500,  coinMax: 700,  xp: 70 },
-  fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 700,  coinMax: 950,  xp: 95 },
-  master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 900,  coinMax: 1300, xp: 120 },
-  apex:      { label: "Apex",      minLevel: 28, energyCost: 50, coinMin: 1500, coinMax: 2000, xp: 180 },
-  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 2500, coinMax: 3400, xp: 260 },
+  trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 5,  coinMin: 600,   coinMax: 900,   xp: 8 },
+  low:       { label: "Low",       minLevel: 1,  energyCost: 10, coinMin: 1500,  coinMax: 2250,  xp: 15 },
+  guarded:   { label: "Guarded",   minLevel: 3,  energyCost: 15, coinMin: 2700,  coinMax: 3750,  xp: 25 },
+  medium:    { label: "Medium",    minLevel: 5,  energyCost: 20, coinMin: 3750,  coinMax: 5250,  xp: 35 },
+  corporate: { label: "Corporate", minLevel: 8,  energyCost: 28, coinMin: 6000,  coinMax: 8250,  xp: 55 },
+  high:      { label: "High",      minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
+  fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
+  master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
+  apex:      { label: "Apex",      minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
+  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 37500, coinMax: 51000, xp: 260 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -150,27 +152,27 @@ const SHOP_ITEMS = {
   plasma_cannon:    { name: "플라즈마 캐논",         type: "weapon", rarity: "rare",      price: 900,      value: 20 },
   hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 4500,     value: 35 },
   emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 25000,    value: 60 },
-  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 150000,   value: 100 },
-  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 1000000,  value: 160 },
-  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 8000000,  value: 250 },
+  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 100 },
+  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 160 },
+  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 250 },
 
   basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
   nano_composite:   { name: "나노 복합 장갑",         type: "armor", rarity: "rare",      price: 900,      value: 20 },
   ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 4500,     value: 35 },
   phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 25000,    value: 60 },
-  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 150000,   value: 100 },
-  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 1000000,  value: 160 },
-  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 8000000,  value: 250 },
+  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 100 },
+  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 160 },
+  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 250 },
 
   overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
   quantum_core:       { name: "양자 연산 장치",      type: "core", rarity: "rare",      price: 2700,     value: 8 },
   neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 13500,    value: 14 },
   singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 75000,    value: 24 },
-  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 450000,   value: 40 },
-  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 3000000,  value: 64 },
-  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 24000000, value: 100 },
+  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 40 },
+  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 64 },
+  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 100 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },
@@ -457,13 +459,14 @@ const PLANET_ATTACK_STAMINA_COST = 2;
 // 기대값이 악몽은 회당 ~0.7기(뜨는 리롤 절반 정도), 극한은 ~0.24기(리롤 5번 중 1번꼴)라
 // "뜨면 특별한" 수준까지 희소해졌다. 각 리롤은 이전 결과와 완전히 무관한 새 추첨이라(seed가
 // 슬롯+시간구간으로만 정해짐) 낮은 확률에 걸리지 않으면 그 즉시 사라지고 다시 안 뜬다.
+// coinsPerHour도 Property와 같은 이유로 x15 — 전투력/등장 확률은 그대로.
 const PLANET_BOT_TIERS = {
-  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 15,   weight: 0.40 },
-  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 50,   weight: 0.30 },
-  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 160,  weight: 0.20 },
-  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 400,  weight: 0.08 },
-  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 1000, weight: 0.015 },
-  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 2800, weight: 0.005 },
+  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 225,   weight: 0.40 },
+  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 750,   weight: 0.30 },
+  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 2400,  weight: 0.20 },
+  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 6000,  weight: 0.08 },
+  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 15000, weight: 0.015 },
+  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 42000, weight: 0.005 },
 };
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
 // 아직 아무도 정복하지 않은 행성은 15분마다 난이도가 통째로 리롤된다(슬롯 번호+시간 구간으로

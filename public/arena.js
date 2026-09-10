@@ -22,16 +22,16 @@
   };
   // 서버 상수와 동일한 값(표시용) — 실제 검증/보상 롤은 항상 서버에서 다시 계산한다.
   const JOB_TIERS = {
-    trivial:   { minLevel: 1,  energyCost: 5,  coinMin: 40,   coinMax: 60,   xp: 8 },
-    low:       { minLevel: 1,  energyCost: 10, coinMin: 100,  coinMax: 150,  xp: 15 },
-    guarded:   { minLevel: 3,  energyCost: 15, coinMin: 180,  coinMax: 250,  xp: 25 },
-    medium:    { minLevel: 5,  energyCost: 20, coinMin: 250,  coinMax: 350,  xp: 35 },
-    corporate: { minLevel: 8,  energyCost: 28, coinMin: 400,  coinMax: 550,  xp: 55 },
-    high:      { minLevel: 10, energyCost: 35, coinMin: 500,  coinMax: 700,  xp: 70 },
-    fortress:  { minLevel: 15, energyCost: 42, coinMin: 700,  coinMax: 950,  xp: 95 },
-    master:    { minLevel: 20, energyCost: 50, coinMin: 900,  coinMax: 1300, xp: 120 },
-    apex:      { minLevel: 28, energyCost: 50, coinMin: 1500, coinMax: 2000, xp: 180 },
-    legendary: { minLevel: 35, energyCost: 50, coinMin: 2500, coinMax: 3400, xp: 260 },
+    trivial:   { minLevel: 1,  energyCost: 5,  coinMin: 600,   coinMax: 900,   xp: 8 },
+    low:       { minLevel: 1,  energyCost: 10, coinMin: 1500,  coinMax: 2250,  xp: 15 },
+    guarded:   { minLevel: 3,  energyCost: 15, coinMin: 2700,  coinMax: 3750,  xp: 25 },
+    medium:    { minLevel: 5,  energyCost: 20, coinMin: 3750,  coinMax: 5250,  xp: 35 },
+    corporate: { minLevel: 8,  energyCost: 28, coinMin: 6000,  coinMax: 8250,  xp: 55 },
+    high:      { minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
+    fortress:  { minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
+    master:    { minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
+    apex:      { minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
+    legendary: { minLevel: 35, energyCost: 50, coinMin: 37500, coinMax: 51000, xp: 260 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }
