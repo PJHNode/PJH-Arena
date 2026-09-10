@@ -1120,6 +1120,24 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // COLLECT 버튼이 실제로는 아무 리스너도 안 달려 있어서 눌러도 아무 일도 안 일어났던
+  // 버그 — "대기 중 수익"은 화면에 계속 쌓이는 게 보이는데 실제 코인은 절대 안 들어오는
+  // 것처럼 느껴졌던 원인이 이거였다. 버튼 자체는 .property-grid 밖의 고정 마크업이라
+  // renderPropertyTab이 다시 그릴 때마다 새로 만들어지지 않으므로, 리스너는 한 번만 건다.
+  function initPropertyButtons() {
+    const btn = $("propertyCollectBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await api("/property/collect", { method: "POST" });
+        toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 수거 완료!" : "수거할 대기 수익이 없습니다.");
+        state = r.state; renderHeader(); renderPropertyTab();
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    });
+  }
+
   // ── ⑤ Secure Bank ──
   function renderBankTab() {
     if (!state) return;
@@ -1751,6 +1769,7 @@
     initDailyButtons();
     initAdminButtons();
     initProfileButtons();
+    initPropertyButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);
