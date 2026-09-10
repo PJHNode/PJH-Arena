@@ -980,11 +980,16 @@
       function slotRow(target, slotType, label, equippedId) {
         const options = data.availableItems.filter((it) => it.type === slotType);
         const currentItem = equippedId ? catalog[equippedId] : null;
+        // 장착 중인 아이템 아이콘을 라벨 옆에 보여준다(빈 슬롯이면 자리만 차지하는 빈 칸으로
+        // 대체해서 아이콘 유무와 상관없이 라벨/드롭다운 위치가 흔들리지 않게 한다).
+        const icon = currentItem
+          ? itemIconHtml(equippedId, currentItem.rarityColor, 20)
+          : '<span class="item-icon" style="width:20px;height:20px;"></span>';
         let optionsHtml = '<option value="">— 비어있음 —</option>';
         if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>[' + (currentItem ? currentItem.rarityLabel : "") + "] " + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
         options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">[' + it.rarityLabel + "] " + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
         return (
-          '<div class="bot-slot slot-' + slotType + '"><span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
+          '<div class="bot-slot slot-' + slotType + '">' + icon + '<span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
         );
       }
 
