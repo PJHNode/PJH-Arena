@@ -227,6 +227,9 @@
   @keyframes profileGlow { 0%, 100% { box-shadow: 0 0 8px rgba(255,215,0,0.4); } 50% { box-shadow: 0 0 22px rgba(255,215,0,0.8); } }
   .profile-card-name { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
   .profile-card-name .rebirth-badge { color: #ffd700; font-size: 12px; border: 1px solid #ffd700; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+  .rebirth-name-badge { color: #ffd700; font-size: 10px; font-weight: bold; border: 1px solid #ffd700; padding: 1px 6px; white-space: nowrap; }
+  .lb-name-link { cursor: pointer; text-decoration: underline dotted; }
+  .lb-name-link:hover { color: var(--accent); }
   .profile-card-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
   .profile-card-status { font-size: 13px; font-style: italic; color: var(--accent); margin-bottom: 16px; min-height: 16px; }
   .profile-showcase { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -353,6 +356,8 @@
   /* Scan modal */
   #scanModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1000; }
   .scan-box { background: var(--surface); border: 1px solid var(--cyan); width: 320px; padding: 20px; position: relative; }
+  #profileModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1000; }
+  .profile-modal-box { background: var(--surface); border: 1px solid var(--accent); width: 360px; max-width: 90vw; padding: 20px; position: relative; }
   .scan-row { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
   .scan-winrate { text-align: center; margin-top: 16px; font-size: 12px; color: var(--sub); }
   .scan-winrate span { display: block; font-size: 30px; color: var(--accent); }
@@ -450,7 +455,7 @@
   </div>
 </header>
 
-<div id="downedBanner">⚠ HP가 0입니다 — 회복 전까지 해킹/전투 활동이 불가능합니다.</div>
+<div id="downedBanner">⚠ HP가 0입니다 — 회복 전까지 해킹/전투 활동이 불가능합니다(시간이 지나면 자연 회복되며, 아이템으로 즉시 회복할 수도 있습니다).</div>
 
 <div id="loggedOutHint">
   <h1>⚡ PJH ARENA</h1>
@@ -777,6 +782,13 @@
   <div class="attack-box">
     <button id="attackModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
     <div id="attackModalBody"></div>
+  </div>
+</div>
+
+<div id="profileModal">
+  <div class="profile-modal-box">
+    <button id="profileModalClose" style="position:absolute; top:10px; right:14px; background:none; border:none; color:var(--sub); font-size:16px;">&times;</button>
+    <div id="profileModalBody"><p class="dim">불러오는 중...</p></div>
   </div>
 </div>
 

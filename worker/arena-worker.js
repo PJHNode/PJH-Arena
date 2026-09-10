@@ -763,8 +763,11 @@ function applyRegen(row, now) {
     out.stamina = Math.min(out.max_stamina, out.stamina + staminaTicks * STAMINA_REGEN_PER_TICK);
     out.last_stamina_tick += staminaTicks * STAMINA_TICK_MS;
   }
-  // HP만 여전히 다운(0) 상태에서는 스스로 안 올라온다 — 아이템으로만 회복 가능(기존 설계 유지).
-  if (out.hp > 0) {
+  // HP도 이제 다운(0) 상태든 오프라인이든 상관없이 자연 회복된다(요청 반영 — 예전엔 다운되면
+  // 아이템으로만 회복 가능하게 일부러 막아뒀었는데, 그러면 자리를 비운 사이 회복이 전혀 안
+  // 돼서 계정이 사실상 묶여버리는 문제가 있었다). 에너지/스태미나와 완전히 같은 방식 —
+  // 마지막 틱 이후 지난 실제 시간만큼 계산하므로 오프라인이었어도 다음 접속 때 그대로 반영된다.
+  {
     const hpTicks = Math.floor((now - out.last_hp_tick) / HP_TICK_MS);
     if (hpTicks > 0) {
       out.hp = Math.min(out.max_hp, out.hp + hpTicks * HP_REGEN_PER_TICK);
@@ -899,8 +902,8 @@ async function buildPublicProfile(env, userId) {
 
 function publicState(row, combat) {
   const now = Date.now();
-  // HP는 0(다운) 상태면 아예 회복이 안 되므로(applyRegen 참고 — 아이템으로만 회복 가능) null.
-  const hpFullInMs = row.hp <= 0 ? null : msUntilFull(row.hp, row.max_hp, HP_REGEN_PER_TICK, HP_TICK_MS, row.last_hp_tick, now);
+  // HP도 이제 0(다운)이든 아니든 자연 회복되므로(applyRegen 참고) 항상 완충 예상 시간을 준다.
+  const hpFullInMs = msUntilFull(row.hp, row.max_hp, HP_REGEN_PER_TICK, HP_TICK_MS, row.last_hp_tick, now);
   const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, ENERGY_TICK_MS, row.last_energy_tick, now);
   const staminaFullInMs = msUntilFull(row.stamina, row.max_stamina, STAMINA_REGEN_PER_TICK, STAMINA_TICK_MS, row.last_stamina_tick, now);
   return {
@@ -2539,7 +2542,7 @@ export default {
         else orderBy = "level DESC, xp DESC";
         // 관리자 테스트 계정은 치트로 쌓인 수치가 랭킹을 오염시키지 않도록 항상 제외한다.
         const res = await env.DB.prepare(
-          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
+          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
         ).bind(ADMIN_USER_ID).all();
         return json({ type: type, rows: res.results });
       }

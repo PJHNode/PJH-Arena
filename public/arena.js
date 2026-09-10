@@ -127,7 +127,7 @@
     // 완전 회복까지 남은 시간 — 서버가 매 /state마다 다시 계산해서 내려주는 ms를 절대 시각으로
     // 바꿔 저장해 두고, 1초마다 로컬에서 카운트다운만 갱신한다(그래야 폴링 사이에도 매끄럽게 줄어듦).
     const now = Date.now();
-    hpFullAt = state.hpFullInMs == null ? null : (state.hpFullInMs <= 0 ? 0 : now + state.hpFullInMs);
+    hpFullAt = state.hpFullInMs <= 0 ? 0 : now + state.hpFullInMs; // HP도 이제 다운 상태에서 자연 회복됨
     energyFullAt = state.energyFullInMs <= 0 ? 0 : now + state.energyFullInMs;
     staminaFullAt = state.staminaFullInMs <= 0 ? 0 : now + state.staminaFullInMs;
     renderResourceEtas();
@@ -139,7 +139,7 @@
 
     // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다.
     const rebirthTag = $("rebirthTag"), rebirthBtn = $("rebirthBtn");
-    if (state.rebirthCount > 0) { rebirthTag.textContent = "🔄 환생 " + state.rebirthCount + "회 (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)"; rebirthTag.style.display = ""; }
+    if (state.rebirthCount > 0) { rebirthTag.textContent = "🔄 환생 " + toRoman(state.rebirthCount) + " (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)"; rebirthTag.style.display = ""; }
     else rebirthTag.style.display = "none";
     if (state.rebirthReady) { rebirthBtn.style.display = ""; rebirthBtn.disabled = false; }
     else if (state.level >= state.rebirthLevelRequirement - 20) { rebirthBtn.style.display = ""; rebirthBtn.disabled = true; rebirthBtn.textContent = "🔄 환생 (Lv." + state.rebirthLevelRequirement + " 필요)"; }
@@ -814,7 +814,7 @@
   function renderResourceEtas() {
     const now = Date.now();
     const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
-    if (hpEl) hpEl.textContent = hpFullAt == null ? "회복 불가(아이템 필요)" : hpFullAt > now ? "완충 " + fmtCountdown(hpFullAt - now) : "";
+    if (hpEl) hpEl.textContent = hpFullAt > now ? "완충 " + fmtCountdown(hpFullAt - now) : "";
     if (energyEl) energyEl.textContent = energyFullAt > now ? "완충 " + fmtCountdown(energyFullAt - now) : "";
     if (staminaEl) staminaEl.textContent = staminaFullAt > now ? "완충 " + fmtCountdown(staminaFullAt - now) : "";
 
@@ -1579,9 +1579,10 @@
     } catch (e) { cardArea.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
-  function renderProfileCard(p) {
+  // 리더보드 모달/프로필 탭이 똑같은 카드 마크업을 쓰므로 한 함수로 통일했다.
+  function profileCardHtml(p) {
     const glowCls = p.rebirthEffectEnabled ? " rebirth-glow" : "";
-    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge">🔄 환생 ' + p.rebirthCount + "회</span>" : "";
+    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge">🔄 환생 ' + toRoman(p.rebirthCount) + "</span>" : "";
     const slots = [0, 1, 2].map((i) => {
       const s = p.showcase[i];
       if (!s) return '<div class="profile-slot empty">비어있음</div>';
@@ -1594,14 +1595,29 @@
         '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">🤖 봇 (' + s.rarityLabel + ")</div>" +
         '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div></div>";
     }).join("");
-    $("profileCardArea").innerHTML =
+    return (
       '<div class="profile-card' + glowCls + '">' +
       '<div class="profile-card-name">Lv.' + p.level + " " + escapeHtml(p.realName) + rebirthBadge + "</div>" +
       '<div class="profile-card-meta">' + (p.clubName ? "🛡️ " + escapeHtml(p.clubName) + " · " : "") + "약탈 승리 " + p.plunderWins + "회</div>" +
       '<div class="profile-card-status">' + (p.statusMessage ? escapeHtml(p.statusMessage) : '<span class="dim">상태메시지 없음</span>') + "</div>" +
       '<div class="profile-showcase">' + slots + "</div>" +
-      "</div>";
+      "</div>"
+    );
   }
+  function renderProfileCard(p) {
+    $("profileCardArea").innerHTML = profileCardHtml(p);
+  }
+
+  // ── 리더보드/거래 등 다른 탭에서 이름을 클릭했을 때 뜨는 프로필 팝업. ──
+  async function openProfileModal(userId) {
+    $("profileModal").style.display = "flex";
+    $("profileModalBody").innerHTML = '<p class="dim">불러오는 중...</p>';
+    try {
+      const p = await api("/profile?userId=" + encodeURIComponent(userId));
+      $("profileModalBody").innerHTML = profileCardHtml(p);
+    } catch (e) { $("profileModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+  function closeProfileModal() { $("profileModal").style.display = "none"; }
 
   async function renderProfileEditForm(p) {
     const editArea = $("profileEditArea");
@@ -1710,8 +1726,11 @@
         const valueLabel = lbType === "level" ? "Lv." + r.level :
           lbType === "assets" ? fmt(r.pocket_coins + r.bank_coins) + " 코인" :
           r.plunder_wins + "승";
-        return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + "</span><span>" + escapeHtml(r.real_name) + "</span><span class=\"lb-value\">" + valueLabel + "</span></div>";
+        return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
       }).join("") || '<p class="dim">기록이 없습니다.</p>';
+      list.querySelectorAll("[data-profile]").forEach((el) => {
+        el.addEventListener("click", () => openProfileModal(el.dataset.profile));
+      });
     } catch (e) { list.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
@@ -1756,6 +1775,18 @@
 
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
+  // 환생 횟수 표시용 로마 숫자 변환 — "환생 3회"보다 "환생 III"가 더 그 느낌이 산다는 요청.
+  function toRoman(n) {
+    const table = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
+    let num = Math.max(1, Math.floor(n)), out = "";
+    for (const [value, sym] of table) { while (num >= value) { out += sym; num -= value; } }
+    return out;
+  }
+  // 닉네임 옆에 붙이는 환생 뱃지 — 헤더/프로필/리더보드 전부 이 한 함수로 통일.
+  function rebirthBadgeHtml(count) {
+    return count > 0 ? ' <span class="rebirth-name-badge">환생 ' + toRoman(count) + "</span>" : "";
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     initBankForm();
@@ -1774,6 +1805,8 @@
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);
     $("attackModal").addEventListener("click", (e) => { if (e.target.id === "attackModal") closeAttackModal(); });
+    $("profileModalClose").addEventListener("click", closeProfileModal);
+    $("profileModal").addEventListener("click", (e) => { if (e.target.id === "profileModal") closeProfileModal(); });
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
     const cta = $("loggedOutCta");
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
