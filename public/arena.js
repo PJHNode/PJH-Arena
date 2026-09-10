@@ -382,12 +382,13 @@
       const { targets } = await api("/arena/targets");
       if (!targets.length) { listEl.innerHTML = '<p class="dim">현재 공격 가능한 대상이 없습니다.</p>'; return; }
       listEl.innerHTML = targets.map((t) => {
-        // 지금 당장 공격은 못 해도(보호막/다운/한도 초과/레벨차 초과) 목록에서 사라지진 않는다 — 이유만 표시.
+        // 지금 당장 공격은 못 해도(보호막/다운/한도 초과) 목록에서 사라지진 않는다 — 이유만 표시.
+        // 레벨 차이는 이제 공격을 막지 않는다 — ±10 넘으면 스태미나만 더 들어서 배지로만 알려준다.
         const statusNote = t.shielded ? '<span style="color:var(--cyan);"> 🛡️ 보호막 중</span>'
           : t.downed ? '<span style="color:var(--danger);"> 💀 다운 상태</span>'
-          : t.levelGapExceeded ? '<span style="color:var(--sub);"> ⚠️ 레벨차 초과</span>' : "";
+          : t.levelGapHigh ? '<span style="color:var(--stamina);"> ⚠️ 레벨차 큼(스태미나 ↑)</span>' : "";
         const attackDisabled = state.stamina < t.staminaCost || !t.attackable;
-        const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : t.levelGapExceeded ? "레벨차" : "ATTACK";
+        const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
         return (
         '<div class="pvp-row">' +
         '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
@@ -420,7 +421,7 @@
         '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
-        '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapExceeded ? ' style="color:var(--danger);"' : '') + '>' + (r.levelGapExceeded ? "레벨차 초과(공격 불가)" : r.staminaCost) + "</b></div>" +
+        '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapHigh ? ' style="color:var(--stamina);"' : '') + '>' + r.staminaCost + (r.levelGapHigh ? " (레벨차 큼)" : "") + "</b></div>" +
         '<div class="scan-row">오늘 공격 횟수 <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
         '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>" +
         '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>';
@@ -638,9 +639,9 @@
     try {
       const scan = await api("/arena/scan", { method: "POST", body: { targetUserId } });
       state = scan.state; renderHeader();
-      if (scan.levelGapExceeded) throw new Error("레벨 차이가 너무 큽니다.");
-      renderStanceStep({ mode: "pvp", targetUserId: targetUserId }, scan.realName,
-        scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.");
+      const stanceHint = (scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.")
+        + (scan.levelGapHigh ? '<br><span style="color:var(--stamina);">⚠️ 레벨 차이가 커서 스태미나를 더 씁니다(' + scan.staminaCost + ').</span>' : "");
+      renderStanceStep({ mode: "pvp", targetUserId: targetUserId }, scan.realName, stanceHint);
     } catch (e) {
       $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
       const closeBtn = $("attackResultCloseBtn");

@@ -171,7 +171,6 @@ const SHOP_ITEMS = {
   dimension_veil:   { name: "차원 은신 프로토콜",        type: "consumable", rarity: "mythic",    price: 8000, effect: "self_shield", value: 21600000 },
 };
 
-const PVP_LEVEL_RANGE = 15;
 // 예전엔 공격당하면 자동으로 12시간 보호막이 붙어서 그 사람이 전체 유저의 타겟 목록에서
 // 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 24시간 안에 몇 번까지 노릴 수 있는지"만
 // 공격자별로 제한한다(아래 PVP_MAX_ATTACKS_PER_TARGET_PER_DAY). 소비재로 사는 자가 보호막
@@ -207,18 +206,19 @@ function timingMultiplier(score) {
 }
 const PVP_STAMINA_COST_ONLINE = 1, PVP_STAMINA_COST_OFFLINE = 2;
 const SCAN_STAMINA_COST = 1; // 정찰도 이제 공짜가 아니다
-// 레벨 차이가 5 이상 나는데 내가 더 높으면(약자 괴롭히기) 스태미나가 훨씬 더 든다 —
-// 5~9면 2, 10~19면 4, 20+면 8. 반대로 내가 더 낮은 쪽을 노리는 건(도전) 불리하지 않게 그대로 둔다.
-function bullyStaminaSurcharge(attackerLevel, defenderLevel) {
-  const gap = attackerLevel - defenderLevel;
-  if (gap >= 20) return 8;
-  if (gap >= 10) return 4;
-  if (gap >= 5) return 2;
-  return 0;
+// 레벨 차이가 아무리 커도 공격 자체는 항상 가능하다(더 이상 막지 않음) — 대신 차이가 클수록
+// 스태미나가 훨씬 더 든다. ±10까지는 기본 비용 그대로, 그 이후부터 구간마다 배로 뛴다.
+// 위/아래 방향 상관없이(내가 높든 낮든) 똑같이 적용된다.
+function levelGapStaminaSurcharge(attackerLevel, defenderLevel) {
+  const gap = Math.abs(attackerLevel - defenderLevel);
+  if (gap <= 10) return 0;
+  if (gap <= 20) return 4;
+  if (gap <= 30) return 8;
+  return 16;
 }
 function computeAttackStaminaCost(attackerLevel, defenderLevel, online) {
   const base = online ? PVP_STAMINA_COST_ONLINE : PVP_STAMINA_COST_OFFLINE;
-  return Math.max(base, bullyStaminaSurcharge(attackerLevel, defenderLevel));
+  return Math.max(base, levelGapStaminaSurcharge(attackerLevel, defenderLevel));
 }
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
@@ -1076,7 +1076,9 @@ export default {
           const shielded = t.shield_until > now;
           const downed = t.hp <= 0;
           const attackCapped = attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY;
-          const levelGapExceeded = Math.abs(me.level - t.level) > PVP_LEVEL_RANGE;
+          // 레벨 차이는 더 이상 공격을 막지 않는다 — 정보 표시용으로만 남겨둔다(스태미나가
+          // 더 드는 구간에 들어왔는지 보여주기 위함, computeAttackStaminaCost와 같은 ±10 기준).
+          const levelGapHigh = Math.abs(me.level - t.level) > 10;
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
             offlinePendingCoins: bonusPocket,
@@ -1084,8 +1086,8 @@ export default {
             estimatedVictoryPct: Math.round((wins / 300) * 100),
             staminaCost: computeAttackStaminaCost(me.level, t.level, online),
             attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
-            attackCapped: attackCapped, shielded: shielded, downed: downed, levelGapExceeded: levelGapExceeded,
-            attackable: !shielded && !downed && !attackCapped && !levelGapExceeded,
+            attackCapped: attackCapped, shielded: shielded, downed: downed, levelGapHigh: levelGapHigh,
+            attackable: !shielded && !downed && !attackCapped,
           });
         }
         return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
@@ -1127,7 +1129,7 @@ export default {
           scanStaminaCost: SCAN_STAMINA_COST,
           attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
           attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
-          levelGapExceeded: Math.abs(me.level - target.level) > PVP_LEVEL_RANGE,
+          levelGapHigh: Math.abs(me.level - target.level) > 10,
           state: publicState(me, combat),
         });
       }
@@ -1152,7 +1154,8 @@ export default {
         if (!defender) return json({ error: "대상을 찾을 수 없습니다." }, 404);
         if (defender.hp <= 0) return json({ error: "이미 다운된 대상입니다." }, 400);
         if (defender.shield_until > Date.now()) return json({ error: "대상이 보호막 상태입니다." }, 400);
-        if (Math.abs(attacker.level - defender.level) > PVP_LEVEL_RANGE) return json({ error: "레벨 차이가 너무 큽니다." }, 400);
+        // 레벨 차이는 더 이상 공격 자체를 막지 않는다 — computeAttackStaminaCost가 차이가
+        // 클수록 스태미나를 훨씬 더 물리는 것으로 대신한다.
 
         // 같은 상대를 24시간 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
         // 공격을 당해도 상대가 목록에서 아예 사라지지는 않는다(예전의 "피격 시 12시간 자동 보호막"은
