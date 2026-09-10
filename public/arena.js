@@ -149,6 +149,10 @@
     // 관리자 테스트 계정에게만 Admin 탭을 보여준다.
     $("adminTabBtn").style.display = state.isAdmin ? "" : "none";
 
+    // 환생 직후 30분 부스트(XP/코인 2배) — 남은 시간은 renderResourceEtas의 1초 타이머가 갱신.
+    rebirthBoostUntilAt = state.rebirthBoostActive ? state.rebirthBoostUntil : 0;
+    renderResourceEtas();
+
     $("statPointsText").textContent = state.statPoints;
     $("statPointsTag").style.display = state.statPoints > 0 ? "" : "none";
     $("upgradeHpBtn").disabled = state.statPoints <= 0;
@@ -303,7 +307,7 @@
         btn.disabled = true;
         try {
           const r = await api("/hack-job", { method: "POST", body: { tier: btn.dataset.tier } });
-          toast("💰 +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
+          toast((r.boosted ? "🔥 " : "") + "💰 +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
           state = r.state; renderHeader(); renderJobsTab(); renderMiningGraph();
         } catch (e) { toast(e.message, true); }
         finally { btn.disabled = false; }
@@ -809,13 +813,20 @@
 
   // ── HP/Energy/Stamina 완전 회복까지 남은 시간 표시 — renderHeader가 절대 시각을 세팅해두면
   // 1초마다 그 시각까지 남은 시간만 다시 계산해서 보여준다(다음 /state 폴링을 기다릴 필요 없음). ──
-  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0;
+  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, rebirthBoostUntilAt = 0;
   function renderResourceEtas() {
     const now = Date.now();
     const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
     if (hpEl) hpEl.textContent = hpFullAt == null ? "회복 불가(아이템 필요)" : hpFullAt > now ? "완충 " + fmtCountdown(hpFullAt - now) : "";
     if (energyEl) energyEl.textContent = energyFullAt > now ? "완충 " + fmtCountdown(energyFullAt - now) : "";
     if (staminaEl) staminaEl.textContent = staminaFullAt > now ? "완충 " + fmtCountdown(staminaFullAt - now) : "";
+
+    // 환생 직후 30분 부스트(해킹 작업/PvP/행성 XP·코인 2배) 남은 시간.
+    const boostTag = $("boostTag");
+    if (boostTag) {
+      if (rebirthBoostUntilAt > now) { boostTag.textContent = "🔥 부스트 2배 " + fmtCountdown(rebirthBoostUntilAt - now); boostTag.style.display = ""; }
+      else boostTag.style.display = "none";
+    }
   }
   setInterval(renderResourceEtas, 1000);
 
@@ -1631,7 +1642,7 @@
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
     $("rebirthBtn").addEventListener("click", async () => {
       if (!state || !state.rebirthReady) return;
-      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF에 영구 +1%가 붙습니다.")) return;
+      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF에 영구 +1%가 붙습니다.\n또한 환생 직후 30분간 해킹 작업/PvP/행성 약탈의 XP·코인이 2배가 됩니다.")) return;
       const btn = $("rebirthBtn");
       btn.disabled = true;
       try {

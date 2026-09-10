@@ -316,6 +316,16 @@ async function clubCoinBonusMult(env, userId) {
   return 1 + Math.min(clubLevelForXp(club.xp), CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL;
 }
 
+// ── 환생 직후 30분 부스트 — 경험치/코인 2배. "다시 약해진 채로 처음부터"인 기간을 좀 편하게
+// 넘어가라는 취지라, 실제로 그 창 안에서 직접 플레이해서 버는 소득(해킹 작업 XP/코인, PvP
+// 약탈, 행성 약탈)에만 건다 — Property처럼 켜 놓고 안 해도 쌓이는 소득까지 2배로 치면 "환생
+// 직후에 몰아서 수거만" 하는 식으로 새는 구멍이 생기므로 일부러 뺐다. ──
+const REBIRTH_BOOST_MS = 30 * 60 * 1000;
+const REBIRTH_BOOST_MULT = 2;
+function rebirthBoostMult(row) {
+  return (row.rebirth_boost_until && Date.now() < row.rebirth_boost_until) ? REBIRTH_BOOST_MULT : 1;
+}
+
 // KST(UTC+9) 기준 날짜 문자열 — 일일 출석/퀘스트 리셋 경계로 쓴다(PJH-Hub board-worker.js의
 // kstDateString과 동일한 방식).
 function kstDateString(ts) { return new Date((ts || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10); }
@@ -581,6 +591,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -843,6 +854,8 @@ function publicState(row, combat) {
     rebirthReady: row.level >= REBIRTH_LEVEL_REQUIREMENT,
     rebirthLevelRequirement: REBIRTH_LEVEL_REQUIREMENT,
     isAdmin: row.user_id === ADMIN_USER_ID,
+    rebirthBoostActive: rebirthBoostMult(row) > 1,
+    rebirthBoostUntil: row.rebirth_boost_until || 0,
   };
 }
 
@@ -964,6 +977,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
       const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
       lootCoins = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
     }
+    lootCoins = Math.round(lootCoins * rebirthBoostMult(attacker)); // 환생 직후 30분 약탈 2배
     attacker.pocket_coins += lootCoins;
 
     // 보유 개수 한도 없이 이기면 항상 정복한다(예전엔 3개 한도가 있었는데, 홈 행성까지
@@ -1066,11 +1080,12 @@ export default {
         row.energy = BASE_MAX_ENERGY;
         row.stamina = BASE_MAX_STAMINA;
         row.rebirth_count = (row.rebirth_count || 0) + 1;
+        row.rebirth_boost_until = now + REBIRTH_BOOST_MS; // 30분간 해킹 작업/PvP/행성 약탈 XP·코인 2배
         await env.DB.prepare(
           "UPDATE arena_users SET level=?, xp=?, stat_points=?, max_hp=?, max_energy=?, max_stamina=?, hp=?, energy=?, stamina=?, " +
-          "rebirth_count=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          "rebirth_count=?, rebirth_boost_until=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
         ).bind(row.level, row.xp, row.stat_points, row.max_hp, row.max_energy, row.max_stamina, row.hp, row.energy, row.stamina,
-               row.rebirth_count, now, now, now, row.user_id).run();
+               row.rebirth_count, row.rebirth_boost_until, now, now, now, row.user_id).run();
 
         const combat = await totalCombatStats(env, row);
         return json({ ok: true, rebirthCount: row.rebirth_count, state: publicState(row, combat) });
@@ -1174,9 +1189,11 @@ export default {
 
         row.energy -= tier.energyCost;
         const clubBonus = await clubCoinBonusMult(env, user.userId);
-        const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus);
+        const boostMult = rebirthBoostMult(row);
+        const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
         row.pocket_coins += coinsGained;
-        const leveledUp = applyXpAndLevel(row, tier.xp);
+        const xpGained = tier.xp * boostMult;
+        const leveledUp = applyXpAndLevel(row, xpGained);
 
         await env.DB.prepare(
           "UPDATE arena_users SET energy=?, stamina=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
@@ -1187,7 +1204,7 @@ export default {
         await bumpDailyProgress(env, user.userId, "jobs");
 
         const combat = await totalCombatStats(env, row);
-        return json({ ok: true, coinsGained: coinsGained, xpGained: tier.xp, leveledUp: leveledUp, state: publicState(row, combat) });
+        return json({ ok: true, coinsGained: coinsGained, xpGained: xpGained, leveledUp: leveledUp, boosted: boostMult > 1, state: publicState(row, combat) });
       }
 
       if (request.method === "GET" && path === "/arena/targets") {
@@ -1352,10 +1369,10 @@ export default {
           coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * plunderMult);
           coinsDelta = Math.min(coinsDelta, defender.pocket_coins);
           defender.pocket_coins -= coinsDelta;
-          // 클럽 보너스는 방어자가 더 잃게 만드는 게 아니라 공격자가 "더 받는" 쪽으로만
-          // 적용한다(방어자는 공격자 클럽 레벨과 아무 상관이 없으므로).
+          // 클럽 보너스/환생 부스트 둘 다 방어자가 더 잃게 만드는 게 아니라 공격자가
+          // "더 받는" 쪽으로만 적용한다(방어자는 공격자 사정과 아무 상관이 없으므로).
           const clubBonus = await clubCoinBonusMult(env, attacker.user_id);
-          attackerGain = Math.round(coinsDelta * clubBonus);
+          attackerGain = Math.round(coinsDelta * clubBonus * rebirthBoostMult(attacker));
           attacker.pocket_coins += attackerGain;
           defender.hp = clamp(defender.hp - PVP_WIN_DEF_HP_LOSS, 0, defender.max_hp);
           attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);

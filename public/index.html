@@ -54,6 +54,8 @@
   .rebirth-tag { font-size: 11px; color: #ffd700; border: 1px solid #ffd700; padding: 2px 8px; }
   .rebirth-btn { font-size: 11px; background: linear-gradient(135deg, #ffd700, #ff8a3d); border: none; color: #052014; font-weight: bold; padding: 6px 12px; }
   .rebirth-btn:disabled { opacity: 0.5; }
+  .boost-tag { font-size: 11px; color: var(--danger); border: 1px solid var(--danger); padding: 2px 8px; font-weight: bold; animation: boostPulse 1.5s ease-in-out infinite; }
+  @keyframes boostPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .nav-auth { display: flex; align-items: center; gap: 10px; margin-left: 16px; }
   .nav-auth button {
     background: transparent; border: 1px solid var(--accent); color: var(--accent); font-size: 12px; padding: 6px 14px; font-weight: bold;
@@ -410,6 +412,7 @@
     <div class="pocket-tag">💰 Pocket: <b id="pocketCoinsHead">0</b></div>
     <span class="shield-tag" id="shieldTag">🛡 SHIELDED</span>
     <span class="rebirth-tag" id="rebirthTag" style="display:none;"></span>
+    <span class="boost-tag" id="boostTag" style="display:none;"></span>
     <button class="rebirth-btn" id="rebirthBtn" style="display:none;">🔄 환생하기</button>
     <div class="nav-auth">
       <span id="userLabel"></span>
