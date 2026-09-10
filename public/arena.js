@@ -146,6 +146,9 @@
     else rebirthBtn.style.display = "none";
     if (state.rebirthReady) rebirthBtn.textContent = "🔄 환생하기";
 
+    // 관리자 테스트 계정에게만 Admin 탭을 보여준다.
+    $("adminTabBtn").style.display = state.isAdmin ? "" : "none";
+
     $("statPointsText").textContent = state.statPoints;
     $("statPointsTag").style.display = state.statPoints > 0 ? "" : "none";
     $("upgradeHpBtn").disabled = state.statPoints <= 0;
@@ -246,6 +249,7 @@
     research: renderResearchTab,
     trade: renderTradeTab,
     club: renderClubTab,
+    admin: renderAdminTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
   };
@@ -1465,6 +1469,67 @@
     });
   }
 
+  // ── Admin — 서버가 isAdmin으로 이미 막아주니 프론트는 그냥 UI만 조건부로 보여준다
+  // (renderHeader에서 탭 자체를 숨김/표시). 아이템 지급용 드롭다운은 전체 카탈로그를 쓴다. ──
+  async function renderAdminTab() {
+    const sel = $("adminItemSelect");
+    if (sel && !sel.dataset.loaded) {
+      try {
+        const catalog = await getShopCatalog();
+        sel.innerHTML = itemSelectOptions(Object.values(catalog), false);
+        sel.dataset.loaded = "1";
+      } catch (e) {}
+    }
+  }
+
+  function initAdminButtons() {
+    async function run(btn, endpoint, body, successMsg) {
+      btn.disabled = true;
+      try {
+        const r = await api(endpoint, { method: "POST", body: body });
+        toast(successMsg);
+        if (r.state) { state = r.state; renderHeader(); }
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    }
+    const xpBtn = $("adminXpBtn");
+    if (xpBtn) xpBtn.addEventListener("click", () => {
+      const amount = parseInt($("adminXpAmount").value, 10);
+      if (!amount) return toast("XP를 입력하세요.", true);
+      run(xpBtn, "/admin/add-xp", { amount }, "XP +" + fmt(amount) + " 추가 완료");
+    });
+    const levelBtn = $("adminLevelBtn");
+    if (levelBtn) levelBtn.addEventListener("click", () => {
+      const level = parseInt($("adminLevelValue").value, 10);
+      if (!level || level < 1) return toast("레벨을 입력하세요.", true);
+      run(levelBtn, "/admin/set-level", { level }, "레벨 " + level + "로 설정 완료");
+    });
+    const coinsBtn = $("adminCoinsBtn");
+    if (coinsBtn) coinsBtn.addEventListener("click", () => {
+      const amount = parseInt($("adminCoinsAmount").value, 10);
+      if (!amount) return toast("코인 수를 입력하세요.", true);
+      run(coinsBtn, "/admin/add-coins", { amount }, "코인 " + fmt(amount) + " 조정 완료");
+    });
+    const diamondsBtn = $("adminDiamondsBtn");
+    if (diamondsBtn) diamondsBtn.addEventListener("click", () => {
+      const amount = parseInt($("adminDiamondsAmount").value, 10);
+      if (!amount) return toast("다이아 수를 입력하세요.", true);
+      run(diamondsBtn, "/admin/add-diamonds", { amount }, "다이아 " + fmt(amount) + " 조정 완료");
+    });
+    const itemBtn = $("adminItemBtn");
+    if (itemBtn) itemBtn.addEventListener("click", async () => {
+      const itemId = $("adminItemSelect").value;
+      const qty = Math.max(1, parseInt($("adminItemQty").value, 10) || 1);
+      if (!itemId) return toast("아이템을 선택하세요.", true);
+      itemBtn.disabled = true;
+      try { await api("/admin/give-item", { method: "POST", body: { itemId, qty } }); toast("아이템 지급 완료!"); }
+      catch (e) { toast(e.message, true); }
+      itemBtn.disabled = false;
+    });
+    const refillBtn = $("adminRefillBtn");
+    if (refillBtn) refillBtn.addEventListener("click", () => run(refillBtn, "/admin/refill", {}, "전체 회복 완료"));
+  }
+
   function initBankForm() {
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -1556,6 +1621,7 @@
     initTradeButtons();
     initClubButtons();
     initDailyButtons();
+    initAdminButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);

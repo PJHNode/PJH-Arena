@@ -210,6 +210,13 @@
   .daily-quest-row { display: flex; justify-content: space-between; align-items: center; background: var(--surface-2); border: 1px solid var(--border); padding: 8px 10px; font-size: 11px; margin-bottom: 6px; }
   .daily-quest-progress { color: var(--sub); }
 
+  /* Admin */
+  .admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .admin-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--danger); padding: 14px; }
+  .admin-card-title { font-weight: bold; font-size: 12px; margin-bottom: 10px; }
+  .admin-form { display: flex; gap: 8px; }
+  .admin-form input, .admin-form select { flex: 1; min-width: 0; }
+
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
 
@@ -460,6 +467,7 @@
       <button class="side-tab" data-tab="research">Research</button>
       <button class="side-tab" data-tab="trade">Trade</button>
       <button class="side-tab" data-tab="club">Club</button>
+      <button class="side-tab" data-tab="admin" id="adminTabBtn" style="display:none;">🛠️ Admin</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
@@ -646,6 +654,37 @@
       <div class="tab-panel" id="panel-club">
         <p class="panel-title">🛡️ CLUB</p>
         <div id="clubContent"><p class="dim">불러오는 중...</p></div>
+      </div>
+
+      <div class="tab-panel" id="panel-admin">
+        <p class="panel-title">🛠️ ADMIN (테스트 전용 — pjhg0605i 계정에만 보임, 리더보드 비노출)</p>
+        <div class="admin-grid">
+          <div class="admin-card">
+            <div class="admin-card-title">경험치 추가</div>
+            <div class="admin-form"><input id="adminXpAmount" type="number" placeholder="XP" /><button class="btn-primary" id="adminXpBtn">추가</button></div>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-title">레벨 직접 설정</div>
+            <div class="admin-form"><input id="adminLevelValue" type="number" placeholder="목표 레벨" /><button class="btn-primary" id="adminLevelBtn">설정</button></div>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-title">코인 추가</div>
+            <div class="admin-form"><input id="adminCoinsAmount" type="number" placeholder="코인(음수 가능)" /><button class="btn-primary" id="adminCoinsBtn">추가</button></div>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-title">다이아 추가</div>
+            <div class="admin-form"><input id="adminDiamondsAmount" type="number" placeholder="다이아(음수 가능)" /><button class="btn-primary" id="adminDiamondsBtn">추가</button></div>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-title">아이템 지급</div>
+            <div class="admin-form"><select id="adminItemSelect"></select><input id="adminItemQty" type="number" placeholder="수량" value="1" style="width:60px;" /><button class="btn-primary" id="adminItemBtn">지급</button></div>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-title">즉시 전체 회복</div>
+            <p class="dim" style="margin:0 0 10px;">HP/에너지/스태미나를 최대치로, 자가 보호막도 해제.</p>
+            <button class="btn-primary" id="adminRefillBtn" style="width:100%;">회복</button>
+          </div>
+        </div>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">

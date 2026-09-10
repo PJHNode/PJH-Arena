@@ -18,6 +18,10 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 }
 
+// 테스트 계정 전용 관리자 커맨드(GET /admin, POST /admin/*) — 이 userId가 아니면 전부 403.
+// 이 계정은 리더보드에서도 제외한다(치트로 쌓인 수치가 랭킹을 오염시키지 않게).
+const ADMIN_USER_ID = "pjhg0605i";
+
 // ── 계정 검증 — board-worker.js의 verifyUser와 동일한 계약(SESSIONS/USERS KV를
 //    pjh-auth와 공유). 여기서는 읽기만 하고 절대 쓰지 않는다. ──
 async function verifyUser(request, env) {
@@ -838,6 +842,7 @@ function publicState(row, combat) {
     rebirthBonusPct: Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT * 100,
     rebirthReady: row.level >= REBIRTH_LEVEL_REQUIREMENT,
     rebirthLevelRequirement: REBIRTH_LEVEL_REQUIREMENT,
+    isAdmin: row.user_id === ADMIN_USER_ID,
   };
 }
 
@@ -1071,6 +1076,92 @@ export default {
         return json({ ok: true, rebirthCount: row.rebirth_count, state: publicState(row, combat) });
       }
 
+      // ══════════════════════════════════════════════════════════
+      //  Admin — ADMIN_USER_ID 테스트 계정 전용 치트 커맨드. 그 계정이 아니면 전부 403.
+      // ══════════════════════════════════════════════════════════
+      if (path.indexOf("/admin") === 0 && user.userId !== ADMIN_USER_ID) {
+        return json({ error: "권한이 없습니다." }, 403);
+      }
+
+      if (request.method === "POST" && path === "/admin/add-xp") {
+        const body = await request.json().catch(function () { return {}; });
+        const amount = parseInt(body.amount, 10);
+        if (!Number.isInteger(amount) || amount <= 0) return json({ error: "유효하지 않은 값입니다." }, 400);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const leveledUp = applyXpAndLevel(row, amount);
+        await env.DB.prepare(
+          "UPDATE arena_users SET xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id).run();
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, leveledUp: leveledUp, state: publicState(row, combat) });
+      }
+
+      // 레벨을 목표치로 직접 맞춘다(낮추는 것도 가능 — 테스트용). 올릴 때만 그 구간의
+      // 스탯 포인트를 정직하게 계산해서 얹어준다(내리는 건 포인트를 도로 뺏지 않음 — 테스트
+      // 편의상 그렇게 둠).
+      if (request.method === "POST" && path === "/admin/set-level") {
+        const body = await request.json().catch(function () { return {}; });
+        const target = parseInt(body.level, 10);
+        if (!Number.isInteger(target) || target < 1) return json({ error: "유효하지 않은 레벨입니다." }, 400);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (target > row.level) {
+          let points = 0;
+          for (let lv = row.level + 1; lv <= target; lv++) points += statPointsForLevel(lv);
+          row.stat_points += points;
+        }
+        row.level = target;
+        row.xp = 0;
+        await env.DB.prepare("UPDATE arena_users SET level=?, xp=?, stat_points=? WHERE user_id=?").bind(row.level, row.xp, row.stat_points, row.user_id).run();
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, state: publicState(row, combat) });
+      }
+
+      if (request.method === "POST" && path === "/admin/add-coins") {
+        const body = await request.json().catch(function () { return {}; });
+        const amount = parseInt(body.amount, 10);
+        if (!Number.isInteger(amount)) return json({ error: "유효하지 않은 값입니다." }, 400);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        row.pocket_coins = Math.max(0, row.pocket_coins + amount);
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id).run();
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, state: publicState(row, combat) });
+      }
+
+      if (request.method === "POST" && path === "/admin/add-diamonds") {
+        const body = await request.json().catch(function () { return {}; });
+        const amount = parseInt(body.amount, 10);
+        if (!Number.isInteger(amount)) return json({ error: "유효하지 않은 값입니다." }, 400);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        row.diamonds = Math.max(0, row.diamonds + amount);
+        await env.DB.prepare("UPDATE arena_users SET diamonds=? WHERE user_id=?").bind(row.diamonds, row.user_id).run();
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, state: publicState(row, combat) });
+      }
+
+      if (request.method === "POST" && path === "/admin/give-item") {
+        const body = await request.json().catch(function () { return {}; });
+        const itemId = String(body.itemId || "");
+        const qty = Math.max(1, parseInt(body.qty, 10) || 1);
+        if (!SHOP_ITEMS[itemId]) return json({ error: "알 수 없는 아이템입니다." }, 400);
+        await env.DB.prepare(
+          "INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + ?"
+        ).bind(user.userId, itemId, qty, qty).run();
+        return json({ ok: true });
+      }
+
+      // HP/에너지/스태미나를 즉시 최대치로 채우고, 구매형 자가 보호막도 풀어준다 — 전투/스캔
+      // 테스트를 반복할 때마다 자원 부족으로 막히지 않게 하기 위함.
+      if (request.method === "POST" && path === "/admin/refill") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const now = Date.now();
+        await env.DB.prepare(
+          "UPDATE arena_users SET hp=max_hp, energy=max_energy, stamina=max_stamina, shield_until=0, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(now, now, now, row.user_id).run();
+        const refreshed = await loadOrCreateUser(env, user.userId, user.realName);
+        const combat = await totalCombatStats(env, refreshed);
+        return json({ ok: true, state: publicState(refreshed, combat) });
+      }
+
       if (request.method === "POST" && path === "/hack-job") {
         const body = await request.json().catch(function () { return {}; });
         const tier = JOB_TIERS[body.tier];
@@ -1105,9 +1196,10 @@ export default {
         const now = Date.now();
         // 공격 불가능한 상대(자가 보호막 중, 다운 상태, 오늘 공격 한도 초과, 레벨 차이 초과)라도
         // 목록에서 아예 사라지진 않는다 — 그냥 ATTACK 버튼만 비활성화되고 사유가 표시된다.
+        // 관리자 테스트 계정은 치트 수치로 실제 유저 대전을 왜곡할 수 있어 애초에 목록에서 뺀다.
         const res = await env.DB.prepare(
-          "SELECT * FROM arena_users WHERE user_id != ? ORDER BY RANDOM() LIMIT 20"
-        ).bind(user.userId).all();
+          "SELECT * FROM arena_users WHERE user_id != ? AND user_id != ? ORDER BY RANDOM() LIMIT 20"
+        ).bind(user.userId, ADMIN_USER_ID).all();
 
         const targets = [];
         for (const t of res.results) {
@@ -2312,9 +2404,10 @@ export default {
         if (type === "assets") orderBy = "(pocket_coins + bank_coins) DESC";
         else if (type === "plunder") orderBy = "plunder_wins DESC";
         else orderBy = "level DESC, xp DESC";
+        // 관리자 테스트 계정은 치트로 쌓인 수치가 랭킹을 오염시키지 않도록 항상 제외한다.
         const res = await env.DB.prepare(
-          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins FROM arena_users ORDER BY " + orderBy + " LIMIT 50"
-        ).all();
+          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
+        ).bind(ADMIN_USER_ID).all();
         return json({ type: type, rows: res.results });
       }
 
