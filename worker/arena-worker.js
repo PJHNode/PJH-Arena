@@ -385,8 +385,13 @@ async function recordWarScoreIfHostile(env, attackerUserId, defenderUserId) {
 const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
-const BOT_BASE_COST = 2000;
-const BOT_COST_GROWTH = 2.5;
+// 경비병 시스템이 생기면서 봇 하나가 "내 전투력용"과 "행성 방어용"을 놓고 경합하게 됐다 —
+// 결국 봇 10기를 다 채워야 둘 다 어느 정도 감당이 되는데, 예전 곡선(2000 * 2.5^n)은 10기를
+// 다 채우는 데 총 ~1,270만 코인이 들어서 너무 느렸다. base를 낮추고(2000→1200) 배율도 낮춰서
+// (2.5→2.0) 특히 후반 봇(8~10번째)이 확 싸지도록 했다 — 10기 총합이 약 123만으로(예전의
+// 1/10 수준) 줄어든다.
+const BOT_BASE_COST = 1200;
+const BOT_COST_GROWTH = 2.0;
 const BOT_MAX_COUNT = 10;
 const BOT_SELL_RATE = 0.5; // 되팔 때는 모집 당시 낸 비용(recruit_cost)의 50%만 환불
 function botRecruitCost(currentCount) { return Math.round(BOT_BASE_COST * Math.pow(BOT_COST_GROWTH, currentCount)); }
@@ -573,6 +578,12 @@ function effectiveRarityChance(rarity, researchLevel) {
 //    테이블(arena_shop_stock)도 (user_id, item_id, bucket) 단위로 따로 관리한다. rerollNonce는
 //    다이아로 즉시 리롤(POST /shop/reroll)할 때만 바뀌는 값 — 자연 타이머(bucket)는 그대로
 //    두고 아이템 목록만 다시 뽑는다(재고 카운터는 bucket 기준이라 리롤해도 초기화 안 됨). ──
+// 확률표대로만 뽑으면(특히 연구를 안 한 초반) 운이 나쁘면 common 몇 개만 뜨고 끝나는 경우가
+// 흔해서 상점이 휑해 보인다는 피드백으로, 최소 개수를 보장한다. 부족분은 common~epic 범위
+// (그 이상은 채우기 후보에서 아예 뺀다 — legendary 이상은 여전히 순수 확률로만 떠야 그
+// 희소성이 의미가 있다)에서 아직 안 뽑힌 아이템으로 채운다.
+const MIN_SHOP_ITEMS = 8;
+const SHOP_FILLER_MAX_RARITY_IDX = RARITY_ORDER.indexOf("epic");
 function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
   const bucket = Math.floor((nowMs || Date.now()) / SHOP_ROTATION_MS);
   const rng = mulberry32((bucket ^ hashStr(userId || "") ^ (rerollNonce || 0)) | 0);
@@ -593,6 +604,18 @@ function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
       const idx = Math.floor(rng() * pool.length);
       itemIds.push(pool.splice(idx, 1)[0]);
     }
+  }
+  if (itemIds.length < MIN_SHOP_ITEMS) {
+    const chosen = new Set(itemIds);
+    const remaining = Object.keys(SHOP_ITEMS).filter(function (id) {
+      return !chosen.has(id) && RARITY_ORDER.indexOf(SHOP_ITEMS[id].rarity) <= SHOP_FILLER_MAX_RARITY_IDX;
+    });
+    for (let i = remaining.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = remaining[i]; remaining[i] = remaining[j]; remaining[j] = tmp;
+    }
+    remaining.sort(function (a, b) { return RARITY_ORDER.indexOf(SHOP_ITEMS[a].rarity) - RARITY_ORDER.indexOf(SHOP_ITEMS[b].rarity); });
+    itemIds.push.apply(itemIds, remaining.slice(0, MIN_SHOP_ITEMS - itemIds.length));
   }
   return { itemIds: itemIds, bucket: bucket, nextRotationAt: (bucket + 1) * SHOP_ROTATION_MS };
 }
@@ -667,6 +690,11 @@ async function ensureSchema(env) {
   // 경비병 — NULL이면 "나와 함께"(개인 전투력), 값이 있으면 그 행성 id에 배치되어 그 행성
   // 방어에만 반영된다(아래 PLANET_GARRISON_MAX_PER_PLANET 참고).
   try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN stationed_planet_id INTEGER"); } catch (e) {}
+  // 봇의 "등급" 배지 — 장착된 아이템으로 그때그때 다시 계산하지 않고, 가장 최근 가챠 결과를
+  // 고정 저장해서 쓴다(POST /bots/gacha에서만 갱신). 그래야 가챠 없이 그냥 인벤토리 아이템을
+  // 수동으로 꽂기만 해서 등급이 바뀌는 일이 없다 — 실전 스탯은 여전히 지금 장착된 걸 그대로
+  // 반영하되(equipStats), "등급"만큼은 가챠를 통해서만 오른다.
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_rarity TEXT"); } catch (e) {}
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_stationed ON arena_bots(stationed_planet_id)"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_devices (user_id TEXT NOT NULL, device_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
@@ -949,16 +977,11 @@ async function buildPublicProfile(env, userId) {
       const bot = await env.DB.prepare("SELECT * FROM arena_bots WHERE id = ? AND user_id = ?").bind(entry.botId, userId).first();
       if (!bot) continue; // 되팔았으면 건너뜀
       const stats = equipStats(bot);
-      let bestRarity = null, bestIdx = -1;
-      [bot.equipped_weapon, bot.equipped_armor, bot.equipped_core].forEach(function (id) {
-        if (id && SHOP_ITEMS[id]) {
-          const idx = RARITY_ORDER.indexOf(SHOP_ITEMS[id].rarity);
-          if (idx > bestIdx) { bestIdx = idx; bestRarity = SHOP_ITEMS[id].rarity; }
-        }
-      });
+      // 등급은 가챠 결과 기준(gacha_rarity) — 장착된 아이템으로 다시 계산하지 않는다.
+      const bestRarity = bot.gacha_rarity || null;
       showcase.push({
         type: "bot", id: bot.id, atk: stats.atk, def: stats.def, crit: stats.crit,
-        rarity: bestRarity, rarityLabel: bestRarity ? RARITY_META[bestRarity].label : "장비 없음",
+        rarity: bestRarity, rarityLabel: bestRarity ? RARITY_META[bestRarity].label : "미배정",
         rarityColor: bestRarity ? RARITY_META[bestRarity].color : "#666",
       });
     }
@@ -2149,7 +2172,7 @@ export default {
 
       if (request.method === "GET" && path === "/bots") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost, stationed_planet_id FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
+        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost, stationed_planet_id, gacha_rarity FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
         const ownedRes = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
         const equippedCount = await equippedCountMap(env, user.userId);
         const rawEntries = ownedRes.results
@@ -2160,7 +2183,14 @@ export default {
         });
         // 봇은 레벨 개념이 없어서 equipStats(장비 보너스)가 곧 그 봇의 전투력 전부다(totalCombatStats
         // 에서도 봇은 base 없이 equipStats만 더함) — 그대로 ATK/DEF/CRIT 수치로 보여준다.
-        const botsWithStats = botsRes.results.map(function (b) { return Object.assign({}, b, { stats: equipStats(b) }); });
+        // gacha_rarity가 없으면(한 번도 가챠를 안 돌린 봇) 등급 배지 자체가 없는 상태다.
+        const botsWithStats = botsRes.results.map(function (b) {
+          return Object.assign({}, b, {
+            stats: equipStats(b),
+            gachaRarityLabel: b.gacha_rarity ? RARITY_META[b.gacha_rarity].label : null,
+            gachaRarityColor: b.gacha_rarity ? RARITY_META[b.gacha_rarity].color : null,
+          });
+        });
         // 경비병 배치 UI(드롭다운) 재료 — 내가 정복한 야생 행성(홈 제외) 목록 + 행성별 현재
         // 경비병 수(이 유저 소유 봇 중 stationed_planet_id로 이미 다 갖고 있으니 별도 쿼리 없이
         // JS에서 그룹화). 홈 행성은 애초에 배치 대상이 아니라 목록에서 제외한다.
@@ -2250,7 +2280,9 @@ export default {
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.weapon),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.armor),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.core),
-          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, botId),
+          // gacha_rarity는 오직 여기서만 갱신된다 — 나중에 /bots/equip으로 슬롯을 바꿔도
+          // 이 값은 그대로라, 봇의 "등급" 배지는 항상 가장 최근 가챠 결과만 반영한다.
+          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
         ]);
 
         return json({

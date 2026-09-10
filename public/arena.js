@@ -1014,16 +1014,14 @@
         );
       }
 
-      // 봇의 "성능 등급" — 장착된 3개 중 가장 희귀한 등급을 그 봇의 대표 색/이펙트로 쓴다.
-      function bestRarityOf(weaponId, armorId, coreId) {
-        let best = null, bestIdx = -1;
-        [weaponId, armorId, coreId].forEach((id) => {
-          const it = id ? catalog[id] : null;
-          if (!it) return;
-          const idx = RARITY_ORDER_CLIENT.indexOf(it.rarity);
-          if (idx > bestIdx) { bestIdx = idx; best = it; }
-        });
-        return best; // { rarity, rarityLabel, rarityColor } 또는 null(3슬롯 다 비어있음)
+      // 봇의 "등급"은 가챠 결과(gacha_rarity)로만 정해진다 — 예전엔 지금 장착된 3개 중 가장
+      // 희귀한 걸로 매번 다시 계산했는데, 그러면 가챠를 한 번도 안 돌리고 그냥 인벤토리에 있던
+      // 아이템을 수동으로 꽂기만 해도 등급이 바뀌어버려서 "등급 = 가챠 실력/운"이라는 의미가
+      // 없어졌다. 실제 전투 스탯(statLine)은 지금 장착된 것 그대로 정확히 반영하되, 등급
+      // 배지/발광 효과만 별도로 "가장 최근 가챠 결과"를 기준으로 삼는다.
+      function gachaRarityInfo(b) {
+        if (!b.gacha_rarity) return null;
+        return { rarity: b.gacha_rarity, rarityLabel: b.gachaRarityLabel, rarityColor: b.gachaRarityColor };
       }
       function botCardStyleAttrs(rarityInfo) {
         if (!rarityInfo) return { style: "", cls: "", tag: "" };
@@ -1066,7 +1064,7 @@
         "</div>";
 
       data.bots.forEach((b, i) => {
-        const rarityInfo = bestRarityOf(b.equipped_weapon, b.equipped_armor, b.equipped_core);
+        const rarityInfo = gachaRarityInfo(b);
         const attrs = botCardStyleAttrs(rarityInfo);
         const sellRefund = Math.floor((b.recruit_cost || 2000) * (data.botSellRate || 0.5));
         const stationedPlanet = b.stationed_planet_id ? (data.stationOptions || []).find((p) => p.id === b.stationed_planet_id) : null;
@@ -1692,16 +1690,10 @@
     const editArea = $("profileEditArea");
     editArea.innerHTML = '<p class="dim">편집 폼 불러오는 중...</p>';
     try {
-      const [inv, botsData, catalog] = await Promise.all([api("/inventory"), api("/bots"), getShopCatalog()]);
+      const [inv, botsData] = await Promise.all([api("/inventory"), api("/bots")]);
       function botRarityLabel(b) {
-        let best = null, bestIdx = -1;
-        [b.equipped_weapon, b.equipped_armor, b.equipped_core].forEach((id) => {
-          const it = id ? catalog[id] : null;
-          if (!it) return;
-          const idx = RARITY_ORDER_CLIENT.indexOf(it.rarity);
-          if (idx > bestIdx) { bestIdx = idx; best = it; }
-        });
-        return best ? "[" + best.rarityLabel + "]" : "(장비 없음)";
+        // 봇 등급은 가챠 결과 기준(장착된 아이템으로 매번 다시 계산하지 않음) — Bots 탭과 동일.
+        return b.gachaRarityLabel ? "[" + b.gachaRarityLabel + "]" : "(미배정)";
       }
       let optionsHtml = '<option value="">비어있음</option>';
       inv.items.forEach((it) => { optionsHtml += '<option value="item:' + it.id + '">🎒 [' + it.rarityLabel + "] " + escapeHtml(it.name) + "</option>"; });
