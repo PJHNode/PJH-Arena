@@ -849,6 +849,7 @@
         const stockLine = it.totalStock != null ? '<div class="shop-card-type" style="color:' + (soldOut ? "var(--danger)" : "var(--sub)") + ';">재고 ' + it.remainingStock + " / " + it.totalStock + "</div>" : "";
         return (
         '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
+        '<div class="shop-card-icon">' + itemIconHtml(it.id, it.rarityColor, 30) + "</div>" +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
         '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned + (it.maxOwned ? "/" + it.maxOwned : "") : (it.maxOwned ? " · 최대 " + it.maxOwned + "개" : "")) + "</div>" +
         stockLine +
@@ -917,7 +918,7 @@
       if (!consumables.length) { list.innerHTML = '<p class="dim">보유한 소비재가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
       list.innerHTML = consumables.map((it) => (
         '<div class="inv-row" style="border-left-color:' + it.rarityColor + '">' +
-        '<div class="inv-name">' + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
+        '<div class="inv-name">' + itemIconHtml(it.id, it.rarityColor, 18) + " " + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
         '<div class="dim">' + itemStatLabel(it) + "</div>" +
         '<button class="btn-ghost" data-use="' + it.id + '">사용</button>' +
         "</div>"
@@ -1588,6 +1589,7 @@
       if (!s) return '<div class="profile-slot empty">비어있음</div>';
       if (s.type === "item") {
         return '<div class="profile-slot" style="border-left-color:' + s.typeColor + ';">' +
+          '<div>' + itemIconHtml(s.id, s.rarityColor, 26) + "</div>" +
           '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">' + escapeHtml(s.name) + "</div>" +
           '<div class="profile-slot-stat">' + (s.typeLabel || "") + " · " + s.rarityLabel + "</div></div>";
       }

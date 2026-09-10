@@ -150,8 +150,9 @@ const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" }
 // 가격 곡선 — 예전엔 등급이 오를수록 배율이 오히려 3x→2.1x로 줄어들어서(선형에 가까움) 고티어가
 // 너무 쌌다. 이제 등급마다 배율 자체가 점점 커지도록 다시 짰다(common만 50으로 그대로 두고,
 // forbidden은 800만/코어는 2,400만까지). 코어는 기존처럼 무기/방어 가격의 3배를 유지.
-// abyssal(최종 등급)은 forbidden의 10배 가격 · value도 그 위(무기/방어 250→400, 코어 100→160)로
-// 한 단계 더 강하게 설계했다 — research 행운 연구 6레벨을 찍어야만 1% 확률로 등장한다.
+// abyssal(최종 등급)은 forbidden의 10배 가격 · value는 forbidden의 정확히 3배 이상(요청 반영,
+// 무기/방어 250→800, 코어 100→320)으로 확실히 더 세게 설계했다 — research 행운 연구 6레벨을
+// 찍어야만 1% 확률로 등장한다.
 const SHOP_ITEMS = {
   rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
   packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
@@ -161,7 +162,7 @@ const SHOP_ITEMS = {
   stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 100 },
   singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 160 },
   omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 250 },
-  abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 400 },
+  abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 800 },
 
   basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
@@ -171,7 +172,7 @@ const SHOP_ITEMS = {
   adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 100 },
   black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 160 },
   absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 250 },
-  eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 400 },
+  eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 800 },
 
   overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
@@ -181,7 +182,7 @@ const SHOP_ITEMS = {
   dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 40 },
   observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 64 },
   algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 100 },
-  voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 160 },
+  voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 320 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },

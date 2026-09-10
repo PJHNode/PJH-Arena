@@ -136,6 +136,9 @@
   .shop-side { width: 220px; flex-shrink: 0; }
   .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .shop-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
+  .item-icon { display: inline-block; vertical-align: middle; filter: drop-shadow(0 0 3px currentColor); }
+  .item-icon svg { width: 100%; height: 100%; display: block; }
+  .shop-card-icon { margin-bottom: 6px; }
   .shop-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
   .shop-card-type { font-size: 10px; margin-bottom: 4px; font-weight: bold; letter-spacing: 0.02em; }
   .rarity-badge { font-size: 9px; font-weight: bold; letter-spacing: 0.04em; padding: 1px 7px; display: inline-block; margin-bottom: 6px; border: 1px solid currentColor; }
@@ -803,6 +806,7 @@
 <div id="toastLayer"></div>
 
 <script src="./auth-widget.js"></script>
+<script src="./item-icons.js"></script>
 <script src="./arena.js"></script>
 </body>
 </html>
