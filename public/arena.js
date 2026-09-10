@@ -137,6 +137,15 @@
     $("critText").textContent = state.crit;
     $("shieldTag").style.display = state.shielded ? "" : "none";
 
+    // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다.
+    const rebirthTag = $("rebirthTag"), rebirthBtn = $("rebirthBtn");
+    if (state.rebirthCount > 0) { rebirthTag.textContent = "🔄 환생 " + state.rebirthCount + "회 (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)"; rebirthTag.style.display = ""; }
+    else rebirthTag.style.display = "none";
+    if (state.rebirthReady) { rebirthBtn.style.display = ""; rebirthBtn.disabled = false; }
+    else if (state.level >= state.rebirthLevelRequirement - 20) { rebirthBtn.style.display = ""; rebirthBtn.disabled = true; rebirthBtn.textContent = "🔄 환생 (Lv." + state.rebirthLevelRequirement + " 필요)"; }
+    else rebirthBtn.style.display = "none";
+    if (state.rebirthReady) rebirthBtn.textContent = "🔄 환생하기";
+
     $("statPointsText").textContent = state.statPoints;
     $("statPointsTag").style.display = state.statPoints > 0 ? "" : "none";
     $("upgradeHpBtn").disabled = state.statPoints <= 0;
@@ -1554,6 +1563,19 @@
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
     const cta = $("loggedOutCta");
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
+    $("rebirthBtn").addEventListener("click", async () => {
+      if (!state || !state.rebirthReady) return;
+      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF에 영구 +1%가 붙습니다.")) return;
+      const btn = $("rebirthBtn");
+      btn.disabled = true;
+      try {
+        const r = await api("/rebirth", { method: "POST" });
+        toast("🔄 환생 완료! (" + r.rebirthCount + "회, ATK/DEF 영구 +" + r.state.rebirthBonusPct.toFixed(0) + "%)");
+        state = r.state; renderHeader();
+        renderTab(currentTab);
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    });
     watchLogin();
     if (session()) startDashboard();
   });

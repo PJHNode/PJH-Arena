@@ -61,6 +61,14 @@ function baseDefFor(level) { return 10 + level * 2; }
 
 function nextExpFor(level) { return level * 100; }
 
+// ── 환생(Rebirth) — 레벨 100에서 레벨/XP/스탯 포인트(HP·에너지·스태미나 최대치 포함)를
+// 전부 기본값으로 되돌리는 대신, 회당 ATK/DEF에 영구 +1%가 붙는다(최대 10회, +10%에서 상한).
+// 코인/다이아/장비/봇/행성/클럽 등 "진짜 경제"는 절대 안 건드린다 — 순수하게 "레벨을 다시
+// 밟아 올라가는 동안 잠깐 약해지는 대가로 아주 작은 영구 우위를 얻는" 선택지로만 설계했다. ──
+const REBIRTH_LEVEL_REQUIREMENT = 100;
+const REBIRTH_BONUS_PER_COUNT = 0.01;
+const REBIRTH_BONUS_MAX_COUNT = 10;
+
 const JOB_TIERS = {
   trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 5,  coinMin: 40,   coinMax: 60,   xp: 8 },
   low:       { label: "Low",       minLevel: 1,  energyCost: 10, coinMin: 100,  coinMax: 150,  xp: 15 },
@@ -568,6 +576,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -800,6 +809,11 @@ async function totalCombatStats(env, row) {
     const bs = equipStats(b);
     atk += bs.atk; def += bs.def; crit += bs.crit;
   }
+  // 환생 보너스 — 회당 ATK/DEF +1%(치명타는 제외), 최대 10회(+10%)에서 상한. 봇까지 합산한
+  // 총 전투력에 곱해서 "전체적으로 조금 더 강해짐"이 되게 한다(사기 방지를 위해 작고 상한 있게).
+  const rebirthMult = 1 + Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT;
+  atk = Math.round(atk * rebirthMult);
+  def = Math.round(def * rebirthMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
 }
 
@@ -820,6 +834,10 @@ function publicState(row, combat) {
     equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core,
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
     plunderWins: row.plunder_wins,
+    rebirthCount: row.rebirth_count || 0,
+    rebirthBonusPct: Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT * 100,
+    rebirthReady: row.level >= REBIRTH_LEVEL_REQUIREMENT,
+    rebirthLevelRequirement: REBIRTH_LEVEL_REQUIREMENT,
   };
 }
 
@@ -1021,6 +1039,36 @@ export default {
 
         const combat = await totalCombatStats(env, row);
         return json({ ok: true, cost: cost, state: publicState(row, combat) });
+      }
+
+      // ── POST /rebirth — 레벨 100 이상이어야 가능. 레벨/XP/스탯 포인트(HP·에너지·스태미나
+      //    최대치 포함)를 전부 기본값으로 되돌리고 rebirth_count를 1 올린다. 코인/다이아/장비/
+      //    봇/행성/클럽 등은 절대 안 건드린다 — totalCombatStats에서 rebirth_count당 ATK/DEF
+      //    +1%(최대 10회)로 보상된다. ──
+      if (request.method === "POST" && path === "/rebirth") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.level < REBIRTH_LEVEL_REQUIREMENT) {
+          return json({ error: "환생은 레벨 " + REBIRTH_LEVEL_REQUIREMENT + "부터 가능합니다. (현재 Lv." + row.level + ")" }, 400);
+        }
+        const now = Date.now();
+        row.level = 1;
+        row.xp = 0;
+        row.stat_points = 0;
+        row.max_hp = BASE_MAX_HP;
+        row.max_energy = BASE_MAX_ENERGY;
+        row.max_stamina = BASE_MAX_STAMINA;
+        row.hp = BASE_MAX_HP;
+        row.energy = BASE_MAX_ENERGY;
+        row.stamina = BASE_MAX_STAMINA;
+        row.rebirth_count = (row.rebirth_count || 0) + 1;
+        await env.DB.prepare(
+          "UPDATE arena_users SET level=?, xp=?, stat_points=?, max_hp=?, max_energy=?, max_stamina=?, hp=?, energy=?, stamina=?, " +
+          "rebirth_count=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(row.level, row.xp, row.stat_points, row.max_hp, row.max_energy, row.max_stamina, row.hp, row.energy, row.stamina,
+               row.rebirth_count, now, now, now, row.user_id).run();
+
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, rebirthCount: row.rebirth_count, state: publicState(row, combat) });
       }
 
       if (request.method === "POST" && path === "/hack-job") {
