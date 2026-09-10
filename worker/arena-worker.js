@@ -113,12 +113,15 @@ function statUpgradeCost(stat, currentMax) {
 // ══════════════════════════════════════════════════════════
 //  아이템 등급(Rarity) — 상점 로테이션의 확률/등장 개수를 결정한다.
 // ══════════════════════════════════════════════════════════
-const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden"];
+const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal"];
 // 기본 확률(연구 보너스 적용 전) — "1000번 뽑으면 common 650 / uncommon 200 / epic 100 /
 // legendary 40 / secret 10 / forbidden 0" 요청을 그대로 chance(=count/1000)에 반영했다.
 // rare·mythic는 명시되지 않아서 양옆 값 사이로 자연스럽게 보간했다(rare는 uncommon·epic
 // 사이 0.15, mythic는 legendary·secret 사이 0.025). forbidden은 0이라 기본 로테이션에는
 // 아예 안 뜨고, 연구로 얻는 보너스(레벨당 +2%)가 쌓여야만 언젠가 뜰 수 있다.
+// abyssal은 forbidden보다도 한 단계 위인 "최종 등급" — 일반 로테이션/연구 보너스 공식을
+// 아예 안 타고(chance는 표시상 0), 상점 행운 연구 레벨이 ABYSSAL_RESEARCH_UNLOCK_LEVEL(6)에
+// 도달한 순간부터만 고정 1% 확률로 등장한다(effectiveRarityChance 안의 별도 분기 참고).
 const RARITY_META = {
   common:    { chance: 1,     maxSlots: 3, label: "COMMON",    color: "#9a9a9a" }, // 항상 뜸(요청 반영)
   uncommon:  { chance: 0.20,  maxSlots: 2, label: "UNCOMMON",  color: "#4cd137" },
@@ -128,6 +131,7 @@ const RARITY_META = {
   mythic:    { chance: 0.025, maxSlots: 1, label: "MYTHIC",    color: "#ff3d9e" },
   secret:    { chance: 0.01,  maxSlots: 1, label: "SECRET",    color: "#ffd700" },
   forbidden: { chance: 0,     maxSlots: 1, label: "FORBIDDEN", color: "#ff1744" },
+  abyssal:   { chance: 0,     maxSlots: 1, label: "ABYSSAL",   color: "#e100ff" },
 };
 const SHOP_ROTATION_MS = 4 * 60 * 1000;
 
@@ -142,10 +146,12 @@ const ITEM_TYPE_META = {
 // 상점 아이콘(이모지)을 그대로 가져와 쓴다.
 const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" };
 
-// 장착 가능한 아이템(무장/방어/코어) — 타입 3종 x 등급 8종 = 24개.
+// 장착 가능한 아이템(무장/방어/코어) — 타입 3종 x 등급 9종 = 27개.
 // 가격 곡선 — 예전엔 등급이 오를수록 배율이 오히려 3x→2.1x로 줄어들어서(선형에 가까움) 고티어가
 // 너무 쌌다. 이제 등급마다 배율 자체가 점점 커지도록 다시 짰다(common만 50으로 그대로 두고,
 // forbidden은 800만/코어는 2,400만까지). 코어는 기존처럼 무기/방어 가격의 3배를 유지.
+// abyssal(최종 등급)은 forbidden의 10배 가격 · value도 그 위(무기/방어 250→400, 코어 100→160)로
+// 한 단계 더 강하게 설계했다 — research 행운 연구 6레벨을 찍어야만 1% 확률로 등장한다.
 const SHOP_ITEMS = {
   rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
   packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
@@ -155,6 +161,7 @@ const SHOP_ITEMS = {
   stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 100 },
   singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 160 },
   omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 250 },
+  abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 400 },
 
   basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
@@ -164,6 +171,7 @@ const SHOP_ITEMS = {
   adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 100 },
   black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 160 },
   absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 250 },
+  eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 400 },
 
   overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
@@ -173,6 +181,7 @@ const SHOP_ITEMS = {
   dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 40 },
   observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 64 },
   algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 100 },
+  voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 160 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },
@@ -392,7 +401,8 @@ const BOT_GACHA_TIERS = {
   premium:  { label: "Premium",  price: 10000000,
     table: { common: 0,    uncommon: 0.05, rare: 0.15,  epic: 0.25,  legendary: 0.25,  mythic: 0.18,  secret: 0.08,  forbidden: 0.04 } },
 };
-// 타입x등급 조합마다 SHOP_ITEMS에 정확히 하나씩 있으므로(3종 x 8등급 = 24개), 롤한 등급이
+// 타입x등급 조합마다 SHOP_ITEMS에 정확히 하나씩 있으므로(3종 x 9등급 = 27개, 단 abyssal은 봇
+// 가챠 테이블(BOT_GACHA_TIERS)엔 아예 없어서 가챠로는 절대 안 나옴), 롤한 등급이
 // 정해지면 아이템도 하나로 정해진다.
 const EQUIP_ITEM_BY_TYPE_RARITY = {};
 for (const _id in SHOP_ITEMS) {
@@ -516,7 +526,13 @@ const RESEARCH_SHOP_BONUS_PER_LEVEL = 0.02;
 const RESEARCH_SHOP_BASE_COST = 10;
 const RESEARCH_SHOP_GROWTH = 1.6;
 function researchShopUpgradeCost(level) { return Math.round(RESEARCH_SHOP_BASE_COST * Math.pow(RESEARCH_SHOP_GROWTH, level)); }
+// abyssal은 다른 등급과 달리 "연구 레벨에 비례해서 서서히 확률이 붙는" 방식이 아니라, 상점 행운
+// 연구가 이 레벨(6)에 도달하기 전까진 무조건 0%였다가 도달한 순간부터 고정 1%로 등장한다 —
+// 그 이상 연구해도 더 잘 뜨진 않는, "문을 여는" 개념의 게이트다.
+const ABYSSAL_RESEARCH_UNLOCK_LEVEL = 6;
+const ABYSSAL_CHANCE = 0.01;
 function effectiveRarityChance(rarity, researchLevel) {
+  if (rarity === "abyssal") return (researchLevel || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL ? ABYSSAL_CHANCE : 0;
   return clamp(RARITY_META[rarity].chance + (researchLevel || 0) * RESEARCH_SHOP_BONUS_PER_LEVEL, 0, 1);
 }
 
@@ -563,6 +579,7 @@ const STOCK_WEIGHTS_BY_RARITY = {
   mythic:    { one: 0.93, two: 0.06, three: 0.01 },
   secret:    { one: 0.97, two: 0.025, three: 0.005 },
   forbidden: { one: 0.99, two: 0.009, three: 0.001 },
+  abyssal:   { one: 0.995, two: 0.004, three: 0.001 },
 };
 function rollItemStock(itemId, bucket, rarity, userId) {
   const w = STOCK_WEIGHTS_BY_RARITY[rarity] || STOCK_WEIGHTS_BY_RARITY.common;

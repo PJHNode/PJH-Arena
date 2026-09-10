@@ -6,7 +6,7 @@
   const FORUM_API = "https://forum.chaostatix.workers.dev";
 
   // 서버 RARITY_ORDER와 동일 순서(낮은 등급→높은 등급) — 봇 카드의 "대표 등급"을 고를 때만 씀.
-  const RARITY_ORDER_CLIENT = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden"];
+  const RARITY_ORDER_CLIENT = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal"];
 
   const JOB_META = {
     trivial:   { label: "TRIVIAL",   icon: "📶" },
@@ -989,7 +989,7 @@
       }
       function botCardStyleAttrs(rarityInfo) {
         if (!rarityInfo) return { style: "", cls: "", tag: "" };
-        const glow = ["legendary", "mythic", "secret", "forbidden"].indexOf(rarityInfo.rarity) !== -1;
+        const glow = ["legendary", "mythic", "secret", "forbidden", "abyssal"].indexOf(rarityInfo.rarity) !== -1;
         return {
           style: 'style="border-color:' + rarityInfo.rarityColor + ';--glow-color:' + rarityInfo.rarityColor + ';"',
           cls: glow ? " glow-pulse" : "",
