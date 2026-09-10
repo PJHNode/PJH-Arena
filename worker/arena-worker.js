@@ -458,11 +458,28 @@ const PROPERTY_DEVICES = {
 // 거점으로 시작한다. 그 외 고정된 개수의 "야생 행성"이 맵에 깔려 있고, 처음엔 전부 PVE 봇이
 // 지키고 있다(bot_tier). 유저는 기존 PvP 전투 엔진(태세+타이밍 미니게임, PVP_ROUNDS)을 그대로
 // 재사용해 봇이나 다른 유저 소유의 야생 행성을 공격한다 — 이기면 그 행성을 정복(소유권 이전)
-// 하고 그동안 쌓인 수익을 약탈한다. 홈 행성은 이 시스템으로는 절대 공격 대상이 되지 않는다
-// (플레이어 간 직접 결투는 여전히 기존 Arena P2P 탭의 몫 — 두 시스템은 서로 안 겹친다).
+// 하고 그동안 쌓인 수익을 약탈한다. 홈 행성도 공격 대상이다(아래 HOME_PLANET_* 참고 — 레벨 20
+// 미만은 무적, 그 이후엔 방어력이 2배로 뻥튀기된 요새).
 const PLANET_COUNT = 48;
-const PLANET_MAX_OWNED_WILD = null; // 한도 없음(예전엔 3개였는데 요청으로 제거) — null이면 무제한
+// 한 명이 은하 지도를 통째로 독차지하는 문제 — 예전엔 3개 한도가 있었는데, 홈 행성까지 공격
+// 대상이 되면서 "정복이 전부 막히는 것처럼 보이는" 혼란으로 이어져 한도를 아예 없앴었다. 그
+// 결과 전투력이 압도적인 유저 한 명이 사실상 맵 전체를 집어삼키는 부작용이 생겼다 — 그래서
+// "한도를 넘으면 공격 자체를 막는" 방식 대신 "이겨도 정복은 안 되고 그 순간의 약탈(코인)만
+// 챙기는" 소프트 캡으로 되살렸다(이 분기 자체는 이미 만들어져 있었다 — POST /planets/attack의
+// capCapped 응답 필드, 프런트의 "정복 한도 초과 — 약탈만" 문구. 캡 숫자만 null이었을 뿐).
+// 48개 중 1/6(8개)로 잡아서, 아무리 강한 유저라도 맵 대부분은 다른 유저들 몫으로 남는다.
+const PLANET_MAX_OWNED_WILD = 8;
 const PLANET_ATTACK_STAMINA_COST = 2;
+// ── 홈 행성 특수 규칙 ──
+// (1) 레벨 20 미만이면 무적 — 막 시작한 유저의 홈 행성이 접속하자마자 털리는 걸 막는다.
+// (2) 그 이후엔 공격 가능하지만, 방어력이 실전 전투력의 2배로 뻥튀기된 "최후의 요새"라 뚫기
+//     훨씬 어렵다(다른 곳에 쓰는 실제 ATK/DEF는 그대로, 홈 행성 방어 계산에서만 2배).
+// (3) 그래도 뚫리면(공격자가 이기면) — 홈 행성은 원래 시세(coins_per_hour)가 항상 0이라 기존
+//     "쌓인 수익 약탈" 방식으로는 약탈해도 0원이었다. 대신 포켓 코인의 20%를 그 자리에서
+//     몰수한다(뱅크는 그대로 보호 — 기존 "예치하면 안전하다" 컨셉과 일관됨).
+const HOME_PLANET_INVULNERABLE_UNTIL_LEVEL = 20;
+const HOME_PLANET_DEFENSE_MULT = 2;
+const HOME_PLANET_BREACH_CONFISCATE_RATE = 0.20;
 // 예전엔 strong(110/95)이 사실상 최고 난이도였는데, 레벨 30 정도만 돼도 장비+봇 몇 기만으로
 // 가볍게 이겨버린다는 피드백을 받아서 그 위로 3단계(정예/악몽/극한)를 더 얹었다. 극한은
 // 등장 확률 2%로 아주 드물지만, 뜨면 왕급 장비 없이는 사실상 못 이기는 수준으로 잡았다.
@@ -969,11 +986,14 @@ async function isTargetOnline(env, userId) {
 // ── 같은 (공격자, 방어자) 쌍이 최근 24시간 안에 몇 번 붙었는지 — arena_logs에 이미 매 PvP
 // 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다. 24시간이 지난 기록은 자연히 창밖으로
 // 밀려나 다시 카운트에서 빠지므로("슬라이딩 윈도우") 별도 리셋 로직이 필요 없다. ──
-async function countRecentAttacks(env, attackerId, defenderId) {
+// kind를 생략하면 기존과 동일하게 PvP 직접 결투(pvp_attack)만 센다 — 행성 공격 쪽에서
+// "이 사람의 행성들을 24시간 안에 몇 번이나 노렸는지"를 셀 때는 kind="planet_attack"으로 넘긴다
+// (행성이 몇 개든 opponent_id는 그 소유자 한 명으로 고정이라 자연스럽게 "그 사람 전체"가 묶인다).
+async function countRecentAttacks(env, attackerId, defenderId, kind) {
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
   const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = 'pvp_attack' AND created_at > ?"
-  ).bind(attackerId, defenderId, dayAgo).first();
+    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = ? AND created_at > ?"
+  ).bind(attackerId, defenderId, kind || "pvp_attack", dayAgo).first();
   return (row && row.cnt) || 0;
 }
 
@@ -1018,16 +1038,23 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   const stance = STANCES[stanceId];
   const isBotPlanet = !planet.owner_user_id;
   const now = Date.now();
-  let defenderCombat, defenderLastStance = null, effectiveTierKey = null;
+  let defenderCombat, defenderLastStance = null, effectiveTierKey = null, defenderRow = null;
 
   if (isBotPlanet) {
     effectiveTierKey = effectivePlanetTier(planet.slot_index, now);
     const t = PLANET_BOT_TIERS[effectiveTierKey];
     defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
   } else {
-    const defenderRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(planet.owner_user_id).first();
+    defenderRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(planet.owner_user_id).first();
     if (!defenderRow) return { error: "행성 소유자를 찾을 수 없습니다." };
+    if (planet.is_home && defenderRow.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) {
+      return { error: "레벨 " + HOME_PLANET_INVULNERABLE_UNTIL_LEVEL + " 미만 유저의 홈 행성은 무적입니다." };
+    }
     defenderCombat = await totalCombatStats(env, defenderRow);
+    if (planet.is_home) {
+      // 홈 행성 방어 시에만 실전 ATK/DEF를 2배로 — 다른 곳(PvP 등)의 실제 전투력엔 영향 없다.
+      defenderCombat = { atk: defenderCombat.atk * HOME_PLANET_DEFENSE_MULT, def: defenderCombat.def * HOME_PLANET_DEFENSE_MULT, crit: defenderCombat.crit };
+    }
     defenderLastStance = defenderRow.last_stance;
   }
 
@@ -1063,6 +1090,12 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   if (attackerWins) {
     if (isBotPlanet) {
       lootCoins = Math.round(newCoinsPerHour * 0.5);
+    } else if (planet.is_home) {
+      // 홈 행성은 coins_per_hour가 항상 0이라 "쌓인 수익 약탈" 방식이 의미가 없다 — 대신
+      // 포켓 코인의 20%를 그 자리에서 몰수한다(뱅크 예치분은 보호됨).
+      lootCoins = Math.floor(defenderRow.pocket_coins * HOME_PLANET_BREACH_CONFISCATE_RATE);
+      defenderRow.pocket_coins -= lootCoins;
+      await env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(defenderRow.pocket_coins, defenderRow.user_id).run();
     } else {
       const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
       lootCoins = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
@@ -1070,16 +1103,22 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     lootCoins = Math.round(lootCoins * rebirthBoostMult(attacker)); // 환생 직후 30분 약탈 2배
     attacker.pocket_coins += lootCoins;
 
-    // 보유 개수 한도 없이 이기면 항상 정복한다(예전엔 3개 한도가 있었는데, 홈 행성까지
-    // 공격 대상이 되면서 "홈 행성 정복이 계기로 이후 정복이 전부 막히는" 것처럼 보이는
-    // 문제로 이어져서 완전히 없앴다).
-    captured = true;
-    // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
-    // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
-    await env.DB.prepare(
-      "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
-    ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
-    if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
+    // 은하 지도 독차지 방지(소프트 캡) — 이미 한도(PLANET_MAX_OWNED_WILD)만큼 야생 행성(강등된
+    // 홈 행성 포함)을 보유 중이면, 이겨도 정복(소유권 이전)은 안 되고 위 약탈만 챙긴다.
+    let ownedWildCount = 0;
+    if (PLANET_MAX_OWNED_WILD != null) {
+      const cntRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id=? AND is_home=0").bind(user.userId).first();
+      ownedWildCount = (cntRow && cntRow.cnt) || 0;
+    }
+    if (PLANET_MAX_OWNED_WILD == null || ownedWildCount < PLANET_MAX_OWNED_WILD) {
+      captured = true;
+      // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
+      // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
+      await env.DB.prepare(
+        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
+      ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
+      if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
+    }
     attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
   } else {
     attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
@@ -2372,19 +2411,26 @@ export default {
           const isUnclaimedWild = !p.is_home && !p.owner_user_id;
           // 미정복 행성은 15분마다 리롤되는 "현재" 난이도를 그때그때 계산한다(저장된 bot_tier는
           // 최초 시드값이라 신뢰하지 않는다) — 정복된 행성은 주인의 실전 전투력을 그대로 보여준다.
-          let tierKey = null, combatStats = null, coinsPerHour = p.coins_per_hour;
+          let tierKey = null, combatStats = null, coinsPerHour = p.coins_per_hour, homeInvulnerable = false;
           if (isUnclaimedWild) {
             tierKey = effectivePlanetTier(p.slot_index, now);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             coinsPerHour = t.coinsPerHour;
           } else if (p.owner_user_id) {
-            // 홈 행성도 이제 공격 대상이라(요청 반영) 주인의 실전 전투력을 그대로 보여준다.
+            // 홈 행성도 이제 공격 대상이라(요청 반영) 주인의 실전 전투력을 그대로 보여준다 —
+            // 단, 홈 행성은 실전 방어력의 2배로 표시한다(실제 전투 판정과 동일하게 맞춘 것).
             if (!ownerCombatCache[p.owner_user_id]) {
               const ownerRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.owner_user_id).first();
-              ownerCombatCache[p.owner_user_id] = ownerRow ? await totalCombatStats(env, ownerRow) : null;
+              ownerCombatCache[p.owner_user_id] = ownerRow ? { level: ownerRow.level, combat: await totalCombatStats(env, ownerRow) } : null;
             }
-            combatStats = ownerCombatCache[p.owner_user_id];
+            const cached = ownerCombatCache[p.owner_user_id];
+            if (cached) {
+              combatStats = p.is_home
+                ? { atk: cached.combat.atk * HOME_PLANET_DEFENSE_MULT, def: cached.combat.def * HOME_PLANET_DEFENSE_MULT, crit: cached.combat.crit }
+                : cached.combat;
+              if (p.is_home && cached.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) homeInvulnerable = true;
+            }
           }
           const elapsedMs = mine && !p.is_home ? Math.min(now - p.last_collect, PROPERTY_MAX_ACCRUAL_MS) : 0;
           const pendingCoins = mine && !p.is_home ? Math.floor(p.coins_per_hour * (elapsedMs / 3600000)) : 0;
@@ -2394,7 +2440,8 @@ export default {
             botTier: tierKey, botTierLabel: tierKey ? PLANET_BOT_TIERS[tierKey].label : null,
             combatStats: combatStats,
             coinsPerHour: coinsPerHour, pendingCoins: pendingCoins,
-            attackable: !mine,
+            homeInvulnerable: homeInvulnerable,
+            attackable: !mine && !homeInvulnerable,
             expeditionEligible: !!(tierKey && ["elite", "nightmare", "apex"].indexOf(tierKey) !== -1),
           };
         }));
@@ -2406,6 +2453,7 @@ export default {
         return json({
           planets: planets, myOwnedWild: myOwnedWild, maxOwnedWild: PLANET_MAX_OWNED_WILD, stances: STANCES,
           tierMeta: tierMeta, nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
+          homeInvulnerableLevel: HOME_PLANET_INVULNERABLE_UNTIL_LEVEL,
         });
       }
 
@@ -2477,6 +2525,14 @@ export default {
         // 홈 행성도 이제 공격 대상이다 — 정복하면 그 즉시 일반 행성으로 강등되고(is_home=0),
         // 원래 주인은 다음 접속 때 ensureHomePlanet이 새 홈 행성을 자동으로 만들어준다.
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
+        // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 24시간 안에 너무 많이 노리는 것만 막는다
+        // — opponent_id가 소유자 한 명으로 고정이라 그 사람 행성이 몇 개든 합쳐서 센다.
+        if (planet.owner_user_id) {
+          const planetAttackCount = await countRecentAttacks(env, user.userId, planet.owner_user_id, "planet_attack");
+          if (planetAttackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY) {
+            return json({ error: "이 유저의 행성은 24시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_DAY + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
+          }
+        }
 
         const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
         if (result.error) return json({ error: result.error }, 400);
@@ -2496,7 +2552,7 @@ export default {
         const combat = await totalCombatStats(env, attacker);
         return json({
           ok: true, attackerWins: result.attackerWins, sweep: result.sweep, captured: result.captured, lootCoins: result.lootCoins,
-          capCapped: result.attackerWins && !result.captured, planetName: planet.name,
+          capCapped: result.attackerWins && !result.captured, planetName: planet.name, isHome: !!planet.is_home,
           rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
           myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
           state: publicState(attacker, combat),

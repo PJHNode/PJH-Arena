@@ -508,12 +508,14 @@
 
     function planetCard(p, withButton) {
       const cls = p.isHome ? "home" : p.mine ? "mine" : "";
-      const ownerLine = p.isHome ? "🏠 홈 행성" : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "🤖 무주인 (PVE)";
+      const ownerLine = p.isHome
+        ? "🏠 홈 행성" + (!p.mine && p.homeInvulnerable ? " · 🛡️ 무적" : "")
+        : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "🤖 무주인 (PVE)";
       const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
       const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
       const attackBtn = !withButton ? "" : p.attackable
         ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
-        : '<button class="btn-ghost" disabled>' + (p.isHome ? "홈 행성" : "내 행성") + "</button>";
+        : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "홈 행성" : "내 행성") + "</button>";
       const expeditionBtn = withButton && p.expeditionEligible && galaxyExpeditionUnlocked
         ? '<button class="btn-ghost" data-expedition="' + p.id + '" style="margin-top:6px;width:100%;"' + (state.stamina < 2 ? " disabled" : "") + ">🛰️ 원정 보내기 (⚡2)</button>"
         : "";
@@ -667,6 +669,8 @@
     $("attackModal").style.display = "flex";
     const hint = planet.botTier
       ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다."
+      : planet.isHome
+      ? "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 방어력이 실전의 2배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다."
       : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b> — 정복하면 그동안 쌓인 수익을 약탈합니다.";
     renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
   }
@@ -762,9 +766,13 @@
         "</div>";
       let resultDetail;
       if (isPlanet) {
-        resultDetail = r.attackerWins
-          ? (r.captured ? "🌍 행성 정복! " : "(정복 한도 초과 — 약탈만) ") + "+" + fmt(r.lootCoins) + " 코인 약탈"
-          : "정복 실패";
+        if (r.attackerWins && r.isHome) {
+          resultDetail = "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인" + (r.captured ? " · 행성 정복" : " (정복 한도 초과 — 강등은 안 됨)");
+        } else {
+          resultDetail = r.attackerWins
+            ? (r.captured ? "🌍 행성 정복! " : "(정복 한도 초과 — 약탈만) ") + "+" + fmt(r.lootCoins) + " 코인 약탈"
+            : "정복 실패";
+        }
       } else {
         const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
         resultDetail = (r.attackerWins ? "약탈 +" + fmt(r.coinsDelta) + " 코인" : "약탈 실패") + (bonusNote ? "<br>" + bonusNote : "");
