@@ -458,8 +458,9 @@ const PROPERTY_DEVICES = {
 // 거점으로 시작한다. 그 외 고정된 개수의 "야생 행성"이 맵에 깔려 있고, 처음엔 전부 PVE 봇이
 // 지키고 있다(bot_tier). 유저는 기존 PvP 전투 엔진(태세+타이밍 미니게임, PVP_ROUNDS)을 그대로
 // 재사용해 봇이나 다른 유저 소유의 야생 행성을 공격한다 — 이기면 그 행성을 정복(소유권 이전)
-// 하고 그동안 쌓인 수익을 약탈한다. 홈 행성도 공격 대상이다(아래 HOME_PLANET_* 참고 — 레벨 20
-// 미만은 무적, 그 이후엔 방어력이 2배로 뻥튀기된 요새).
+// 하고 그동안 쌓인 수익을 약탈한다. 홈 행성도 공격 대상이지만(아래 HOME_PLANET_* 참고 — 레벨
+// 20 미만은 무적, 그 이후엔 방어력이 2배로 뻥튀기된 요새) 절대 정복되지 않는다 — 이기면
+// 코인 몰수 보상만 받고, 행성 자체와 소유권은 그대로 원래 주인에게 남는다.
 const PLANET_COUNT = 48;
 // 한 명이 은하 지도를 통째로 독차지하는 문제 — 예전엔 3개 한도가 있었는데, 홈 행성까지 공격
 // 대상이 되면서 "정복이 전부 막히는 것처럼 보이는" 혼란으로 이어져 한도를 아예 없앴었다. 그
@@ -477,6 +478,7 @@ const PLANET_ATTACK_STAMINA_COST = 2;
 // (3) 그래도 뚫리면(공격자가 이기면) — 홈 행성은 원래 시세(coins_per_hour)가 항상 0이라 기존
 //     "쌓인 수익 약탈" 방식으로는 약탈해도 0원이었다. 대신 포켓 코인의 20%를 그 자리에서
 //     몰수한다(뱅크는 그대로 보호 — 기존 "예치하면 안전하다" 컨셉과 일관됨).
+// (4) 소유권은 절대 넘어가지 않는다 — 홈 행성은 뺏을 수 없고, 이겨도 위 (3)의 보상만 받는다.
 const HOME_PLANET_INVULNERABLE_UNTIL_LEVEL = 20;
 const HOME_PLANET_DEFENSE_MULT = 2;
 const HOME_PLANET_BREACH_CONFISCATE_RATE = 0.20;
@@ -1145,25 +1147,28 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     lootCoins = Math.round(lootCoins * rebirthBoostMult(attacker)); // 환생 직후 30분 약탈 2배
     attacker.pocket_coins += lootCoins;
 
-    // 은하 지도 독차지 방지(소프트 캡) — 이미 한도(PLANET_MAX_OWNED_WILD)만큼 야생 행성(강등된
-    // 홈 행성 포함)을 보유 중이면, 이겨도 정복(소유권 이전)은 안 되고 위 약탈만 챙긴다.
-    let ownedWildCount = 0;
-    if (PLANET_MAX_OWNED_WILD != null) {
-      const cntRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id=? AND is_home=0").bind(user.userId).first();
-      ownedWildCount = (cntRow && cntRow.cnt) || 0;
-    }
-    if (PLANET_MAX_OWNED_WILD == null || ownedWildCount < PLANET_MAX_OWNED_WILD) {
-      captured = true;
-      // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
-      // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
-      await env.DB.prepare(
-        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
-      ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
-      // 이 행성에 경비병으로 배치돼 있던 봇이 있다면(패자 소유였을 때) 소속 행성을 잃었으니
-      // 다시 "나와 함께"로 귀환시킨다 — 안 그러면 그 봇들이 아무 데도 반영 안 되는 채로
-      // 영영 묶여버린다. 홈 행성은 애초에 경비병 배치 대상이 아니라 여기선 대개 no-op.
-      await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE stationed_planet_id = ?").bind(planet.id).run();
-      if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
+    if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
+
+    // 홈 행성은 이제 절대 소유권이 넘어가지 않는다 — 뚫려도 위 몰수 보상만 주고 그 자리에
+    // 그대로 남는다(요청 반영: "홈 행성은 뺏을 수 없다, 공격 성공하면 보상만").
+    if (!planet.is_home) {
+      // 은하 지도 독차지 방지(소프트 캡) — 이미 한도(PLANET_MAX_OWNED_WILD)만큼 야생 행성을
+      // 보유 중이면, 이겨도 정복(소유권 이전)은 안 되고 위 약탈만 챙긴다.
+      let ownedWildCount = 0;
+      if (PLANET_MAX_OWNED_WILD != null) {
+        const cntRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id=? AND is_home=0").bind(user.userId).first();
+        ownedWildCount = (cntRow && cntRow.cnt) || 0;
+      }
+      if (PLANET_MAX_OWNED_WILD == null || ownedWildCount < PLANET_MAX_OWNED_WILD) {
+        captured = true;
+        await env.DB.prepare(
+          "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
+        ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
+        // 이 행성에 경비병으로 배치돼 있던 봇이 있다면(패자 소유였을 때) 소속 행성을 잃었으니
+        // 다시 "나와 함께"로 귀환시킨다 — 안 그러면 그 봇들이 아무 데도 반영 안 되는 채로
+        // 영영 묶여버린다.
+        await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE stationed_planet_id = ?").bind(planet.id).run();
+      }
     }
     attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
   } else {

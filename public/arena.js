@@ -487,7 +487,10 @@
     $("galaxyOwnedCount").textContent = data.myOwnedWild;
     $("galaxyMaxOwned").textContent = data.maxOwnedWild == null ? "무제한" : data.maxOwnedWild;
     galaxyNextRerollAt = data.nextRerollAt;
-    const empire = data.planets.filter((p) => p.isHome || p.mine);
+    // 예전엔 "p.isHome || p.mine"이라 남의 홈 행성까지 전부 내 제국 칸에 끼어 보이는 버그가
+    // 있었다(isHome은 "그 행성이 누군가의 홈"이라는 뜻이지 "내 홈"이라는 뜻이 아님) — 내
+    // 홈 행성은 어차피 p.mine이 이미 true라 mine 하나로도 충분하다.
+    const empire = data.planets.filter((p) => p.mine);
     const pendingTotal = empire.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
     $("galaxyPending").textContent = fmt(pendingTotal);
 
@@ -603,6 +606,21 @@
     el.textContent = "다음 난이도 리롤까지 " + fmtCountdown(remain);
   }, 1000);
 
+  // 난이도(약함~극한) 필터는 PVE 봇이 지키는 행성에만 의미가 있다 — "유저 소유"만 보기로
+  // 걸면 화면엔 애초에 봇 행성이 하나도 안 나오니(botTier가 없어서), 난이도 버튼들이 떠 있어도
+  // 아무 효과가 없어서 혼란스러웠다. "유저 소유"를 고르면 난이도 필터 자체를 숨기고 "전체"로
+  // 되돌린다.
+  function updateTierFilterVisibility() {
+    const tierGroup = document.querySelector('.galaxy-filter-group[data-filter-group="tier"]');
+    if (!tierGroup) return;
+    const hide = galaxyTypeFilter === "player";
+    tierGroup.style.display = hide ? "none" : "";
+    if (hide && galaxyTierFilter !== "all") {
+      galaxyTierFilter = "all";
+      document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((b) => b.classList.toggle("active", b.dataset.tier === "all"));
+    }
+  }
+
   function initGalaxyFilters() {
     document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -619,9 +637,11 @@
         btn.classList.add("active");
         galaxyTypeFilter = btn.dataset.type;
         galaxyShowCount = GALAXY_PAGE_SIZE;
+        updateTierFilterVisibility();
         renderGalaxyContent();
       });
     });
+    updateTierFilterVisibility();
     const moreBtn = $("galaxyShowMoreBtn");
     if (moreBtn) moreBtn.addEventListener("click", () => { galaxyShowCount += GALAXY_PAGE_SIZE; renderGalaxyContent(); });
   }
@@ -770,7 +790,8 @@
       let resultDetail;
       if (isPlanet) {
         if (r.attackerWins && r.isHome) {
-          resultDetail = "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인" + (r.captured ? " · 행성 정복" : " (정복 한도 초과 — 강등은 안 됨)");
+          // 홈 행성은 이제 절대 정복되지 않는다 — 이겨도 보상(코인 몰수)만 받고 행성은 그대로.
+          resultDetail = "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인";
         } else {
           resultDetail = r.attackerWins
             ? (r.captured ? "🌍 행성 정복! " : "(정복 한도 초과 — 약탈만) ") + "+" + fmt(r.lootCoins) + " 코인 약탈"
