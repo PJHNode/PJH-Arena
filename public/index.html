@@ -43,6 +43,7 @@
     border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center;
     font-weight: bold; font-size: 15px; color: var(--accent);
   }
+  .avatar-icon { font-size: 22px; line-height: 1; }
   .exp-wrap { flex: 1; min-width: 160px; max-width: 260px; }
   .exp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; }
   .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; }
@@ -168,6 +169,26 @@
   .trade-row-side { color: var(--sub); margin-bottom: 2px; }
   .trade-row-actions { display: flex; gap: 8px; margin-top: 8px; }
   .trade-row-actions button { flex: 1; }
+
+  /* Club */
+  .club-header { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); padding: 16px; margin-bottom: 16px; }
+  .club-header-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+  .club-header-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
+  .club-header-actions { display: flex; gap: 8px; }
+  .club-section-title { font-size: 12px; color: var(--sub); font-weight: bold; margin: 18px 0 8px; }
+  .club-member-row { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--border); padding: 8px 12px; font-size: 12px; margin-bottom: 6px; }
+  .club-relation-row { display: flex; justify-content: space-between; align-items: center; background: var(--surface); border: 1px solid var(--border); padding: 8px 12px; font-size: 11px; margin-bottom: 6px; }
+  .club-relation-tag { font-weight: bold; padding: 2px 8px; border: 1px solid currentColor; font-size: 9px; }
+  .club-relation-tag.hostile { color: var(--danger); }
+  .club-relation-tag.allied { color: var(--energy); }
+  .club-relation-tag.neutral { color: var(--sub); }
+  .club-relation-form { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .club-relation-form input, .club-relation-form select { flex: 1; min-width: 100px; }
+  .club-browse-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .club-browse-name { font-weight: bold; font-size: 13px; }
+  .club-browse-meta { font-size: 11px; color: var(--sub); }
+  .club-create-card { background: var(--surface); border: 1px solid var(--border); padding: 16px; margin-bottom: 18px; }
+  .club-create-card input, .club-create-card textarea { width: 100%; margin-bottom: 10px; }
 
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
@@ -353,6 +374,7 @@
 <header>
   <div class="crumb">PJH Hub &gt; <b>PJH Arena</b></div>
   <div class="profile-row">
+    <span class="avatar-icon" id="avatarIcon" style="display:none;" title="PJH-Hub 아바타"></span>
     <div class="level-badge" id="levelBadge">1</div>
     <div class="exp-wrap">
       <div class="exp-track"><div class="exp-fill" id="expBar"></div></div>
@@ -415,6 +437,7 @@
       <button class="side-tab" data-tab="bank">Secure Bank</button>
       <button class="side-tab" data-tab="research">Research</button>
       <button class="side-tab" data-tab="trade">Trade</button>
+      <button class="side-tab" data-tab="club">Club</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
@@ -432,7 +455,7 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">야생 행성을 정복해서 시간당 수익을 얻으세요(스태미나 2). 봇이 지키는 곳도, 다른 유저가 이미 정복한 곳도 다시 빼앗을 수 있습니다. 홈 행성은 절대 공격받지 않습니다.</p>
+        <p class="dim" style="margin-bottom:14px;">행성을 정복해서 시간당 수익을 얻으세요(스태미나 2). 봇이 지키는 곳도, 다른 유저가 이미 정복한 곳도, 심지어 홈 행성도 빼앗을 수 있습니다(보유 개수 제한 없음). 홈 행성을 빼앗기면 다음 접속 때 새 홈 행성이 자동으로 생깁니다.</p>
 
         <div class="galaxy-empire">
           <div class="galaxy-empire-header">
@@ -595,6 +618,11 @@
         <div class="trade-list" id="tradeOutgoingList"></div>
         <p class="panel-subtitle">📜 최근 내역</p>
         <div class="trade-list" id="tradeHistoryList"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-club">
+        <p class="panel-title">🛡️ CLUB</p>
+        <div id="clubContent"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">

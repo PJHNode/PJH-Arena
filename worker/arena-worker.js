@@ -31,11 +31,13 @@ async function verifyUser(request, env) {
     if (!session || !session.userId) return null;
 
     const userRaw = await env.USERS.get("user:" + session.userId);
+    let avatar = null;
     if (userRaw) {
       const userData = JSON.parse(userRaw);
       if (userData.banned) return { _error: "정지된 계정입니다.", _status: 403 };
+      avatar = userData.avatar || null; // PJH-Hub에서 산 아바타 id(neon/gold/prism/galaxy) — 읽기만
     }
-    return { userId: session.userId, realName: session.realName || session.userId };
+    return { userId: session.userId, realName: session.realName || session.userId, avatar: avatar };
   } catch (e) {
     return null;
   }
@@ -120,6 +122,11 @@ const ITEM_TYPE_META = {
   armor:  { label: "방어 장갑", color: "#3d8bff" },
   core:   { label: "연산 코어", color: "#b060e8" },
 };
+
+// PJH-Hub 상점에서 파는 아바타 id -> 아이콘(board-worker.js SHOP_ITEMS와 동일하게 맞춤).
+// Arena는 계정을 공유할 뿐 PJH-Hub의 실제 픽셀 아트 에셋은 안 갖고 있어서, 대신 그 아바타의
+// 상점 아이콘(이모지)을 그대로 가져와 쓴다.
+const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" };
 
 // 장착 가능한 아이템(무장/방어/코어) — 타입 3종 x 등급 8종 = 24개.
 // 가격 곡선 — 예전엔 등급이 오를수록 배율이 오히려 3x→2.1x로 줄어들어서(선형에 가까움) 고티어가
@@ -260,6 +267,42 @@ async function transferTradeItems(env, fromUserId, toUserId, items) {
   if (ops.length) await env.DB.batch(ops);
   await env.DB.prepare("DELETE FROM arena_inventory WHERE qty <= 0").run();
 }
+
+// ── Club(길드) ── 이름/설명이 있는 그룹, 대표(leader) 1명 + 멤버들. 클럽끼리 우호/적대
+// 관계를 선언할 수 있고, 적대 관계인 두 클럽 소속끼리 PvP(플레이어 간 결투든 남의 홈 행성
+// 점령이든)에서 이기면 그 클럽에 전적(war_score)이 쌓인다. ──
+const CLUB_CREATE_COST = 5000;
+const CLUB_MAX_MEMBERS = 20;
+const CLUB_NAME_MAX_LEN = 20;
+const CLUB_DESC_MAX_LEN = 200;
+
+async function clubIdOf(env, userId) {
+  const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
+  return row ? row.club_id : null;
+}
+// 두 클럽 사이의 "실제" 관계 — 한쪽이라도 상대를 hostile로 선언했으면 전쟁(hostile), 서로가
+// 서로를 friendly로 선언해야만 동맹(allied), 그 외엔 neutral. 짝사랑 우호는 동맹이 아니다.
+async function effectiveClubRelation(env, clubA, clubB) {
+  if (!clubA || !clubB || clubA === clubB) return "neutral";
+  const res = await env.DB.prepare(
+    "SELECT * FROM arena_club_relations WHERE (from_club_id=? AND to_club_id=?) OR (from_club_id=? AND to_club_id=?)"
+  ).bind(clubA, clubB, clubB, clubA).all();
+  let aToB = "neutral", bToA = "neutral";
+  res.results.forEach(function (r) { if (r.from_club_id === clubA) aToB = r.status; else bToA = r.status; });
+  if (aToB === "hostile" || bToA === "hostile") return "hostile";
+  if (aToB === "friendly" && bToA === "friendly") return "allied";
+  return "neutral";
+}
+async function recordWarScoreIfHostile(env, attackerUserId, defenderUserId) {
+  const clubA = await clubIdOf(env, attackerUserId);
+  if (!clubA) return;
+  const clubB = await clubIdOf(env, defenderUserId);
+  if (!clubB || clubA === clubB) return;
+  const relation = await effectiveClubRelation(env, clubA, clubB);
+  if (relation === "hostile") {
+    await env.DB.prepare("UPDATE arena_clubs SET war_score = war_score + 1 WHERE id = ?").bind(clubA).run();
+  }
+}
 const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
@@ -337,7 +380,7 @@ const PROPERTY_DEVICES = {
 // 하고 그동안 쌓인 수익을 약탈한다. 홈 행성은 이 시스템으로는 절대 공격 대상이 되지 않는다
 // (플레이어 간 직접 결투는 여전히 기존 Arena P2P 탭의 몫 — 두 시스템은 서로 안 겹친다).
 const PLANET_COUNT = 48;
-const PLANET_MAX_OWNED_WILD = 3; // 홈 행성 제외, 한 유저가 동시에 정복해 둘 수 있는 야생 행성 수
+const PLANET_MAX_OWNED_WILD = null; // 한도 없음(예전엔 3개였는데 요청으로 제거) — null이면 무제한
 const PLANET_ATTACK_STAMINA_COST = 2;
 // 예전엔 strong(110/95)이 사실상 최고 난이도였는데, 레벨 30 정도만 돼도 장비+봇 몇 기만으로
 // 가볍게 이겨버린다는 피드백을 받아서 그 위로 3단계(정예/악몽/극한)를 더 얹었다. 극한은
@@ -527,6 +570,22 @@ async function ensureSchema(env) {
   );
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_trades_to ON arena_trades(to_user_id, status)"); } catch (e) {}
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_trades_from ON arena_trades(from_user_id, status)"); } catch (e) {}
+  // ── 클럽(길드) ── 멤버는 arena_club_members에 user_id를 PK로 둬서 "한 사람당 클럽 하나만"을
+  // 자연스럽게 강제한다. 관계(arena_club_relations)는 (from,to) 방향성 선언이고, 실제 "적대/우호"
+  // 판정은 양쪽 선언을 합쳐서 계산한다(한쪽만 적대여도 전쟁, 양쪽 다 우호여야 동맹).
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_clubs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, " +
+    "leader_user_id TEXT NOT NULL, leader_name TEXT NOT NULL, description TEXT, war_score INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)"
+  );
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_members (user_id TEXT PRIMARY KEY, club_id INTEGER NOT NULL, user_name TEXT NOT NULL, " +
+    "role TEXT NOT NULL DEFAULT 'member', joined_at INTEGER NOT NULL)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_club_members_club ON arena_club_members(club_id)"); } catch (e) {}
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_relations (from_club_id INTEGER NOT NULL, to_club_id INTEGER NOT NULL, " +
+    "status TEXT NOT NULL DEFAULT 'neutral', updated_at INTEGER NOT NULL, PRIMARY KEY (from_club_id, to_club_id))"
+  );
   schemaReady = true;
 }
 
@@ -577,19 +636,22 @@ function applyRegen(row, now) {
   if (out.energy > out.max_energy) out.energy = out.max_energy;
   if (out.stamina > out.max_stamina) out.stamina = out.max_stamina;
   if (out.hp > out.max_hp) out.hp = out.max_hp;
+
+  // 버그 수정: 예전엔 에너지/스태미나 회복까지 전부 "HP > 0"(다운 안 됨) 안에 묶여 있어서,
+  // 다운되면 HP뿐 아니라 에너지/스태미나까지 같이 멈춰버렸다. 전투 불능과 자원 회복은 서로
+  // 다른 개념이라 묶일 이유가 없으므로 항상 회복되게 뺐다.
+  const energyTicks = Math.floor((now - out.last_energy_tick) / ENERGY_TICK_MS);
+  if (energyTicks > 0) {
+    out.energy = Math.min(out.max_energy, out.energy + energyTicks * ENERGY_REGEN_PER_TICK);
+    out.last_energy_tick += energyTicks * ENERGY_TICK_MS;
+  }
+  const staminaTicks = Math.floor((now - out.last_stamina_tick) / STAMINA_TICK_MS);
+  if (staminaTicks > 0) {
+    out.stamina = Math.min(out.max_stamina, out.stamina + staminaTicks * STAMINA_REGEN_PER_TICK);
+    out.last_stamina_tick += staminaTicks * STAMINA_TICK_MS;
+  }
+  // HP만 여전히 다운(0) 상태에서는 스스로 안 올라온다 — 아이템으로만 회복 가능(기존 설계 유지).
   if (out.hp > 0) {
-    const energyTicks = Math.floor((now - out.last_energy_tick) / ENERGY_TICK_MS);
-    if (energyTicks > 0 && out.energy < out.max_energy) {
-      out.energy = Math.min(out.max_energy, out.energy + energyTicks * ENERGY_REGEN_PER_TICK);
-      out.last_energy_tick += energyTicks * ENERGY_TICK_MS;
-    } else if (energyTicks > 0) {
-      out.last_energy_tick += energyTicks * ENERGY_TICK_MS;
-    }
-    const staminaTicks = Math.floor((now - out.last_stamina_tick) / STAMINA_TICK_MS);
-    if (staminaTicks > 0) {
-      out.stamina = Math.min(out.max_stamina, out.stamina + staminaTicks * STAMINA_REGEN_PER_TICK);
-      out.last_stamina_tick += staminaTicks * STAMINA_TICK_MS;
-    }
     const hpTicks = Math.floor((now - out.last_hp_tick) / HP_TICK_MS);
     if (hpTicks > 0) {
       out.hp = Math.min(out.max_hp, out.hp + hpTicks * HP_REGEN_PER_TICK);
@@ -801,16 +863,16 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     }
     attacker.pocket_coins += lootCoins;
 
-    const ownedCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id = ? AND is_home = 0").bind(user.userId).first();
-    const ownedCount = (ownedCountRow && ownedCountRow.cnt) || 0;
-    if (ownedCount < PLANET_MAX_OWNED_WILD) {
-      captured = true;
-      // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
-      // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
-      await env.DB.prepare(
-        "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
-      ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
-    }
+    // 보유 개수 한도 없이 이기면 항상 정복한다(예전엔 3개 한도가 있었는데, 홈 행성까지
+    // 공격 대상이 되면서 "홈 행성 정복이 계기로 이후 정복이 전부 막히는" 것처럼 보이는
+    // 문제로 이어져서 완전히 없앴다).
+    captured = true;
+    // is_home=0으로 강등 — 원래 주인은 홈이 없어지는 순간부터 다음 /planets 조회 때
+    // ensureHomePlanet이 알아서 새 홈 행성을 만들어준다(거점 없는 상태로 방치되지 않음).
+    await env.DB.prepare(
+      "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
+    ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
+    if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
     attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
   } else {
     attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
@@ -855,7 +917,7 @@ export default {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         await persistRegen(env, row);
         const combat = await totalCombatStats(env, row);
-        return json(publicState(row, combat));
+        return json(Object.assign(publicState(row, combat), { avatarIcon: AVATAR_ICONS[user.avatar] || null }));
       }
 
       if (request.method === "POST" && path === "/stats/upgrade") {
@@ -1087,6 +1149,7 @@ export default {
         const attackResult = attackerWins ? (isCrit ? "crit" : "win") : "lose";
         await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? coinsDelta : 0, attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
         await insertLog(env, defender.user_id, "pvp_defend", attacker.user_id, attacker.real_name, attackerWins ? "lose" : "win", attackerWins ? -coinsDelta : 0, attackerWins ? -PVP_WIN_DEF_HP_LOSS : -PVP_LOSE_DEF_HP_LOSS);
+        if (attackerWins) await recordWarScoreIfHostile(env, attacker.user_id, defender.user_id);
 
         const combat = await totalCombatStats(env, attacker);
         return json({
@@ -1253,6 +1316,163 @@ export default {
         if (!trade || trade.status !== "pending") return json({ error: "이미 처리됐거나 존재하지 않는 거래입니다." }, 400);
         if (trade.from_user_id !== user.userId) return json({ error: "내가 보낸 요청만 취소할 수 있습니다." }, 403);
         await env.DB.prepare("UPDATE arena_trades SET status='cancelled', resolved_at=? WHERE id=?").bind(Date.now(), tradeId).run();
+        return json({ ok: true });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  Club — 길드. 대표(leader) 1명 + 멤버들, 클럽 간 우호/적대 관계, 적대 클럽 상대
+      //  PvP 승리마다 쌓이는 전적(war_score).
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /club — 내가 클럽에 속해 있으면 그 클럽의 상세(멤버/관계/전적)를, 아니면
+      //    가입 가능한 전체 클럽 목록을 내려준다. ──
+      if (request.method === "GET" && path === "/club") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) {
+          const all = await env.DB.prepare("SELECT c.*, (SELECT COUNT(*) FROM arena_club_members m WHERE m.club_id = c.id) AS member_count FROM arena_clubs c ORDER BY c.war_score DESC, c.created_at ASC LIMIT 50").all();
+          return json({
+            myClub: null, createCost: CLUB_CREATE_COST, maxMembers: CLUB_MAX_MEMBERS,
+            clubs: all.results.map(function (c) { return { id: c.id, name: c.name, description: c.description, leaderName: c.leader_name, memberCount: c.member_count, warScore: c.war_score }; }),
+          });
+        }
+        const club = await env.DB.prepare("SELECT * FROM arena_clubs WHERE id = ?").bind(membership.club_id).first();
+        if (!club) { // 소속 클럽이 어쩌다 사라진 경우(방어적 처리) — 멤버십만 정리
+          await env.DB.prepare("DELETE FROM arena_club_members WHERE user_id = ?").bind(user.userId).run();
+          return json({ myClub: null, createCost: CLUB_CREATE_COST, maxMembers: CLUB_MAX_MEMBERS, clubs: [] });
+        }
+        const membersRes = await env.DB.prepare("SELECT * FROM arena_club_members WHERE club_id = ? ORDER BY role DESC, joined_at ASC").bind(club.id).all();
+        const relRes = await env.DB.prepare("SELECT * FROM arena_club_relations WHERE from_club_id = ? OR to_club_id = ?").bind(club.id, club.id).all();
+        const otherClubIds = new Set();
+        relRes.results.forEach(function (r) { otherClubIds.add(r.from_club_id === club.id ? r.to_club_id : r.from_club_id); });
+        const relations = [];
+        for (const otherId of otherClubIds) {
+          const otherClub = await env.DB.prepare("SELECT id, name, war_score FROM arena_clubs WHERE id = ?").bind(otherId).first();
+          if (!otherClub) continue;
+          const myDeclared = relRes.results.find(function (r) { return r.from_club_id === club.id && r.to_club_id === otherId; });
+          relations.push({
+            clubId: otherClub.id, clubName: otherClub.name, warScore: otherClub.war_score,
+            myDeclared: myDeclared ? myDeclared.status : "neutral",
+            effective: await effectiveClubRelation(env, club.id, otherId),
+          });
+        }
+        return json({
+          myClub: {
+            id: club.id, name: club.name, description: club.description, leaderUserId: club.leader_user_id, leaderName: club.leader_name, warScore: club.war_score,
+            isLeader: club.leader_user_id === user.userId,
+            members: membersRes.results.map(function (m) { return { userId: m.user_id, userName: m.user_name, role: m.role, joinedAt: m.joined_at }; }),
+            relations: relations,
+          },
+          // 리더가 관계를 걸 상대 클럽의 ID를 찾을 수 있도록, 내 클럽 소속이어도 다른 클럽
+          // 목록(ID 포함)은 계속 내려준다.
+          otherClubs: (await env.DB.prepare("SELECT id, name FROM arena_clubs WHERE id != ? ORDER BY war_score DESC LIMIT 50").bind(club.id).all()).results,
+          createCost: CLUB_CREATE_COST, maxMembers: CLUB_MAX_MEMBERS,
+        });
+      }
+
+      // ── POST /club/create { name, description } ──
+      if (request.method === "POST" && path === "/club/create") {
+        const existing = await env.DB.prepare("SELECT 1 FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (existing) return json({ error: "이미 클럽에 소속돼 있습니다. 먼저 탈퇴하세요." }, 400);
+        const body = await request.json().catch(function () { return {}; });
+        const name = String(body.name || "").trim().slice(0, CLUB_NAME_MAX_LEN);
+        const description = String(body.description || "").trim().slice(0, CLUB_DESC_MAX_LEN);
+        if (!name) return json({ error: "클럽 이름을 입력하세요." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.pocket_coins < CLUB_CREATE_COST) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(CLUB_CREATE_COST) + ")" }, 400);
+
+        const dup = await env.DB.prepare("SELECT 1 FROM arena_clubs WHERE name = ?").bind(name).first();
+        if (dup) return json({ error: "이미 존재하는 클럽 이름입니다." }, 400);
+
+        const now = Date.now();
+        row.pocket_coins -= CLUB_CREATE_COST;
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
+        const inserted = await env.DB.prepare(
+          "INSERT INTO arena_clubs (name, leader_user_id, leader_name, description, created_at) VALUES (?, ?, ?, ?, ?)"
+        ).bind(name, user.userId, user.realName, description || null, now).run();
+        const clubId = inserted.meta.last_row_id;
+        await env.DB.prepare("INSERT INTO arena_club_members (user_id, club_id, user_name, role, joined_at) VALUES (?, ?, ?, 'leader', ?)")
+          .bind(user.userId, clubId, user.realName, now).run();
+
+        return json({ ok: true, clubId: clubId, pocketCoins: row.pocket_coins });
+      }
+
+      // ── POST /club/join { clubId } ──
+      if (request.method === "POST" && path === "/club/join") {
+        const existing = await env.DB.prepare("SELECT 1 FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (existing) return json({ error: "이미 클럽에 소속돼 있습니다." }, 400);
+        const body = await request.json().catch(function () { return {}; });
+        const clubId = parseInt(body.clubId, 10);
+        const club = await env.DB.prepare("SELECT * FROM arena_clubs WHERE id = ?").bind(clubId).first();
+        if (!club) return json({ error: "존재하지 않는 클럽입니다." }, 404);
+        const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_club_members WHERE club_id = ?").bind(clubId).first();
+        if ((countRow && countRow.cnt) >= CLUB_MAX_MEMBERS) return json({ error: "클럽 정원이 가득 찼습니다(최대 " + CLUB_MAX_MEMBERS + "명)." }, 400);
+        await env.DB.prepare("INSERT INTO arena_club_members (user_id, club_id, user_name, role, joined_at) VALUES (?, ?, ?, 'member', ?)")
+          .bind(user.userId, clubId, user.realName, Date.now()).run();
+        return json({ ok: true });
+      }
+
+      // ── POST /club/leave — 리더가 나가면 가장 먼저 가입한 멤버에게 자동으로 리더를 넘긴다.
+      //    혼자 남은 리더가 나가면 클럽 자체가 사라진다(관계까지 정리). ──
+      if (request.method === "POST" && path === "/club/leave") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) return json({ error: "클럽에 소속돼 있지 않습니다." }, 400);
+        const others = await env.DB.prepare("SELECT * FROM arena_club_members WHERE club_id = ? AND user_id != ? ORDER BY joined_at ASC").bind(membership.club_id, user.userId).all();
+        await env.DB.prepare("DELETE FROM arena_club_members WHERE user_id = ?").bind(user.userId).run();
+        if (membership.role === "leader") {
+          if (others.results.length) {
+            const next = others.results[0];
+            await env.DB.prepare("UPDATE arena_club_members SET role='leader' WHERE user_id=?").bind(next.user_id).run();
+            await env.DB.prepare("UPDATE arena_clubs SET leader_user_id=?, leader_name=? WHERE id=?").bind(next.user_id, next.user_name, membership.club_id).run();
+          } else {
+            await env.DB.batch([
+              env.DB.prepare("DELETE FROM arena_clubs WHERE id = ?").bind(membership.club_id),
+              env.DB.prepare("DELETE FROM arena_club_relations WHERE from_club_id = ? OR to_club_id = ?").bind(membership.club_id, membership.club_id),
+            ]);
+          }
+        }
+        return json({ ok: true });
+      }
+
+      // ── POST /club/kick { userId } — 리더 전용. ──
+      if (request.method === "POST" && path === "/club/kick") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership || membership.role !== "leader") return json({ error: "클럽 리더만 추방할 수 있습니다." }, 403);
+        const body = await request.json().catch(function () { return {}; });
+        const targetUserId = String(body.userId || "");
+        if (targetUserId === user.userId) return json({ error: "자기 자신은 추방할 수 없습니다(탈퇴를 이용하세요)." }, 400);
+        const target = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ? AND club_id = ?").bind(targetUserId, membership.club_id).first();
+        if (!target) return json({ error: "해당 멤버를 찾을 수 없습니다." }, 404);
+        await env.DB.prepare("DELETE FROM arena_club_members WHERE user_id = ?").bind(targetUserId).run();
+        return json({ ok: true });
+      }
+
+      // ── POST /club/disband — 리더 전용. ──
+      if (request.method === "POST" && path === "/club/disband") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership || membership.role !== "leader") return json({ error: "클럽 리더만 해체할 수 있습니다." }, 403);
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM arena_club_members WHERE club_id = ?").bind(membership.club_id),
+          env.DB.prepare("DELETE FROM arena_clubs WHERE id = ?").bind(membership.club_id),
+          env.DB.prepare("DELETE FROM arena_club_relations WHERE from_club_id = ? OR to_club_id = ?").bind(membership.club_id, membership.club_id),
+        ]);
+        return json({ ok: true });
+      }
+
+      // ── POST /club/relation { toClubId, status } — 리더 전용. status: 'friendly'|'hostile'|'neutral'. ──
+      if (request.method === "POST" && path === "/club/relation") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership || membership.role !== "leader") return json({ error: "클럽 리더만 관계를 설정할 수 있습니다." }, 403);
+        const body = await request.json().catch(function () { return {}; });
+        const toClubId = parseInt(body.toClubId, 10);
+        const status = String(body.status || "");
+        if (["friendly", "hostile", "neutral"].indexOf(status) === -1) return json({ error: "잘못된 관계 상태입니다." }, 400);
+        if (toClubId === membership.club_id) return json({ error: "자기 클럽에는 설정할 수 없습니다." }, 400);
+        const target = await env.DB.prepare("SELECT id FROM arena_clubs WHERE id = ?").bind(toClubId).first();
+        if (!target) return json({ error: "존재하지 않는 클럽입니다." }, 404);
+        await env.DB.prepare(
+          "INSERT INTO arena_club_relations (from_club_id, to_club_id, status, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(from_club_id, to_club_id) DO UPDATE SET status=?, updated_at=?"
+        ).bind(membership.club_id, toClubId, status, Date.now(), status, Date.now()).run();
         return json({ ok: true });
       }
 

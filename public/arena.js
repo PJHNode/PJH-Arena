@@ -109,6 +109,9 @@
 
   function renderHeader() {
     if (!state) return;
+    // PJH-Hub에서 산 아바타(있을 때만) — /state 응답에만 실려온다(다른 액션 응답엔 없음).
+    if (state.avatarIcon) { $("avatarIcon").textContent = state.avatarIcon; $("avatarIcon").style.display = ""; }
+    else if (state.avatarIcon === null) { $("avatarIcon").style.display = "none"; }
     $("levelBadge").textContent = state.level;
     $("expBar").style.width = Math.min(100, (state.xp / state.nextExp) * 100) + "%";
     $("expText").textContent = fmt(state.xp) + " / " + fmt(state.nextExp);
@@ -233,6 +236,7 @@
     bank: renderBankTab,
     research: renderResearchTab,
     trade: renderTradeTab,
+    club: renderClubTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
   };
@@ -412,7 +416,7 @@
     const moreBtn = $("galaxyShowMoreBtn");
 
     $("galaxyOwnedCount").textContent = data.myOwnedWild;
-    $("galaxyMaxOwned").textContent = data.maxOwnedWild;
+    $("galaxyMaxOwned").textContent = data.maxOwnedWild == null ? "무제한" : data.maxOwnedWild;
     galaxyNextRerollAt = data.nextRerollAt;
     const empire = data.planets.filter((p) => p.isHome || p.mine);
     const pendingTotal = empire.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
@@ -1246,6 +1250,109 @@
     });
   }
 
+  // ── Club — 안 속해 있으면 생성/가입 화면, 속해 있으면 관리 화면. 내용이 완전히 갈려서
+  // 그때그때 #clubContent를 통째로 새로 그린다(다른 탭들처럼 고정 마크업 + innerHTML 부분
+  // 교체가 아니라). 버튼도 매번 새로 그려지므로 이벤트는 컨테이너에 위임해서 한 번만 건다. ──
+  const RELATION_LABEL = { hostile: "⚔️ 적대", allied: "🤝 동맹", neutral: "· 중립", friendly: "🤝 우호 선언" };
+
+  async function renderClubTab() {
+    const el = $("clubContent");
+    try {
+      const data = await api("/club");
+      if (!data.myClub) {
+        el.innerHTML =
+          '<div class="club-create-card">' +
+          '<div class="club-section-title" style="margin-top:0;">새 클럽 만들기 (💰 ' + fmt(data.createCost) + ")</div>" +
+          '<input id="clubCreateName" type="text" placeholder="클럽 이름" maxlength="20" />' +
+          '<textarea id="clubCreateDesc" placeholder="클럽 소개(선택)" rows="2" maxlength="200"></textarea>' +
+          '<button class="btn-primary" id="clubCreateBtn" style="width:100%;">만들기</button>' +
+          "</div>" +
+          '<div class="club-section-title">가입 가능한 클럽</div>' +
+          (data.clubs.length ? data.clubs.map((c) => (
+            '<div class="club-browse-card">' +
+            '<div><div class="club-browse-name">' + escapeHtml(c.name) + "</div>" +
+            '<div class="club-browse-meta">리더 ' + escapeHtml(c.leaderName) + " · 멤버 " + c.memberCount + "/" + data.maxMembers + " · 전적 " + c.warScore + (c.description ? " · " + escapeHtml(c.description) : "") + "</div></div>" +
+            '<button class="btn-primary" data-join="' + c.id + '"' + (c.memberCount >= data.maxMembers ? " disabled" : "") + ">가입</button>" +
+            "</div>"
+          )).join("") : '<p class="dim">아직 생성된 클럽이 없습니다.</p>');
+        return;
+      }
+
+      const club = data.myClub;
+      el.innerHTML =
+        '<div class="club-header">' +
+        '<div class="club-header-title">🛡️ ' + escapeHtml(club.name) + "</div>" +
+        '<div class="club-header-meta">리더 ' + escapeHtml(club.leaderName) + " · 멤버 " + club.members.length + "/" + data.maxMembers + " · 전적(전쟁 승수) " + club.warScore + (club.description ? "<br>" + escapeHtml(club.description) : "") + "</div>" +
+        '<div class="club-header-actions">' +
+        (club.isLeader ? '<button class="btn-ghost" id="clubDisbandBtn">클럽 해체</button>' : '<button class="btn-ghost" id="clubLeaveBtn">클럽 탈퇴</button>') +
+        "</div></div>" +
+
+        '<div class="club-section-title">👥 멤버 (' + club.members.length + ")</div>" +
+        club.members.map((m) => (
+          '<div class="club-member-row"><span>' + (m.role === "leader" ? "👑 " : "") + escapeHtml(m.userName) + "</span>" +
+          (club.isLeader && m.role !== "leader" ? '<button class="btn-ghost" data-kick="' + m.userId + '">추방</button>' : "") +
+          "</div>"
+        )).join("") +
+
+        '<div class="club-section-title">🌐 관계</div>' +
+        (club.relations.length ? club.relations.map((r) => (
+          '<div class="club-relation-row"><span>' + escapeHtml(r.clubName) + " (전적 " + r.warScore + ")</span>" +
+          '<span class="club-relation-tag ' + r.effective + '">' + (RELATION_LABEL[r.effective] || r.effective) + "</span></div>"
+        )).join("") : '<p class="dim">아직 다른 클럽과 관계가 없습니다.</p>') +
+        (club.isLeader ?
+          '<div class="club-relation-form">' +
+          '<select id="clubRelationClubId">' + (data.otherClubs || []).map((c) => '<option value="' + c.id + '">' + escapeHtml(c.name) + " (#" + c.id + ")</option>").join("") + "</select>" +
+          '<select id="clubRelationStatus"><option value="hostile">적대 선언</option><option value="friendly">우호 선언</option><option value="neutral">중립으로</option></select>' +
+          '<button class="btn-primary" id="clubRelationSetBtn">설정</button>' +
+          "</div><p class=\"dim\" style=\"margin-top:6px;\">적대는 한쪽만 선언해도 전쟁, 동맹은 서로 선언해야 성립합니다.</p>"
+          : "");
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initClubButtons() {
+    const el = $("clubContent");
+    if (!el) return;
+    el.addEventListener("click", async (e) => {
+      const t = e.target;
+      if (t.id === "clubCreateBtn") {
+        const name = $("clubCreateName").value.trim();
+        const description = $("clubCreateDesc").value.trim();
+        if (!name) return toast("클럽 이름을 입력하세요.", true);
+        t.disabled = true;
+        try {
+          const r = await api("/club/create", { method: "POST", body: { name, description } });
+          toast("클럽을 만들었습니다!"); state.pocketCoins = r.pocketCoins; renderHeader(); renderClubTab();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.dataset.join) {
+        t.disabled = true;
+        try { await api("/club/join", { method: "POST", body: { clubId: t.dataset.join } }); toast("클럽에 가입했습니다!"); renderClubTab(); }
+        catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubLeaveBtn") {
+        if (!confirm("클럽을 탈퇴하시겠습니까?")) return;
+        t.disabled = true;
+        try { await api("/club/leave", { method: "POST" }); toast("탈퇴했습니다."); renderClubTab(); }
+        catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubDisbandBtn") {
+        if (!confirm("클럽을 해체하시겠습니까? 모든 멤버가 해제되고 되돌릴 수 없습니다.")) return;
+        t.disabled = true;
+        try { await api("/club/disband", { method: "POST" }); toast("클럽을 해체했습니다."); renderClubTab(); }
+        catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.dataset.kick) {
+        if (!confirm("이 멤버를 추방하시겠습니까?")) return;
+        t.disabled = true;
+        try { await api("/club/kick", { method: "POST", body: { userId: t.dataset.kick } }); toast("추방했습니다."); renderClubTab(); }
+        catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubRelationSetBtn") {
+        const toClubId = $("clubRelationClubId").value;
+        const status = $("clubRelationStatus").value;
+        if (!toClubId) return toast("상대 클럽 ID를 입력하세요.", true);
+        t.disabled = true;
+        try { await api("/club/relation", { method: "POST", body: { toClubId, status } }); toast("관계를 설정했습니다."); renderClubTab(); }
+        catch (err) { toast(err.message, true); t.disabled = false; }
+      }
+    });
+  }
+
   function initBankForm() {
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -1335,6 +1442,7 @@
     initShopButtons();
     initResearchButtons();
     initTradeButtons();
+    initClubButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);
