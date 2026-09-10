@@ -287,6 +287,9 @@ const CLUB_CREATE_COST = 5000;
 const CLUB_MAX_MEMBERS = 20;
 const CLUB_NAME_MAX_LEN = 20;
 const CLUB_DESC_MAX_LEN = 200;
+const PROFILE_SHOWCASE_MAX = 3;
+const PROFILE_STATUS_MAX_LEN = 60;
+
 const CLUB_CHAT_MAX_LEN = 300;
 const CLUB_CHAT_HISTORY = 50;
 // 기부한 코인 1개당 클럽 XP 1(그대로 클럽 창고에도 쌓임). 레벨업에 필요한 XP는 플레이어
@@ -671,6 +674,12 @@ async function ensureSchema(env) {
     "battles_claimed INTEGER NOT NULL DEFAULT 0, jobs_claimed INTEGER NOT NULL DEFAULT 0, purchases_claimed INTEGER NOT NULL DEFAULT 0, " +
     "PRIMARY KEY (user_id, date))"
   );
+  // 프로필 — 상태메시지 + 자랑 진열대(최대 3칸, 아이템 또는 봇). showcase는
+  // [{type:'item'|'bot', itemId?, botId?}] JSON 문자열로 저장한다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_profiles (user_id TEXT PRIMARY KEY, status_message TEXT, showcase TEXT NOT NULL DEFAULT '[]', " +
+    "rebirth_effect_enabled INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)"
+  );
   schemaReady = true;
 }
 
@@ -830,6 +839,62 @@ async function totalCombatStats(env, row) {
   atk = Math.round(atk * rebirthMult);
   def = Math.round(def * rebirthMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
+}
+
+// ── 프로필(누구나 조회 가능) — 진열대(최대 3칸, 아이템/봇)를 실제 표시 데이터로 풀어서
+// 돌려준다. 없는 유저면 null. ──
+async function buildPublicProfile(env, userId) {
+  const row = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(userId).first();
+  if (!row) return null;
+  const profileRow = await env.DB.prepare("SELECT * FROM arena_profiles WHERE user_id = ?").bind(userId).first();
+  const showcaseRaw = profileRow ? JSON.parse(profileRow.showcase || "[]") : [];
+
+  const membership = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
+  let clubName = null;
+  if (membership) {
+    const club = await env.DB.prepare("SELECT name FROM arena_clubs WHERE id = ?").bind(membership.club_id).first();
+    clubName = club ? club.name : null;
+  }
+
+  const showcase = [];
+  for (const entry of showcaseRaw.slice(0, PROFILE_SHOWCASE_MAX)) {
+    if (entry.type === "item" && SHOP_ITEMS[entry.itemId]) {
+      const item = SHOP_ITEMS[entry.itemId];
+      const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(userId, entry.itemId).first();
+      if (!owned || owned.qty <= 0) continue; // 그새 팔았거나 거래로 넘겼으면 조용히 건너뜀
+      showcase.push({
+        type: "item", id: entry.itemId, name: item.name, itemType: item.type,
+        typeLabel: ITEM_TYPE_META[item.type] ? ITEM_TYPE_META[item.type].label : null,
+        typeColor: ITEM_TYPE_META[item.type] ? ITEM_TYPE_META[item.type].color : null,
+        rarity: item.rarity, rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
+      });
+    } else if (entry.type === "bot") {
+      const bot = await env.DB.prepare("SELECT * FROM arena_bots WHERE id = ? AND user_id = ?").bind(entry.botId, userId).first();
+      if (!bot) continue; // 되팔았으면 건너뜀
+      const stats = equipStats(bot);
+      let bestRarity = null, bestIdx = -1;
+      [bot.equipped_weapon, bot.equipped_armor, bot.equipped_core].forEach(function (id) {
+        if (id && SHOP_ITEMS[id]) {
+          const idx = RARITY_ORDER.indexOf(SHOP_ITEMS[id].rarity);
+          if (idx > bestIdx) { bestIdx = idx; bestRarity = SHOP_ITEMS[id].rarity; }
+        }
+      });
+      showcase.push({
+        type: "bot", id: bot.id, atk: stats.atk, def: stats.def, crit: stats.crit,
+        rarity: bestRarity, rarityLabel: bestRarity ? RARITY_META[bestRarity].label : "장비 없음",
+        rarityColor: bestRarity ? RARITY_META[bestRarity].color : "#666",
+      });
+    }
+  }
+
+  return {
+    userId: row.user_id, realName: row.real_name, level: row.level,
+    rebirthCount: row.rebirth_count || 0,
+    plunderWins: row.plunder_wins, clubName: clubName,
+    statusMessage: profileRow ? (profileRow.status_message || "") : "",
+    showcase: showcase,
+    rebirthEffectEnabled: (row.rebirth_count || 0) > 0 && (!profileRow || !!profileRow.rebirth_effect_enabled),
+  };
 }
 
 function publicState(row, combat) {
@@ -1770,6 +1835,50 @@ export default {
         return json({ ok: true });
       }
 
+      // ══════════════════════════════════════════════════════════
+      //  Profile — 누구나 조회 가능한 프로필(상태메시지 + 자랑 진열대 최대 3칸 + 환생 이팩트).
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /profile?userId=X — userId 생략 시 내 프로필. isSelf로 프론트가 편집 UI를
+      //    보여줄지 판단한다. ──
+      if (request.method === "GET" && path === "/profile") {
+        const targetUserId = url.searchParams.get("userId") || user.userId;
+        const profile = await buildPublicProfile(env, targetUserId);
+        if (!profile) return json({ error: "존재하지 않는 유저입니다." }, 404);
+        return json(Object.assign({ isSelf: targetUserId === user.userId }, profile));
+      }
+
+      // ── POST /profile/update { statusMessage, showcase: [{type,itemId|botId}], rebirthEffectEnabled } ──
+      if (request.method === "POST" && path === "/profile/update") {
+        const body = await request.json().catch(function () { return {}; });
+        const statusMessage = String(body.statusMessage || "").trim().slice(0, PROFILE_STATUS_MAX_LEN);
+        const rawShowcase = Array.isArray(body.showcase) ? body.showcase.slice(0, PROFILE_SHOWCASE_MAX) : [];
+
+        const validated = [];
+        for (const entry of rawShowcase) {
+          if (entry && entry.type === "item" && SHOP_ITEMS[entry.itemId]) {
+            const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(user.userId, entry.itemId).first();
+            if (owned && owned.qty > 0) validated.push({ type: "item", itemId: entry.itemId });
+          } else if (entry && entry.type === "bot") {
+            const botId = parseInt(entry.botId, 10);
+            const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id=? AND user_id=?").bind(botId, user.userId).first();
+            if (bot) validated.push({ type: "bot", botId: botId });
+          }
+        }
+
+        const rebirthEffectEnabled = body.rebirthEffectEnabled === false ? 0 : 1;
+        await env.DB.prepare(
+          "INSERT INTO arena_profiles (user_id, status_message, showcase, rebirth_effect_enabled, updated_at) VALUES (?, ?, ?, ?, ?) " +
+          "ON CONFLICT(user_id) DO UPDATE SET status_message=?, showcase=?, rebirth_effect_enabled=?, updated_at=?"
+        ).bind(
+          user.userId, statusMessage, JSON.stringify(validated), rebirthEffectEnabled, Date.now(),
+          statusMessage, JSON.stringify(validated), rebirthEffectEnabled, Date.now()
+        ).run();
+
+        const profile = await buildPublicProfile(env, user.userId);
+        return json(Object.assign({ ok: true, isSelf: true }, profile));
+      }
+
       // ── GET /items — 로테이션과 무관한 SHOP_ITEMS 전체 카탈로그(이름/등급/타입 조회용).
       //    이미 보유 중인 아이템은 지금 상점(rotation)에 안 떠 있을 수도 있으므로, 장착 드롭다운
       //    등에서 "이미 장착된 아이템"의 이름/등급을 보여주려면 로테이션과 무관한 전체 목록이 필요하다. ──
@@ -1792,13 +1901,18 @@ export default {
         ownedRes.results.forEach(function (o) { ownedMap[o.item_id] = o.qty; });
         const equippedCount = await equippedCountMap(env, user.userId);
         const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level, row0.shop_reroll_nonce);
-        const stockRes = await env.DB.prepare("SELECT item_id, bought FROM arena_shop_stock2 WHERE user_id = ? AND bucket = ?").bind(user.userId, rotation.bucket).all();
+        // 재고는 "자연 로테이션 구간(bucket)"뿐 아니라 "몇 번째 리롤인지(shop_reroll_nonce)"까지
+        // 합쳐서 키로 쓴다 — 안 그러면 common/uncommon처럼 후보가 적어 리롤해도 거의 항상 같은
+        // 아이템이 다시 뜨는 등급은, 품절시켜 놓고 리롤해도 같은 재고 카운터를 계속 보게 되어
+        // "리롤해도 품절 그대로"인 것처럼 보이는 버그가 있었다.
+        const stockBucket = rotation.bucket * 1000000 + (row0.shop_reroll_nonce || 0);
+        const stockRes = await env.DB.prepare("SELECT item_id, bought FROM arena_shop_stock2 WHERE user_id = ? AND bucket = ?").bind(user.userId, stockBucket).all();
         const boughtMap = {};
         stockRes.results.forEach(function (s) { boughtMap[s.item_id] = s.bought; });
         const entries = rotation.itemIds.map(function (id) { return [id, SHOP_ITEMS[id]]; });
         const items = sortedShopEntries(entries).map(function (pair) {
           const id = pair[0], item = pair[1];
-          const totalStock = rollItemStock(id, rotation.bucket, item.rarity, user.userId);
+          const totalStock = rollItemStock(id, stockBucket, item.rarity, user.userId);
           const remainingStock = Math.max(0, totalStock - (boughtMap[id] || 0));
           return Object.assign({ id: id }, item, {
             rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
@@ -1859,11 +1973,13 @@ export default {
         }
 
         // 상점 재고(로테이션당 1~3개, 장착 아이템도 포함, 이제 유저별로 따로) — 조건부
-        // UPDATE(bought < total)로 품절 이후엔 나 자신도 더 못 사게 막는다.
-        const totalStock = rollItemStock(itemId, rotation.bucket, item.rarity, user.userId);
+        // UPDATE(bought < total)로 품절 이후엔 나 자신도 더 못 사게 막는다. 재고 키는 리롤
+        // 횟수까지 합쳐서 계산한다(위 GET /shop과 동일한 이유).
+        const stockBucket = rotation.bucket * 1000000 + (row.shop_reroll_nonce || 0);
+        const totalStock = rollItemStock(itemId, stockBucket, item.rarity, user.userId);
         const stockRes = await env.DB.prepare(
           "INSERT INTO arena_shop_stock2 (user_id, item_id, bucket, bought) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, item_id, bucket) DO UPDATE SET bought = bought + 1 WHERE bought < ?"
-        ).bind(user.userId, itemId, rotation.bucket, totalStock).run();
+        ).bind(user.userId, itemId, stockBucket, totalStock).run();
         if (!stockRes.meta.changes) return json({ error: "품절된 아이템입니다. 다음 로테이션을 기다려주세요." }, 400);
 
         row.pocket_coins -= item.price;

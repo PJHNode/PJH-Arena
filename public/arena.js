@@ -253,6 +253,7 @@
     research: renderResearchTab,
     trade: renderTradeTab,
     club: renderClubTab,
+    profile: renderProfileTab,
     admin: renderAdminTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
@@ -422,7 +423,8 @@
         btn.addEventListener("click", () => openScanModal(btn.dataset.scan));
       });
       listEl.querySelectorAll("button[data-attack]").forEach((btn) => {
-        btn.addEventListener("click", () => openAttackSequence(btn.dataset.attack));
+        const t = targets.find((x) => x.userId === btn.dataset.attack);
+        btn.addEventListener("click", () => openAttackSequence(t));
       });
     } catch (e) { listEl.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
@@ -650,20 +652,15 @@
   //    PvP(상대 유저)와 Galaxy Map(행성 정복) 둘 다 같은 시퀀스를 쓴다 — ctx.mode로 어느 쪽인지
   //    구분해서 마지막에 다른 엔드포인트(/arena/attack vs /planets/attack)를 호출한다.
   //    첫 화면을 위해 정찰을 한 번 호출해 상대의 평소 태세를 보여준다 — 정찰도 스태미나 1을 쓴다. ──
-  async function openAttackSequence(targetUserId) {
+  // 예전엔 여기서 /arena/scan을 한 번 더 호출해서 정보를 새로 받아왔는데, 그 호출이 스태미나
+  // 1을 쓰게 되면서 "스태미나 1 남았을 때 공격을 누르면 정보 조회에서 그걸 다 써버리고 정작
+  // 공격은 스태미나 부족으로 실패하는" 버그가 됐다. Arena P2P 목록(/arena/targets)은 애초에
+  // 무료라서, 이미 받아온 그 데이터를 그대로 쓰면 된다 — 행성 공격 모달과 같은 방식.
+  function openAttackSequence(target) {
     $("attackModal").style.display = "flex";
-    $("attackModalBody").innerHTML = '<p class="dim">정보 조회 중...</p>';
-    try {
-      const scan = await api("/arena/scan", { method: "POST", body: { targetUserId } });
-      state = scan.state; renderHeader();
-      const stanceHint = (scan.lastStanceLabel ? "상대는 최근 <b>[" + scan.lastStanceLabel + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.")
-        + (scan.levelGapHigh ? '<br><span style="color:var(--stamina);">⚠️ 레벨 차이가 커서 스태미나를 더 씁니다(' + scan.staminaCost + ').</span>' : "");
-      renderStanceStep({ mode: "pvp", targetUserId: targetUserId }, scan.realName, stanceHint);
-    } catch (e) {
-      $("attackModalBody").innerHTML = '<p class="dim">' + escapeHtml(e.message) + '</p><button class="attack-close-btn" id="attackResultCloseBtn">닫기</button>';
-      const closeBtn = $("attackResultCloseBtn");
-      if (closeBtn) closeBtn.addEventListener("click", closeAttackModal);
-    }
+    const stanceHint = (target.lastStanceLabel ? "상대는 최근 <b>[" + escapeHtml(target.lastStanceLabel) + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.")
+      + (target.levelGapHigh ? '<br><span style="color:var(--stamina);">⚠️ 레벨 차이가 커서 스태미나를 더 씁니다(' + target.staminaCost + ').</span>' : "");
+    renderStanceStep({ mode: "pvp", targetUserId: target.userId }, target.realName, stanceHint);
   }
 
   function openPlanetAttackSequence(planet) {
@@ -1541,6 +1538,126 @@
     if (refillBtn) refillBtn.addEventListener("click", () => run(refillBtn, "/admin/refill", {}, "전체 회복 완료"));
   }
 
+  // ── Profile — 누구나 조회 가능(다른 유저 아이디로 조회), 내 프로필일 때만 편집 폼이 뜬다.
+  // 진열대 슬롯 하나짜리 <select>에 "item:id" / "bot:id" 값을 인코딩해서 넣는 방식으로
+  // 타입+값 두 단계 드롭다운 없이 한 번에 고르게 했다. ──
+  let profileViewingUserId = null;
+
+  async function renderProfileTab() {
+    await loadAndRenderProfile(profileViewingUserId || (state && state.userId));
+  }
+
+  async function loadAndRenderProfile(userId) {
+    if (!userId) return;
+    const cardArea = $("profileCardArea");
+    const editArea = $("profileEditArea");
+    cardArea.innerHTML = '<p class="dim">불러오는 중...</p>';
+    editArea.innerHTML = "";
+    try {
+      const p = await api("/profile?userId=" + encodeURIComponent(userId));
+      profileViewingUserId = p.userId;
+      renderProfileCard(p);
+      if (p.isSelf) await renderProfileEditForm(p);
+    } catch (e) { cardArea.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function renderProfileCard(p) {
+    const glowCls = p.rebirthEffectEnabled ? " rebirth-glow" : "";
+    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge">🔄 환생 ' + p.rebirthCount + "회</span>" : "";
+    const slots = [0, 1, 2].map((i) => {
+      const s = p.showcase[i];
+      if (!s) return '<div class="profile-slot empty">비어있음</div>';
+      if (s.type === "item") {
+        return '<div class="profile-slot" style="border-left-color:' + s.typeColor + ';">' +
+          '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">' + escapeHtml(s.name) + "</div>" +
+          '<div class="profile-slot-stat">' + (s.typeLabel || "") + " · " + s.rarityLabel + "</div></div>";
+      }
+      return '<div class="profile-slot" style="border-left-color:' + s.rarityColor + ';">' +
+        '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">🤖 봇 (' + s.rarityLabel + ")</div>" +
+        '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div></div>";
+    }).join("");
+    $("profileCardArea").innerHTML =
+      '<div class="profile-card' + glowCls + '">' +
+      '<div class="profile-card-name">Lv.' + p.level + " " + escapeHtml(p.realName) + rebirthBadge + "</div>" +
+      '<div class="profile-card-meta">' + (p.clubName ? "🛡️ " + escapeHtml(p.clubName) + " · " : "") + "약탈 승리 " + p.plunderWins + "회</div>" +
+      '<div class="profile-card-status">' + (p.statusMessage ? escapeHtml(p.statusMessage) : '<span class="dim">상태메시지 없음</span>') + "</div>" +
+      '<div class="profile-showcase">' + slots + "</div>" +
+      "</div>";
+  }
+
+  async function renderProfileEditForm(p) {
+    const editArea = $("profileEditArea");
+    editArea.innerHTML = '<p class="dim">편집 폼 불러오는 중...</p>';
+    try {
+      const [inv, botsData, catalog] = await Promise.all([api("/inventory"), api("/bots"), getShopCatalog()]);
+      function botRarityLabel(b) {
+        let best = null, bestIdx = -1;
+        [b.equipped_weapon, b.equipped_armor, b.equipped_core].forEach((id) => {
+          const it = id ? catalog[id] : null;
+          if (!it) return;
+          const idx = RARITY_ORDER_CLIENT.indexOf(it.rarity);
+          if (idx > bestIdx) { bestIdx = idx; best = it; }
+        });
+        return best ? "[" + best.rarityLabel + "]" : "(장비 없음)";
+      }
+      let optionsHtml = '<option value="">비어있음</option>';
+      inv.items.forEach((it) => { optionsHtml += '<option value="item:' + it.id + '">🎒 [' + it.rarityLabel + "] " + escapeHtml(it.name) + "</option>"; });
+      botsData.bots.forEach((b, idx) => { optionsHtml += '<option value="bot:' + b.id + '">🤖 BOT #' + (idx + 1) + " " + botRarityLabel(b) + "</option>"; });
+
+      function currentValue(i) {
+        const s = p.showcase[i];
+        if (!s) return "";
+        return s.type === "item" ? "item:" + s.id : "bot:" + s.id;
+      }
+
+      editArea.innerHTML =
+        '<div class="profile-edit">' +
+        '<div class="profile-edit-title">내 프로필 편집</div>' +
+        '<input id="profileStatusInput" type="text" maxlength="60" placeholder="상태메시지 (최대 60자)" value="' + escapeHtml(p.statusMessage || "") + '" />' +
+        '<div class="profile-slot-editors">' +
+        [0, 1, 2].map((i) => '<div class="profile-slot-editor"><span class="dim">진열대 ' + (i + 1) + '</span><select id="profileSlot' + i + '">' + optionsHtml + "</select></div>").join("") +
+        "</div>" +
+        (p.rebirthCount > 0
+          ? '<label class="profile-edit-toggle"><input type="checkbox" id="profileRebirthToggle"' + (p.rebirthEffectEnabled ? " checked" : "") + " /> 환생 이팩트 표시(카드 테두리 반짝임)</label>"
+          : "") +
+        '<button class="btn-primary" id="profileSaveBtn" style="width:100%;">저장</button>' +
+        "</div>";
+      [0, 1, 2].forEach((i) => { const sel = $("profileSlot" + i); if (sel) sel.value = currentValue(i); });
+    } catch (e) { editArea.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initProfileButtons() {
+    const lookupBtn = $("profileLookupBtn");
+    if (lookupBtn) lookupBtn.addEventListener("click", () => {
+      const id = $("profileLookupInput").value.trim();
+      if (!id) return toast("아이디를 입력하세요.", true);
+      loadAndRenderProfile(id);
+    });
+    const myOwnBtn = $("profileMyOwnBtn");
+    if (myOwnBtn) myOwnBtn.addEventListener("click", () => { $("profileLookupInput").value = ""; loadAndRenderProfile(state.userId); });
+    const editArea = $("profileEditArea");
+    if (editArea) editArea.addEventListener("click", async (e) => {
+      if (e.target.id !== "profileSaveBtn") return;
+      const btn = e.target;
+      btn.disabled = true;
+      const showcase = [0, 1, 2].map((i) => {
+        const val = $("profileSlot" + i).value;
+        if (!val) return null;
+        const [type, id] = val.split(":");
+        return type === "item" ? { type: "item", itemId: id } : { type: "bot", botId: id };
+      }).filter((x) => x);
+      const statusMessage = $("profileStatusInput").value;
+      const toggle = $("profileRebirthToggle");
+      const rebirthEffectEnabled = toggle ? toggle.checked : true;
+      try {
+        await api("/profile/update", { method: "POST", body: { statusMessage, showcase, rebirthEffectEnabled } });
+        toast("프로필을 저장했습니다.");
+        loadAndRenderProfile(state.userId);
+      } catch (err) { toast(err.message, true); }
+      btn.disabled = false;
+    });
+  }
+
   function initBankForm() {
     async function deposit(inputId) {
       const amount = parseInt($(inputId).value, 10);
@@ -1633,6 +1750,7 @@
     initClubButtons();
     initDailyButtons();
     initAdminButtons();
+    initProfileButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);

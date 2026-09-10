@@ -219,6 +219,29 @@
   .admin-form { display: flex; gap: 8px; }
   .admin-form input, .admin-form select { flex: 1; min-width: 0; }
 
+  /* Profile */
+  .profile-lookup-form { display: flex; gap: 8px; margin-bottom: 18px; }
+  .profile-lookup-form input { flex: 1; }
+  .profile-card { background: var(--surface); border: 2px solid var(--border); padding: 20px; margin-bottom: 18px; position: relative; }
+  .profile-card.rebirth-glow { border-color: #ffd700; animation: profileGlow 2s ease-in-out infinite; }
+  @keyframes profileGlow { 0%, 100% { box-shadow: 0 0 8px rgba(255,215,0,0.4); } 50% { box-shadow: 0 0 22px rgba(255,215,0,0.8); } }
+  .profile-card-name { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
+  .profile-card-name .rebirth-badge { color: #ffd700; font-size: 12px; border: 1px solid #ffd700; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+  .profile-card-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
+  .profile-card-status { font-size: 13px; font-style: italic; color: var(--accent); margin-bottom: 16px; min-height: 16px; }
+  .profile-showcase { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .profile-slot { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 12px; text-align: center; min-height: 80px; }
+  .profile-slot.empty { display: flex; align-items: center; justify-content: center; color: var(--sub); font-size: 11px; }
+  .profile-slot-name { font-weight: bold; font-size: 11px; margin-bottom: 4px; }
+  .profile-slot-stat { font-size: 10px; color: var(--sub); }
+  .profile-edit { background: var(--surface); border: 1px solid var(--border); padding: 16px; }
+  .profile-edit-title { font-weight: bold; font-size: 12px; margin-bottom: 10px; }
+  .profile-edit input[type="text"] { width: 100%; margin-bottom: 12px; }
+  .profile-slot-editors { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .profile-slot-editor { background: var(--surface-2); border: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .profile-slot-editor select { width: 100%; }
+  .profile-edit-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 12px; }
+
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
 
@@ -471,6 +494,7 @@
       <button class="side-tab" data-tab="trade">Trade</button>
       <button class="side-tab" data-tab="club">Club</button>
       <button class="side-tab" data-tab="admin" id="adminTabBtn" style="display:none;">🛠️ Admin</button>
+      <button class="side-tab" data-tab="profile">Profile</button>
       <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
       <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
@@ -688,6 +712,17 @@
             <button class="btn-primary" id="adminRefillBtn" style="width:100%;">회복</button>
           </div>
         </div>
+      </div>
+
+      <div class="tab-panel" id="panel-profile">
+        <p class="panel-title">👤 PROFILE</p>
+        <div class="profile-lookup-form">
+          <input id="profileLookupInput" type="text" placeholder="다른 유저 아이디로 프로필 보기" />
+          <button class="btn-primary" id="profileLookupBtn">보기</button>
+          <button class="btn-ghost" id="profileMyOwnBtn">내 프로필</button>
+        </div>
+        <div id="profileCardArea"><p class="dim">불러오는 중...</p></div>
+        <div id="profileEditArea"></div>
       </div>
 
       <div class="tab-panel" id="panel-leaderboard">
