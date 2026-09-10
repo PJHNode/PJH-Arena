@@ -426,18 +426,19 @@ function rollBotGacha(tierKey) {
 const PROPERTY_MAX_ACCRUAL_MS = 24 * 60 * 60 * 1000;
 const PROPERTY_MAX_DEVICES = 6;
 const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무한 사고팔기로 코인 복사 방지)
+// coinsPerHour = 가격의 1/4(요청 반영) — 즉 4시간이면 기기값을 회수한다.
 const PROPERTY_DEVICES = {
-  proxy_relay:     { name: "Proxy Relay",          price: 200,   coinsPerHour: 3 },
-  botnet_node:     { name: "Botnet Node",          price: 500,   coinsPerHour: 5 },
-  gpu_rig:         { name: "GPU Mining Rig",       price: 1000,  coinsPerHour: 12 },
-  packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,  coinsPerHour: 18 },
-  darkpool_bot:    { name: "Darkpool Trading Bot",  price: 2800,  coinsPerHour: 38 },
-  asic_farm:       { name: "Mining ASIC Farm",     price: 4000,  coinsPerHour: 55 },
-  neural_farm:     { name: "Neural Farm Cluster",  price: 7000,  coinsPerHour: 105 },
-  cloud_scraper:   { name: "Cloud Scraper Array",  price: 10000, coinsPerHour: 150 },
-  fusion_reactor:  { name: "Fusion Reactor Node",  price: 17000, coinsPerHour: 280 },
-  quantum_miner:   { name: "Quantum Miner",        price: 25000, coinsPerHour: 400 },
-  dyson_node:      { name: "Dyson Swarm Node",     price: 60000, coinsPerHour: 1050 },
+  proxy_relay:     { name: "Proxy Relay",          price: 200,   coinsPerHour: 50 },
+  botnet_node:     { name: "Botnet Node",          price: 500,   coinsPerHour: 125 },
+  gpu_rig:         { name: "GPU Mining Rig",       price: 1000,  coinsPerHour: 250 },
+  packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,  coinsPerHour: 375 },
+  darkpool_bot:    { name: "Darkpool Trading Bot",  price: 2800,  coinsPerHour: 700 },
+  asic_farm:       { name: "Mining ASIC Farm",     price: 4000,  coinsPerHour: 1000 },
+  neural_farm:     { name: "Neural Farm Cluster",  price: 7000,  coinsPerHour: 1750 },
+  cloud_scraper:   { name: "Cloud Scraper Array",  price: 10000, coinsPerHour: 2500 },
+  fusion_reactor:  { name: "Fusion Reactor Node",  price: 17000, coinsPerHour: 4250 },
+  quantum_miner:   { name: "Quantum Miner",        price: 25000, coinsPerHour: 6250 },
+  dyson_node:      { name: "Dyson Swarm Node",     price: 60000, coinsPerHour: 15000 },
 };
 
 // ── 행성 기반 성간 전쟁(Galaxy Map) ── 각 유저는 공격받지 않는 "홈 행성"(is_home=1)을
