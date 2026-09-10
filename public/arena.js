@@ -266,6 +266,7 @@
   // ── ① Hacking Jobs ──
   function renderJobsTab() {
     if (!state) return; // /state 조회가 아직 안 끝났거나 실패한 경우 — 다음 refreshState 성공 시 재호출됨
+    renderDailyWidget();
     const panel = $("panel-jobs");
     const cards = Object.keys(JOB_TIERS).map((tier) => {
       const t = JOB_TIERS[tier], meta = JOB_META[tier];
@@ -296,6 +297,54 @@
       });
     });
     renderMiningGraph();
+  }
+
+  // ── 오늘의 출석/미션 — Hacking Jobs 탭 맨 위에 둬서(가장 먼저 보는 탭) 매일 들어올 이유를
+  // 만든다. 출석/미션 수령 버튼은 위젯 자체에 위임(#dailyWidget)해서 매번 새로 그려도 리스너가
+  // 중복으로 안 쌓이게 했다. ──
+  async function renderDailyWidget() {
+    const el = $("dailyWidget");
+    if (!el) return;
+    try {
+      const d = await api("/daily");
+      const attendBtn = d.attendedToday
+        ? '<button class="btn-ghost" disabled>오늘 출석 완료</button>'
+        : '<button class="btn-primary" id="dailyAttendBtn">출석하기 (💰' + fmt(d.nextReward) + ")</button>";
+      el.innerHTML =
+        '<div class="daily-widget-row"><span>📅 연속 출석 <b style="color:var(--stamina);">' + d.streak + "일</b></span>" + attendBtn + "</div>" +
+        Object.keys(d.quests).map((key) => {
+          const q = d.quests[key];
+          const btn = q.claimed
+            ? '<span class="dim">수령 완료</span>'
+            : q.ready
+            ? '<button class="btn-primary" data-quest-claim="' + key + '">받기 (💰' + fmt(q.reward) + ")</button>"
+            : '<span class="daily-quest-progress">' + q.done + " / " + q.goal + "</span>";
+          return '<div class="daily-quest-row"><span>' + escapeHtml(q.label) + "</span>" + btn + "</div>";
+        }).join("");
+    } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function initDailyButtons() {
+    const el = $("dailyWidget");
+    if (!el) return;
+    el.addEventListener("click", async (e) => {
+      const t = e.target;
+      if (t.id === "dailyAttendBtn") {
+        t.disabled = true;
+        try {
+          const r = await api("/daily/attendance", { method: "POST" });
+          toast("출석 완료! +" + fmt(r.reward) + " 코인 (연속 " + r.streak + "일)");
+          state.pocketCoins = r.pocketCoins; renderHeader(); renderDailyWidget();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.dataset.questClaim) {
+        t.disabled = true;
+        try {
+          const r = await api("/daily/quest-claim", { method: "POST", body: { quest: t.dataset.questClaim } });
+          toast("미션 완료! +" + fmt(r.reward) + " 코인");
+          state.pocketCoins = r.pocketCoins; renderHeader(); renderDailyWidget();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
+      }
+    });
   }
 
   async function renderMiningGraph() {
@@ -1270,7 +1319,7 @@
           '<div class="club-section-title">가입 가능한 클럽</div>' +
           (data.clubs.length ? data.clubs.map((c) => (
             '<div class="club-browse-card">' +
-            '<div><div class="club-browse-name">' + escapeHtml(c.name) + "</div>" +
+            '<div><div class="club-browse-name">Lv.' + c.level + " " + escapeHtml(c.name) + "</div>" +
             '<div class="club-browse-meta">리더 ' + escapeHtml(c.leaderName) + " · 멤버 " + c.memberCount + "/" + data.maxMembers + " · 전적 " + c.warScore + (c.description ? " · " + escapeHtml(c.description) : "") + "</div></div>" +
             '<button class="btn-primary" data-join="' + c.id + '"' + (c.memberCount >= data.maxMembers ? " disabled" : "") + ">가입</button>" +
             "</div>"
@@ -1279,13 +1328,22 @@
       }
 
       const club = data.myClub;
+      const xpPct = Math.min(100, (club.xpIntoLevel / club.nextLevelXp) * 100);
       el.innerHTML =
         '<div class="club-header">' +
-        '<div class="club-header-title">🛡️ ' + escapeHtml(club.name) + "</div>" +
+        '<div class="club-header-title">🛡️ Lv.' + club.level + " " + escapeHtml(club.name) + "</div>" +
         '<div class="club-header-meta">리더 ' + escapeHtml(club.leaderName) + " · 멤버 " + club.members.length + "/" + data.maxMembers + " · 전적(전쟁 승수) " + club.warScore + (club.description ? "<br>" + escapeHtml(club.description) : "") + "</div>" +
-        '<div class="club-header-actions">' +
+        '<div class="club-xp-track"><div class="club-xp-fill" style="width:' + xpPct + '%;"></div></div>' +
+        '<div class="club-header-meta">클럽 XP ' + fmt(club.xpIntoLevel) + " / " + fmt(club.nextLevelXp) + " · 클럽 창고 💰" + fmt(club.bankCoins) +
+        " · 전 멤버 코인 보너스 +" + club.coinBonusPct.toFixed(0) + "% (해킹 작업/PvP 약탈)</div>" +
+        '<div class="club-contribute-form"><input id="clubContributeAmount" type="number" placeholder="기부할 코인" /><button class="btn-primary" id="clubContributeBtn">기부</button></div>' +
+        '<div class="club-header-actions" style="margin-top:10px;">' +
         (club.isLeader ? '<button class="btn-ghost" id="clubDisbandBtn">클럽 해체</button>' : '<button class="btn-ghost" id="clubLeaveBtn">클럽 탈퇴</button>') +
         "</div></div>" +
+
+        '<div class="club-section-title">💬 클럽 채팅</div>' +
+        '<div class="club-chat-box"><div class="club-chat-messages" id="clubChatMessages"><p class="dim">불러오는 중...</p></div>' +
+        '<div class="club-chat-form"><input id="clubChatInput" type="text" placeholder="메시지 입력..." maxlength="300" /><button class="btn-primary" id="clubChatSendBtn">전송</button></div></div>' +
 
         '<div class="club-section-title">👥 멤버 (' + club.members.length + ")</div>" +
         club.members.map((m) => (
@@ -1306,7 +1364,31 @@
           '<button class="btn-primary" id="clubRelationSetBtn">설정</button>' +
           "</div><p class=\"dim\" style=\"margin-top:6px;\">적대는 한쪽만 선언해도 전쟁, 동맹은 서로 선언해야 성립합니다.</p>"
           : "");
+      renderClubChat();
+      startClubChatPolling();
     } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  // 클럽 채팅 — 탭이 열려 있는 동안만 몇 초마다 새로 불러온다(다른 탭으로 넘어가면 자동 정지).
+  let clubChatPollId = null;
+  async function renderClubChat() {
+    const box = $("clubChatMessages");
+    if (!box) return;
+    try {
+      const { messages } = await api("/club/chat");
+      const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 10;
+      box.innerHTML = messages.length
+        ? messages.map((m) => '<div class="club-chat-msg"><span class="who' + (m.userId === state.userId ? " me" : "") + '">' + escapeHtml(m.userName) + "</span>" + escapeHtml(m.message) + "</div>").join("")
+        : '<p class="dim">아직 대화가 없습니다.</p>';
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    } catch (e) { /* 조용히 무시 — 다음 폴링에서 다시 시도 */ }
+  }
+  function startClubChatPolling() {
+    stopClubChatPolling();
+    clubChatPollId = setInterval(() => { if (currentTab === "club") renderClubChat(); else stopClubChatPolling(); }, 4000);
+  }
+  function stopClubChatPolling() {
+    if (clubChatPollId) { clearInterval(clubChatPollId); clubChatPollId = null; }
   }
 
   function initClubButtons() {
@@ -1349,7 +1431,27 @@
         t.disabled = true;
         try { await api("/club/relation", { method: "POST", body: { toClubId, status } }); toast("관계를 설정했습니다."); renderClubTab(); }
         catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubContributeBtn") {
+        const amount = parseInt($("clubContributeAmount").value, 10);
+        if (!amount || amount <= 0) return toast("금액을 입력하세요.", true);
+        t.disabled = true;
+        try {
+          const r = await api("/club/contribute", { method: "POST", body: { amount } });
+          toast(r.leveledUp ? "🎉 기부 완료! 클럽이 Lv." + r.newLevel + "로 레벨업했습니다!" : "기부 완료!");
+          state.pocketCoins = r.pocketCoins; renderHeader(); renderClubTab();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubChatSendBtn") {
+        const input = $("clubChatInput");
+        const message = input.value.trim();
+        if (!message) return;
+        t.disabled = true;
+        try { await api("/club/chat/send", { method: "POST", body: { message } }); input.value = ""; renderClubChat(); }
+        catch (err) { toast(err.message, true); }
+        t.disabled = false;
       }
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.id === "clubChatInput") $("clubChatSendBtn").click();
     });
   }
 
@@ -1443,6 +1545,7 @@
     initResearchButtons();
     initTradeButtons();
     initClubButtons();
+    initDailyButtons();
     $("scanModalClose").addEventListener("click", () => { $("scanModal").style.display = "none"; });
     $("scanModal").addEventListener("click", (e) => { if (e.target.id === "scanModal") $("scanModal").style.display = "none"; });
     $("attackModalClose").addEventListener("click", closeAttackModal);

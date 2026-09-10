@@ -275,6 +275,48 @@ const CLUB_CREATE_COST = 5000;
 const CLUB_MAX_MEMBERS = 20;
 const CLUB_NAME_MAX_LEN = 20;
 const CLUB_DESC_MAX_LEN = 200;
+const CLUB_CHAT_MAX_LEN = 300;
+const CLUB_CHAT_HISTORY = 50;
+// 기부한 코인 1개당 클럽 XP 1(그대로 클럽 창고에도 쌓임). 레벨업에 필요한 XP는 플레이어
+// 레벨식(level*100)과 같은 느낌으로 가되, 여러 멤버가 같이 채우는 값이라 훨씬 크게 잡았다.
+const CLUB_XP_PER_LEVEL = 1000;
+function clubLevelForXp(xp) {
+  let level = 1;
+  while (xp >= level * CLUB_XP_PER_LEVEL) { xp -= level * CLUB_XP_PER_LEVEL; level++; }
+  return level;
+}
+function clubNextXpFor(level) { return level * CLUB_XP_PER_LEVEL; }
+// { level, xpIntoLevel, xpForLevel } — 표시용으로 "지금 레벨 안에서 얼마나 채웠는지"까지 준다.
+function clubXpProgress(xp) {
+  let level = 1, remaining = xp;
+  while (remaining >= level * CLUB_XP_PER_LEVEL) { remaining -= level * CLUB_XP_PER_LEVEL; level++; }
+  return { level: level, xpIntoLevel: remaining, xpForLevel: level * CLUB_XP_PER_LEVEL };
+}
+// 클럽 레벨 보너스 — 해킹 작업/PvP 약탈 보상에만 적용(모든 코인 획득 지점에 다 걸면 손댈 곳이
+// 너무 많아 위험이 커짐). 레벨 30에서 +30%로 상한.
+const CLUB_BONUS_PER_LEVEL = 0.01;
+const CLUB_BONUS_MAX_LEVEL = 30;
+async function clubCoinBonusMult(env, userId) {
+  const clubId = await clubIdOf(env, userId);
+  if (!clubId) return 1;
+  const club = await env.DB.prepare("SELECT xp FROM arena_clubs WHERE id = ?").bind(clubId).first();
+  if (!club) return 1;
+  return 1 + Math.min(clubLevelForXp(club.xp), CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL;
+}
+
+// KST(UTC+9) 기준 날짜 문자열 — 일일 출석/퀘스트 리셋 경계로 쓴다(PJH-Hub board-worker.js의
+// kstDateString과 동일한 방식).
+function kstDateString(ts) { return new Date((ts || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+
+const ATTENDANCE_BASE_REWARD = 200;
+const ATTENDANCE_STREAK_BONUS = 50; // 연속 출석 1일당 추가 코인(상한 있음)
+const ATTENDANCE_STREAK_BONUS_CAP_DAYS = 10;
+// 오늘의 미션 3종 — 목표치를 채우면 "받기"로 수동 수령(자동 지급 아님, 성취감용).
+const DAILY_QUESTS = {
+  battles:   { label: "전투 3회 (PvP 또는 행성)", goal: 3, reward: 300 },
+  jobs:      { label: "해킹 작업 3회",             goal: 3, reward: 250 },
+  purchases: { label: "상점에서 구매 1회",          goal: 1, reward: 200 },
+};
 
 async function clubIdOf(env, userId) {
   const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
@@ -586,7 +628,45 @@ async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS arena_club_relations (from_club_id INTEGER NOT NULL, to_club_id INTEGER NOT NULL, " +
     "status TEXT NOT NULL DEFAULT 'neutral', updated_at INTEGER NOT NULL, PRIMARY KEY (from_club_id, to_club_id))"
   );
+  try { await env.DB.exec("ALTER TABLE arena_clubs ADD COLUMN bank_coins INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_clubs ADD COLUMN xp INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 클럽 채팅 — 클럽당 최근 CLUB_CHAT_HISTORY개만 화면에 보여준다(오래된 것도 DB엔 남지만 굳이
+  // 안 지움 — 용량이 크지 않음).
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, club_id INTEGER NOT NULL, " +
+    "user_id TEXT NOT NULL, user_name TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_club_chat_club ON arena_club_chat(club_id, created_at)"); } catch (e) {}
+  // 출석 — 연속 출석일과 마지막 출석 날짜(KST, "YYYY-MM-DD")만 유저 테이블에 얹는다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attendance_date TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN attendance_streak INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 오늘의 미션 진행도 — 하루(KST)마다 새 행. 지난 날짜 행은 그냥 쌓이게 둠(자동 정리 없음).
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_daily_progress (user_id TEXT NOT NULL, date TEXT NOT NULL, " +
+    "battles INTEGER NOT NULL DEFAULT 0, jobs INTEGER NOT NULL DEFAULT 0, purchases INTEGER NOT NULL DEFAULT 0, " +
+    "battles_claimed INTEGER NOT NULL DEFAULT 0, jobs_claimed INTEGER NOT NULL DEFAULT 0, purchases_claimed INTEGER NOT NULL DEFAULT 0, " +
+    "PRIMARY KEY (user_id, date))"
+  );
   schemaReady = true;
+}
+
+// 오늘자 진행도 행이 없으면 만들어서 돌려준다(멱등) — 하루 지나면 자연히 새 행을 만들게 된다.
+async function ensureDailyProgress(env, userId) {
+  const date = kstDateString();
+  let row = await env.DB.prepare("SELECT * FROM arena_daily_progress WHERE user_id = ? AND date = ?").bind(userId, date).first();
+  if (!row) {
+    await env.DB.prepare("INSERT INTO arena_daily_progress (user_id, date) VALUES (?, ?)").bind(userId, date).run();
+    row = await env.DB.prepare("SELECT * FROM arena_daily_progress WHERE user_id = ? AND date = ?").bind(userId, date).first();
+  }
+  return row;
+}
+// 미션 카운터 +1 — 실패해도(테이블이 아직 없다거나) 본 기능(전투/작업/구매)을 막으면 안 되므로
+// 에러는 그냥 삼킨다.
+async function bumpDailyProgress(env, userId, field) {
+  try {
+    await ensureDailyProgress(env, userId);
+    await env.DB.prepare("UPDATE arena_daily_progress SET " + field + " = " + field + " + 1 WHERE user_id = ? AND date = ?").bind(userId, kstDateString()).run();
+  } catch (e) {}
 }
 
 // 야생 행성 풀(PLANET_COUNT개)은 최초 한 번만 시드한다 — 이미 하나라도 있으면 건너뜀.
@@ -954,7 +1034,8 @@ export default {
         if (row.energy < tier.energyCost) return json({ error: "에너지가 부족합니다." }, 400);
 
         row.energy -= tier.energyCost;
-        const coinsGained = randInt(tier.coinMin, tier.coinMax);
+        const clubBonus = await clubCoinBonusMult(env, user.userId);
+        const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus);
         row.pocket_coins += coinsGained;
         const leveledUp = applyXpAndLevel(row, tier.xp);
 
@@ -964,6 +1045,7 @@ export default {
         ).bind(row.energy, row.stamina, row.hp, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick,
                row.pocket_coins, row.xp, row.level, row.stat_points, row.user_id).run();
         await insertLog(env, user.userId, "job", null, tier.label, "success", coinsGained, 0);
+        await bumpDailyProgress(env, user.userId, "jobs");
 
         const combat = await totalCombatStats(env, row);
         return json({ ok: true, coinsGained: coinsGained, xpGained: tier.xp, leveledUp: leveledUp, state: publicState(row, combat) });
@@ -1121,13 +1203,17 @@ export default {
         const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
         const isCrit = attackerWins && Math.random() * 100 < (attackerCombat.crit + (stanceId === "ambush" ? 10 : 0));
 
-        let coinsDelta = 0;
+        let coinsDelta = 0, attackerGain = 0;
         if (attackerWins) {
           let plunderMult = 1 + (isCrit ? CRIT_MULTIPLIER - 1 : 0) + (sweep ? 0.2 : 0);
           coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * plunderMult);
           coinsDelta = Math.min(coinsDelta, defender.pocket_coins);
           defender.pocket_coins -= coinsDelta;
-          attacker.pocket_coins += coinsDelta;
+          // 클럽 보너스는 방어자가 더 잃게 만드는 게 아니라 공격자가 "더 받는" 쪽으로만
+          // 적용한다(방어자는 공격자 클럽 레벨과 아무 상관이 없으므로).
+          const clubBonus = await clubCoinBonusMult(env, attacker.user_id);
+          attackerGain = Math.round(coinsDelta * clubBonus);
+          attacker.pocket_coins += attackerGain;
           defender.hp = clamp(defender.hp - PVP_WIN_DEF_HP_LOSS, 0, defender.max_hp);
           attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
           attacker.plunder_wins += 1;
@@ -1147,13 +1233,14 @@ export default {
         ]);
 
         const attackResult = attackerWins ? (isCrit ? "crit" : "win") : "lose";
-        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? coinsDelta : 0, attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? attackerGain : 0, attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
         await insertLog(env, defender.user_id, "pvp_defend", attacker.user_id, attacker.real_name, attackerWins ? "lose" : "win", attackerWins ? -coinsDelta : 0, attackerWins ? -PVP_WIN_DEF_HP_LOSS : -PVP_LOSE_DEF_HP_LOSS);
         if (attackerWins) await recordWarScoreIfHostile(env, attacker.user_id, defender.user_id);
+        await bumpDailyProgress(env, attacker.user_id, "battles");
 
         const combat = await totalCombatStats(env, attacker);
         return json({
-          ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: coinsDelta,
+          ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: attackerGain,
           rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
           myAtk: attackerCombat.atk, theirDef: defenderCombat.def, stanceLabel: stance.label,
           offlineBonusCollected: offlineBonus, state: publicState(attacker, combat),
@@ -1332,7 +1419,7 @@ export default {
           const all = await env.DB.prepare("SELECT c.*, (SELECT COUNT(*) FROM arena_club_members m WHERE m.club_id = c.id) AS member_count FROM arena_clubs c ORDER BY c.war_score DESC, c.created_at ASC LIMIT 50").all();
           return json({
             myClub: null, createCost: CLUB_CREATE_COST, maxMembers: CLUB_MAX_MEMBERS,
-            clubs: all.results.map(function (c) { return { id: c.id, name: c.name, description: c.description, leaderName: c.leader_name, memberCount: c.member_count, warScore: c.war_score }; }),
+            clubs: all.results.map(function (c) { return { id: c.id, name: c.name, description: c.description, leaderName: c.leader_name, memberCount: c.member_count, warScore: c.war_score, level: clubLevelForXp(c.xp) }; }),
           });
         }
         const club = await env.DB.prepare("SELECT * FROM arena_clubs WHERE id = ?").bind(membership.club_id).first();
@@ -1359,6 +1446,9 @@ export default {
           myClub: {
             id: club.id, name: club.name, description: club.description, leaderUserId: club.leader_user_id, leaderName: club.leader_name, warScore: club.war_score,
             isLeader: club.leader_user_id === user.userId,
+            bankCoins: club.bank_coins, xp: club.xp,
+            level: clubXpProgress(club.xp).level, xpIntoLevel: clubXpProgress(club.xp).xpIntoLevel, nextLevelXp: clubXpProgress(club.xp).xpForLevel,
+            coinBonusPct: Math.min(clubXpProgress(club.xp).level, CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL * 100,
             members: membersRes.results.map(function (m) { return { userId: m.user_id, userName: m.user_name, role: m.role, joinedAt: m.joined_at }; }),
             relations: relations,
           },
@@ -1476,6 +1566,50 @@ export default {
         return json({ ok: true });
       }
 
+      // ── POST /club/contribute { amount } — 코인을 클럽 창고에 기부. 기부액만큼 클럽 XP도
+      //    똑같이 쌓여서 클럽 레벨(→전 멤버 코인 보너스)의 재원이 된다. ──
+      if (request.method === "POST" && path === "/club/contribute") {
+        const membership = await env.DB.prepare("SELECT * FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) return json({ error: "클럽에 소속돼 있지 않습니다." }, 400);
+        const body = await request.json().catch(function () { return {}; });
+        const amount = parseInt(body.amount, 10);
+        if (!Number.isInteger(amount) || amount <= 0) return json({ error: "유효하지 않은 금액입니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.pocket_coins < amount) return json({ error: "소지금이 부족합니다." }, 400);
+        const club = await env.DB.prepare("SELECT * FROM arena_clubs WHERE id = ?").bind(membership.club_id).first();
+        const levelBefore = clubLevelForXp(club.xp);
+
+        row.pocket_coins -= amount;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare("UPDATE arena_clubs SET bank_coins = bank_coins + ?, xp = xp + ? WHERE id=?").bind(amount, amount, club.id),
+        ]);
+        const levelAfter = clubLevelForXp(club.xp + amount);
+        return json({ ok: true, pocketCoins: row.pocket_coins, leveledUp: levelAfter > levelBefore, newLevel: levelAfter });
+      }
+
+      // ── GET /club/chat — 내 클럽의 최근 대화 CLUB_CHAT_HISTORY개(오래된→최신 순). ──
+      if (request.method === "GET" && path === "/club/chat") {
+        const membership = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) return json({ error: "클럽에 소속돼 있지 않습니다." }, 400);
+        const res = await env.DB.prepare("SELECT * FROM arena_club_chat WHERE club_id = ? ORDER BY created_at DESC LIMIT ?").bind(membership.club_id, CLUB_CHAT_HISTORY).all();
+        const messages = res.results.reverse().map(function (m) { return { id: m.id, userId: m.user_id, userName: m.user_name, message: m.message, createdAt: m.created_at }; });
+        return json({ messages: messages });
+      }
+
+      // ── POST /club/chat/send { message } ──
+      if (request.method === "POST" && path === "/club/chat/send") {
+        const membership = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) return json({ error: "클럽에 소속돼 있지 않습니다." }, 400);
+        const body = await request.json().catch(function () { return {}; });
+        const message = String(body.message || "").trim().slice(0, CLUB_CHAT_MAX_LEN);
+        if (!message) return json({ error: "메시지를 입력하세요." }, 400);
+        await env.DB.prepare("INSERT INTO arena_club_chat (club_id, user_id, user_name, message, created_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(membership.club_id, user.userId, user.realName, message, Date.now()).run();
+        return json({ ok: true });
+      }
+
       // ── GET /items — 로테이션과 무관한 SHOP_ITEMS 전체 카탈로그(이름/등급/타입 조회용).
       //    이미 보유 중인 아이템은 지금 상점(rotation)에 안 떠 있을 수도 있으므로, 장착 드롭다운
       //    등에서 "이미 장착된 아이템"의 이름/등급을 보여주려면 로테이션과 무관한 전체 목록이 필요하다. ──
@@ -1577,6 +1711,7 @@ export default {
         await env.DB.prepare(
           "INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1"
         ).bind(user.userId, itemId).run();
+        await bumpDailyProgress(env, user.userId, "purchases");
 
         return json({ ok: true, pocketCoins: row.pocket_coins });
       }
@@ -1799,6 +1934,62 @@ export default {
         return json({ ok: true, diamonds: row.diamonds, expeditionUnlocked: true });
       }
 
+      // ══════════════════════════════════════════════════════════
+      //  Daily — 출석 체크(연속일 보상) + 오늘의 미션 3종.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /daily — 출석 상태(오늘 이미 했는지, 연속일수) + 미션 진행도/수령 여부. ──
+      if (request.method === "GET" && path === "/daily") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const today = kstDateString();
+        const progress = await ensureDailyProgress(env, user.userId);
+        const quests = {};
+        for (const key in DAILY_QUESTS) {
+          const q = DAILY_QUESTS[key];
+          const done = progress[key] || 0;
+          quests[key] = { label: q.label, goal: q.goal, reward: q.reward, done: Math.min(done, q.goal), claimed: !!progress[key + "_claimed"], ready: done >= q.goal && !progress[key + "_claimed"] };
+        }
+        return json({
+          attendedToday: row.last_attendance_date === today,
+          streak: row.attendance_streak,
+          nextReward: ATTENDANCE_BASE_REWARD + Math.min(row.attendance_streak, ATTENDANCE_STREAK_BONUS_CAP_DAYS) * ATTENDANCE_STREAK_BONUS,
+          quests: quests,
+        });
+      }
+
+      // ── POST /daily/attendance — 하루 한 번(KST 기준). 어제 출석했으면 연속일 +1, 아니면 1로 리셋. ──
+      if (request.method === "POST" && path === "/daily/attendance") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const today = kstDateString();
+        if (row.last_attendance_date === today) return json({ error: "오늘은 이미 출석했습니다." }, 400);
+        const yesterday = kstDateString(Date.now() - 24 * 3600 * 1000);
+        const streak = row.last_attendance_date === yesterday ? row.attendance_streak + 1 : 1;
+        const reward = ATTENDANCE_BASE_REWARD + Math.min(streak, ATTENDANCE_STREAK_BONUS_CAP_DAYS) * ATTENDANCE_STREAK_BONUS;
+        row.pocket_coins += reward;
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins=?, last_attendance_date=?, attendance_streak=? WHERE user_id=?")
+          .bind(row.pocket_coins, today, streak, row.user_id).run();
+        return json({ ok: true, reward: reward, streak: streak, pocketCoins: row.pocket_coins });
+      }
+
+      // ── POST /daily/quest-claim { quest } — 목표치를 채운 미션 하나를 수령. ──
+      if (request.method === "POST" && path === "/daily/quest-claim") {
+        const body = await request.json().catch(function () { return {}; });
+        const questKey = String(body.quest || "");
+        const q = DAILY_QUESTS[questKey];
+        if (!q) return json({ error: "알 수 없는 미션입니다." }, 400);
+        const progress = await ensureDailyProgress(env, user.userId);
+        if (progress[questKey + "_claimed"]) return json({ error: "이미 수령한 미션입니다." }, 400);
+        if ((progress[questKey] || 0) < q.goal) return json({ error: "아직 목표를 채우지 못했습니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        row.pocket_coins += q.reward;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare("UPDATE arena_daily_progress SET " + questKey + "_claimed = 1 WHERE user_id=? AND date=?").bind(user.userId, kstDateString()),
+        ]);
+        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins });
+      }
+
       if (request.method === "GET" && path === "/property") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const info = await pendingPropertyIncome(env, row);
@@ -1999,6 +2190,7 @@ export default {
         if (!result.isBotPlanet && result.attackerWins) {
           await insertLog(env, planet.owner_user_id, "planet_lost", user.userId, user.realName, "lose", -result.lootCoins, 0);
         }
+        await bumpDailyProgress(env, attacker.user_id, "battles");
 
         const combat = await totalCombatStats(env, attacker);
         return json({

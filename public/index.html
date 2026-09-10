@@ -189,6 +189,23 @@
   .club-browse-meta { font-size: 11px; color: var(--sub); }
   .club-create-card { background: var(--surface); border: 1px solid var(--border); padding: 16px; margin-bottom: 18px; }
   .club-create-card input, .club-create-card textarea { width: 100%; margin-bottom: 10px; }
+  .club-xp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; margin: 8px 0; }
+  .club-xp-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+  .club-contribute-form { display: flex; gap: 8px; margin-top: 10px; }
+  .club-contribute-form input { flex: 1; }
+  .club-chat-box { background: var(--surface); border: 1px solid var(--border); padding: 12px; margin-top: 10px; }
+  .club-chat-messages { height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; padding-right: 4px; }
+  .club-chat-msg { font-size: 11px; }
+  .club-chat-msg .who { color: var(--accent); font-weight: bold; margin-right: 6px; }
+  .club-chat-msg .who.me { color: var(--energy); }
+  .club-chat-form { display: flex; gap: 8px; }
+  .club-chat-form input { flex: 1; }
+
+  /* Daily */
+  .daily-widget { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--stamina); padding: 14px; margin-bottom: 18px; }
+  .daily-widget-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .daily-quest-row { display: flex; justify-content: space-between; align-items: center; background: var(--surface-2); border: 1px solid var(--border); padding: 8px 10px; font-size: 11px; margin-bottom: 6px; }
+  .daily-quest-progress { color: var(--sub); }
 
   /* Inventory */
   .inv-row { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 10px; align-items: center; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--border); font-size: 12px; }
@@ -444,6 +461,7 @@
 
     <div class="content">
       <div class="tab-panel" id="panel-jobs">
+        <div class="daily-widget" id="dailyWidget"><p class="dim">불러오는 중...</p></div>
         <p class="panel-title">⚡ ACTIVE HACKING JOBS</p>
         <div class="job-grid"></div>
         <div class="mining-wrap">
