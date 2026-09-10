@@ -54,8 +54,8 @@ async function verifyUser(request, env) {
 // 이다 — 레벨업으로 받는 스탯 포인트로 늘릴 수 있기 때문. 아래 값들은 "신규 유저의 시작 최대치"
 // 로만 쓰인다(DB 컬럼 기본값과 반드시 맞춰둘 것).
 const BASE_MAX_HP = 100, BASE_MAX_ENERGY = 50, BASE_MAX_STAMINA = 10;
-const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 5 * 60 * 1000;   // 5분당 +5
-const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 10 * 60 * 1000; // 10분당 +1
+const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 30 * 1000;   // 30초당 +5
+const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 60 * 1000; // 1분당 +1
 const HP_REGEN_PER_TICK = 10, HP_TICK_MS = 5 * 60 * 1000; // 5분당 +10(최대치와 무관한 고정량)
 
 // 기본 ATK/DEF — 기획서에 레벨별 성장 수식이 명시돼 있지 않아, 장비 없이도 레벨업이
