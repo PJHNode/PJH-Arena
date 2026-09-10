@@ -503,7 +503,10 @@
     function statLine(p) {
       if (!p.combatStats) return "";
       const s = p.combatStats;
-      return '<div class="planet-card-combat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div>";
+      // 정복된 야생 행성(홈 아님)은 방어력이 곧 배치된 경비병 수와 직결되니 옆에 같이 보여준다
+      // — garrisonCount가 null이면 홈/PVE 행성이라 해당 없음.
+      const garrisonNote = p.ownerUserId && !p.isHome ? ' <span class="dim">(경비병 ' + (p.garrisonCount || 0) + "/" + (p.garrisonMax || 3) + ")</span>" : "";
+      return '<div class="planet-card-combat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%" + garrisonNote + "</div>";
     }
 
     function planetCard(p, withButton) {
@@ -1014,6 +1017,20 @@
       function statLine(stats) {
         return '<div class="bot-stat-line"><span>⚔️ ATK <b>' + stats.atk + '</b></span><span>🛡️ DEF <b>' + stats.def + '</b></span><span>💥 CRIT <b>' + stats.crit + '%</b></span></div>';
       }
+      // 경비병 배치 — "나와 함께"(개인 전투력에 합산, 기본값) 또는 내가 정복한 야생 행성(홈
+      // 제외) 중 하나. 배치하면 그 순간부터 이 봇 스탯은 위 statLine에 안 잡히고(개인 전투력
+      // 계산에서 서버가 빼버림) 그 행성 하나의 방어에만 들어간다.
+      function stationRow(bot) {
+        const opts = data.stationOptions || [];
+        const max = data.garrisonMax || 3;
+        let html = '<option value=""' + (!bot.stationed_planet_id ? " selected" : "") + ">🧑‍💻 나와 함께 (개인 전투력)</option>";
+        opts.forEach((p) => {
+          const isCurrent = bot.stationed_planet_id === p.id;
+          const full = !isCurrent && p.garrisonCount >= max;
+          html += '<option value="' + p.id + '"' + (isCurrent ? " selected" : "") + (full ? " disabled" : "") + ">🪐 " + escapeHtml(p.name) + " (경비병 " + p.garrisonCount + "/" + max + ")</option>";
+        });
+        return '<div class="bot-slot slot-station"><span>배치</span><select data-station="' + bot.id + '">' + html + "</select></div>";
+      }
 
       let html = '<div class="bot-card player"><div class="bot-card-title">🧑‍💻 YOU</div>' +
         statLine(data.player.stats) +
@@ -1026,13 +1043,19 @@
         const rarityInfo = bestRarityOf(b.equipped_weapon, b.equipped_armor, b.equipped_core);
         const attrs = botCardStyleAttrs(rarityInfo);
         const sellRefund = Math.floor((b.recruit_cost || 2000) * (data.botSellRate || 0.5));
+        const stationedPlanet = b.stationed_planet_id ? (data.stationOptions || []).find((p) => p.id === b.stationed_planet_id) : null;
+        const stationedNote = stationedPlanet
+          ? '<div class="dim" style="font-size:10px;margin-bottom:6px;">🪐 ' + escapeHtml(stationedPlanet.name) + '에 경비병으로 배치됨 — 개인 전투력엔 반영 안 됨</div>'
+          : "";
         html += '<div class="bot-card' + attrs.cls + '" ' + attrs.style + '>' +
           '<div class="bot-card-title">🤖 BOT #' + (i + 1) + '<button class="bot-sell-btn" data-sell="' + b.id + '" title="봇 되팔기">되팔기 💰' + fmt(sellRefund) + "</button></div>" +
           attrs.tag +
           statLine(b.stats) +
+          stationedNote +
           slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
           slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
           slotRow(String(b.id), "core", "코어", b.equipped_core) +
+          stationRow(b) +
           gachaRow(b.id) +
           "</div>";
       });
@@ -1052,6 +1075,16 @@
             if (!itemId) await api("/bots/unequip", { method: "POST", body: { target, slot } });
             else await api("/bots/equip", { method: "POST", body: { target, slot, itemId } });
             toast("장착 정보가 갱신됐습니다.");
+            await refreshState(); renderBotsTab();
+          } catch (e) { toast(e.message, true); renderBotsTab(); }
+        });
+      });
+      el.querySelectorAll("select[data-station]").forEach((sel) => {
+        sel.addEventListener("change", async () => {
+          const botId = sel.dataset.station, planetId = sel.value || null;
+          try {
+            const r = await api("/bots/station", { method: "POST", body: { botId, planetId } });
+            toast(r.stationedPlanetId ? "🛡️ " + r.planetName + "에 경비병으로 배치했습니다." : "배치를 해제했습니다 — 다시 개인 전투력에 합산됩니다.");
             await refreshState(); renderBotsTab();
           } catch (e) { toast(e.message, true); renderBotsTab(); }
         });

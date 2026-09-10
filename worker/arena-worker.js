@@ -496,6 +496,18 @@ const PLANET_BOT_TIERS = {
   nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 15000, weight: 0.015 },
   apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 42000, weight: 0.005 },
 };
+// ── 경비병(행성 배치 봇) — 완전히 새로운 로스터를 또 만드는 대신, 이미 있는 "봇" 자원을 그대로
+// 쓴다. 봇 하나는 항상 둘 중 하나 상태다: "나와 함께"(stationed_planet_id NULL — 지금까지처럼
+// 개인 전투력(totalCombatStats)에 합산, PvP/공격/홈 행성 방어에 반영) 또는 "OO 행성에 배치"
+// (그 행성 하나의 방어에만 반영되고 개인 전투력에선 빠짐). 새 가챠/새 화폐 없이 "이미 가진
+// 봉을 어떻게 나눠 쓸지"를 진짜 트레이드오프로 만든 것 — 방어에 쏟으면 그만큼 내가 약해진다.
+// 정복한 야생 행성(홈 아님)은 더 이상 주인의 개인 전투력을 그대로 복제해서 방어하지 않는다
+// (그러면 행성을 몇 개 갖든 방어가 공짜로 무한 복제되는 문제가 있었다) — 대신 그 행성에 실제
+// 배치된 경비병들의 장비 스탯 합만 방어력이 되고, 아무도 배치 안 했으면 최약체 PVE 등급(weak)
+// 수준의 최소 수비대로만 지킨다. 홈 행성은 이미 확정한 "실전 스탯 x2" 고정 공식을 그대로 쓰므로
+// 경비병 배치 대상이 아니다(POST /bots/station이 명시적으로 막는다).
+const PLANET_GARRISON_MAX_PER_PLANET = 3;
+const PLANET_UNGARRISONED_DEFENSE = { atk: PLANET_BOT_TIERS.weak.atk, def: PLANET_BOT_TIERS.weak.def, crit: PLANET_BOT_TIERS.weak.crit };
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
 // 아직 아무도 정복하지 않은 행성은 15분마다 난이도가 통째로 리롤된다(슬롯 번호+시간 구간으로
 // 시드하는 결정론적 뽑기라 저장 없이 매번 다시 계산해도 같은 결과가 나온다) — 정복되고 나면
@@ -650,6 +662,10 @@ async function ensureSchema(env) {
   );
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_user ON arena_bots(user_id)"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN recruit_cost INTEGER NOT NULL DEFAULT " + BOT_BASE_COST); } catch (e) {}
+  // 경비병 — NULL이면 "나와 함께"(개인 전투력), 값이 있으면 그 행성 id에 배치되어 그 행성
+  // 방어에만 반영된다(아래 PLANET_GARRISON_MAX_PER_PLANET 참고).
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN stationed_planet_id INTEGER"); } catch (e) {}
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_stationed ON arena_bots(stationed_planet_id)"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_devices (user_id TEXT NOT NULL, device_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -867,8 +883,10 @@ async function totalCombatStats(env, row) {
   let atk = baseAtkFor(row.level) + self.atk;
   let def = baseDefFor(row.level) + self.def;
   let crit = BASE_CRIT_PCT + self.crit;
+  // 경비병으로 행성에 배치된 봇(stationed_planet_id 있음)은 여기서 뺀다 — 그 봇의 스탯은
+  // 대신 planetGarrisonStats로 그 행성 하나의 방어력에만 들어간다(중복 합산 방지).
   const botsRes = await env.DB.prepare(
-    "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ?"
+    "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL"
   ).bind(row.user_id).all();
   const bots = botsRes.results;
   for (const b of bots) {
@@ -881,6 +899,21 @@ async function totalCombatStats(env, row) {
   atk = Math.round(atk * rebirthMult);
   def = Math.round(def * rebirthMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
+}
+
+// 특정 행성 하나에 배치된 경비병 봇들의 장비 스탯 합 — resolvePlanetCombat(전투 1회 판정)처럼
+// 행성 하나만 필요할 때 쓴다. 여러 행성을 한 번에 나열할 때(GET /planets)는 이 함수를 행성
+// 개수만큼 반복 호출하지 않고 대신 한 번의 쿼리로 전부 묶어서 그룹화한다(N+1 방지).
+async function planetGarrisonStats(env, planetId) {
+  const res = await env.DB.prepare(
+    "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE stationed_planet_id = ?"
+  ).bind(planetId).all();
+  let atk = 0, def = 0, crit = 0;
+  for (const b of res.results) {
+    const s = equipStats(b);
+    atk += s.atk; def += s.def; crit += s.crit;
+  }
+  return { atk: atk, def: def, crit: crit, count: res.results.length };
 }
 
 // ── 프로필(누구나 조회 가능) — 진열대(최대 3칸, 아이템/봇)를 실제 표시 데이터로 풀어서
@@ -1044,18 +1077,27 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     effectiveTierKey = effectivePlanetTier(planet.slot_index, now);
     const t = PLANET_BOT_TIERS[effectiveTierKey];
     defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
-  } else {
+  } else if (planet.is_home) {
     defenderRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(planet.owner_user_id).first();
     if (!defenderRow) return { error: "행성 소유자를 찾을 수 없습니다." };
-    if (planet.is_home && defenderRow.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) {
+    if (defenderRow.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) {
       return { error: "레벨 " + HOME_PLANET_INVULNERABLE_UNTIL_LEVEL + " 미만 유저의 홈 행성은 무적입니다." };
     }
-    defenderCombat = await totalCombatStats(env, defenderRow);
-    if (planet.is_home) {
-      // 홈 행성 방어 시에만 실전 ATK/DEF를 2배로 — 다른 곳(PvP 등)의 실제 전투력엔 영향 없다.
-      defenderCombat = { atk: defenderCombat.atk * HOME_PLANET_DEFENSE_MULT, def: defenderCombat.def * HOME_PLANET_DEFENSE_MULT, crit: defenderCombat.crit };
-    }
+    const ownerCombat = await totalCombatStats(env, defenderRow);
+    // 홈 행성 방어 시에만 실전 ATK/DEF를 2배로 — 다른 곳(PvP 등)의 실제 전투력엔 영향 없다.
+    defenderCombat = { atk: ownerCombat.atk * HOME_PLANET_DEFENSE_MULT, def: ownerCombat.def * HOME_PLANET_DEFENSE_MULT, crit: ownerCombat.crit };
     defenderLastStance = defenderRow.last_stance;
+  } else {
+    // 정복한 야생 행성 — 주인의 개인 전투력을 그대로 복제하지 않는다(그러면 행성을 몇 개
+    // 갖든 방어가 공짜로 무한 복제된다). 실제 배치된 경비병 봇들의 장비 스탯 합 + 최소
+    // 수비대(약함 등급 PVE와 동급)가 방어력이다. "평소 태세" 개념도 없다(사람이 아니라
+    // 경비병이 지키는 것이므로 상성 보너스 계산에서 제외).
+    const garrison = await planetGarrisonStats(env, planet.id);
+    defenderCombat = {
+      atk: PLANET_UNGARRISONED_DEFENSE.atk + garrison.atk,
+      def: PLANET_UNGARRISONED_DEFENSE.def + garrison.def,
+      crit: PLANET_UNGARRISONED_DEFENSE.crit + garrison.crit,
+    };
   }
 
   let rpsMod = 0;
@@ -1117,6 +1159,10 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
       await env.DB.prepare(
         "UPDATE arena_planets SET owner_user_id=?, owner_name=?, is_home=0, bot_tier=NULL, coins_per_hour=?, last_collect=?, captured_at=? WHERE id=?"
       ).bind(user.userId, user.realName, newCoinsPerHour, now, now, planet.id).run();
+      // 이 행성에 경비병으로 배치돼 있던 봇이 있다면(패자 소유였을 때) 소속 행성을 잃었으니
+      // 다시 "나와 함께"로 귀환시킨다 — 안 그러면 그 봇들이 아무 데도 반영 안 되는 채로
+      // 영영 묶여버린다. 홈 행성은 애초에 경비병 배치 대상이 아니라 여기선 대개 no-op.
+      await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE stationed_planet_id = ?").bind(planet.id).run();
       if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
     }
     attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
@@ -2098,7 +2144,7 @@ export default {
 
       if (request.method === "GET" && path === "/bots") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
+        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost, stationed_planet_id FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
         const ownedRes = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
         const equippedCount = await equippedCountMap(env, user.userId);
         const rawEntries = ownedRes.results
@@ -2110,6 +2156,15 @@ export default {
         // 봇은 레벨 개념이 없어서 equipStats(장비 보너스)가 곧 그 봇의 전투력 전부다(totalCombatStats
         // 에서도 봇은 base 없이 equipStats만 더함) — 그대로 ATK/DEF/CRIT 수치로 보여준다.
         const botsWithStats = botsRes.results.map(function (b) { return Object.assign({}, b, { stats: equipStats(b) }); });
+        // 경비병 배치 UI(드롭다운) 재료 — 내가 정복한 야생 행성(홈 제외) 목록 + 행성별 현재
+        // 경비병 수(이 유저 소유 봇 중 stationed_planet_id로 이미 다 갖고 있으니 별도 쿼리 없이
+        // JS에서 그룹화). 홈 행성은 애초에 배치 대상이 아니라 목록에서 제외한다.
+        const myPlanetsRes = await env.DB.prepare("SELECT id, name FROM arena_planets WHERE owner_user_id = ? AND is_home = 0 ORDER BY id").bind(user.userId).all();
+        const garrisonCounts = {};
+        botsRes.results.forEach(function (b) { if (b.stationed_planet_id) garrisonCounts[b.stationed_planet_id] = (garrisonCounts[b.stationed_planet_id] || 0) + 1; });
+        const stationOptions = myPlanetsRes.results.map(function (p) {
+          return { id: p.id, name: p.name, garrisonCount: garrisonCounts[p.id] || 0 };
+        });
         return json({
           player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row) },
           bots: botsWithStats,
@@ -2118,6 +2173,7 @@ export default {
           nextBotCost: botsRes.results.length < BOT_MAX_COUNT ? botRecruitCost(botsRes.results.length) : null,
           botSellRate: BOT_SELL_RATE,
           availableItems: availableItems,
+          stationOptions: stationOptions, garrisonMax: PLANET_GARRISON_MAX_PER_PLANET,
         });
       }
 
@@ -2132,6 +2188,37 @@ export default {
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = pocket_coins - ? WHERE user_id = ?").bind(cost, user.userId).run();
         await env.DB.prepare("INSERT INTO arena_bots (user_id, recruit_cost, created_at) VALUES (?, ?, ?)").bind(user.userId, cost, Date.now()).run();
         return json({ ok: true, cost: cost, pocketCoins: row.pocket_coins - cost });
+      }
+
+      // ── POST /bots/station { botId, planetId } — 봇을 내가 정복한 야생 행성(홈 제외)에
+      //    경비병으로 배치한다. 배치된 순간부터 그 봇은 totalCombatStats(개인 전투력)에서
+      //    빠지고 오직 그 행성 하나의 방어에만 쓰인다 — 내가 세질지, 내 것을 지킬지의 진짜
+      //    트레이드오프. planetId를 비우거나 null로 보내면 배치를 풀고 "나와 함께"로 귀환시킨다. ──
+      if (request.method === "POST" && path === "/bots/station") {
+        const body = await request.json().catch(function () { return {}; });
+        const botId = parseInt(body.botId, 10);
+        const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
+
+        const planetIdRaw = body.planetId;
+        if (planetIdRaw === null || planetIdRaw === undefined || planetIdRaw === "") {
+          await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE id = ?").bind(botId).run();
+          return json({ ok: true, stationedPlanetId: null });
+        }
+
+        const planetId = parseInt(planetIdRaw, 10);
+        const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ? AND owner_user_id = ?").bind(planetId, user.userId).first();
+        if (!planet) return json({ error: "내가 소유한 행성이 아닙니다." }, 400);
+        if (planet.is_home) return json({ error: "홈 행성은 별도의 고정 방어 공식을 써서 경비병을 배치할 수 없습니다." }, 400);
+
+        const cntRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_bots WHERE stationed_planet_id = ? AND id != ?").bind(planetId, botId).first();
+        const cnt = (cntRow && cntRow.cnt) || 0;
+        if (cnt >= PLANET_GARRISON_MAX_PER_PLANET) {
+          return json({ error: "이 행성엔 이미 경비병이 가득합니다(최대 " + PLANET_GARRISON_MAX_PER_PLANET + "기)." }, 400);
+        }
+
+        await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = ? WHERE id = ?").bind(planetId, botId).run();
+        return json({ ok: true, stationedPlanetId: planetId, planetName: planet.name });
       }
 
       // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯을 한 번에 랜덤으로
@@ -2403,6 +2490,17 @@ export default {
         const rerollBucket = planetRerollBucket(now);
         const nextRerollAt = (rerollBucket + 1) * PLANET_REROLL_MS;
         const res = await env.DB.prepare("SELECT * FROM arena_planets ORDER BY is_home DESC, slot_index ASC").all();
+        // 경비병 집계는 행성 개수만큼 반복 쿼리하지 않고 한 번에 몽땅 가져와서 행성 id별로
+        // 묶는다(planetGarrisonStats를 48번 부르는 대신 쿼리 1번).
+        const garrisonRes = await env.DB.prepare(
+          "SELECT stationed_planet_id, equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE stationed_planet_id IS NOT NULL"
+        ).all();
+        const garrisonByPlanet = {};
+        for (const b of garrisonRes.results) {
+          const s = equipStats(b);
+          const g = garrisonByPlanet[b.stationed_planet_id] || (garrisonByPlanet[b.stationed_planet_id] = { atk: 0, def: 0, crit: 0, count: 0 });
+          g.atk += s.atk; g.def += s.def; g.crit += s.crit; g.count++;
+        }
         let myOwnedWild = 0;
         const ownerCombatCache = {};
         const planets = await Promise.all(res.results.map(async function (p) {
@@ -2410,27 +2508,34 @@ export default {
           if (mine && !p.is_home) myOwnedWild++;
           const isUnclaimedWild = !p.is_home && !p.owner_user_id;
           // 미정복 행성은 15분마다 리롤되는 "현재" 난이도를 그때그때 계산한다(저장된 bot_tier는
-          // 최초 시드값이라 신뢰하지 않는다) — 정복된 행성은 주인의 실전 전투력을 그대로 보여준다.
+          // 최초 시드값이라 신뢰하지 않는다) — 정복된 행성은 실제 전투 판정과 동일한 방어력을
+          // 보여준다(홈은 주인 실전 스탯 x2, 야생은 배치된 경비병 스탯 + 최소 수비대).
           let tierKey = null, combatStats = null, coinsPerHour = p.coins_per_hour, homeInvulnerable = false;
+          let garrisonCount = null;
           if (isUnclaimedWild) {
             tierKey = effectivePlanetTier(p.slot_index, now);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             coinsPerHour = t.coinsPerHour;
-          } else if (p.owner_user_id) {
-            // 홈 행성도 이제 공격 대상이라(요청 반영) 주인의 실전 전투력을 그대로 보여준다 —
-            // 단, 홈 행성은 실전 방어력의 2배로 표시한다(실제 전투 판정과 동일하게 맞춘 것).
+          } else if (p.owner_user_id && p.is_home) {
             if (!ownerCombatCache[p.owner_user_id]) {
               const ownerRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.owner_user_id).first();
               ownerCombatCache[p.owner_user_id] = ownerRow ? { level: ownerRow.level, combat: await totalCombatStats(env, ownerRow) } : null;
             }
             const cached = ownerCombatCache[p.owner_user_id];
             if (cached) {
-              combatStats = p.is_home
-                ? { atk: cached.combat.atk * HOME_PLANET_DEFENSE_MULT, def: cached.combat.def * HOME_PLANET_DEFENSE_MULT, crit: cached.combat.crit }
-                : cached.combat;
-              if (p.is_home && cached.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) homeInvulnerable = true;
+              combatStats = { atk: cached.combat.atk * HOME_PLANET_DEFENSE_MULT, def: cached.combat.def * HOME_PLANET_DEFENSE_MULT, crit: cached.combat.crit };
+              if (cached.level < HOME_PLANET_INVULNERABLE_UNTIL_LEVEL) homeInvulnerable = true;
             }
+          } else if (p.owner_user_id) {
+            // 정복된 야생 행성 — 주인의 개인 전투력이 아니라 배치된 경비병 스탯을 보여준다.
+            const g = garrisonByPlanet[p.id] || { atk: 0, def: 0, crit: 0, count: 0 };
+            combatStats = {
+              atk: PLANET_UNGARRISONED_DEFENSE.atk + g.atk,
+              def: PLANET_UNGARRISONED_DEFENSE.def + g.def,
+              crit: PLANET_UNGARRISONED_DEFENSE.crit + g.crit,
+            };
+            garrisonCount = g.count;
           }
           const elapsedMs = mine && !p.is_home ? Math.min(now - p.last_collect, PROPERTY_MAX_ACCRUAL_MS) : 0;
           const pendingCoins = mine && !p.is_home ? Math.floor(p.coins_per_hour * (elapsedMs / 3600000)) : 0;
@@ -2439,6 +2544,7 @@ export default {
             ownerUserId: p.owner_user_id, ownerName: p.owner_name, mine: mine,
             botTier: tierKey, botTierLabel: tierKey ? PLANET_BOT_TIERS[tierKey].label : null,
             combatStats: combatStats,
+            garrisonCount: garrisonCount, garrisonMax: PLANET_GARRISON_MAX_PER_PLANET,
             coinsPerHour: coinsPerHour, pendingCoins: pendingCoins,
             homeInvulnerable: homeInvulnerable,
             attackable: !mine && !homeInvulnerable,
@@ -2501,6 +2607,8 @@ export default {
         await env.DB.prepare(
           "UPDATE arena_planets SET owner_user_id=NULL, owner_name=NULL, coins_per_hour=0, last_collect=?, captured_at=NULL WHERE id=?"
         ).bind(now, planet.id).run();
+        // 여기 배치돼 있던 경비병 봇도 소속 행성을 잃었으니 "나와 함께"로 귀환.
+        await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE stationed_planet_id = ?").bind(planet.id).run();
 
         return json({ ok: true, collected: collected, pocketCoins: row.pocket_coins });
       }
