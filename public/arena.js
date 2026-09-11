@@ -431,7 +431,7 @@
       const points = logs.slice(0, 12).reverse().map((l) => l.coins_delta);
       if (!points.length) return;
       const max = Math.max(...points, 1);
-      ctx.strokeStyle = "#d9a848"; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.strokeStyle = "#edc06a"; ctx.lineWidth = 2; ctx.beginPath();
       points.forEach((v, i) => {
         const x = (i / Math.max(1, points.length - 1)) * (w - 10) + 5;
         const y = h - 5 - (v / max) * (h - 15);
@@ -441,7 +441,7 @@
       points.forEach((v, i) => {
         const x = (i / Math.max(1, points.length - 1)) * (w - 10) + 5;
         const y = h - 5 - (v / max) * (h - 15);
-        ctx.fillStyle = "#d9a848"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#edc06a"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
       });
     } catch (e) {}
   }
@@ -1739,11 +1739,11 @@
       '<defs><radialGradient id="bossGlow" cx="50%" cy="45%" r="60%">' +
       '<stop offset="0%" stop-color="' + theme.c1 + '" stop-opacity="0.9"/>' +
       '<stop offset="60%" stop-color="' + theme.c2 + '" stop-opacity="0.6"/>' +
-      '<stop offset="100%" stop-color="#0a0d12" stop-opacity="0"/>' +
+      '<stop offset="100%" stop-color="#0d1117" stop-opacity="0"/>' +
       "</radialGradient></defs>" +
       '<circle cx="100" cy="100" r="95" fill="url(#bossGlow)"/>' +
       '<polygon points="100,20 165,55 165,145 100,180 35,145 35,55" fill="none" stroke="' + theme.c1 + '" stroke-width="3" opacity="0.7"/>' +
-      '<polygon points="100,45 145,68 145,132 100,155 55,132 55,68" fill="#12161d" stroke="' + theme.c1 + '" stroke-width="2"/>' +
+      '<polygon points="100,45 145,68 145,132 100,155 55,132 55,68" fill="#1a212b" stroke="' + theme.c1 + '" stroke-width="2"/>' +
       '<path d="M35,55 L10,40 M35,145 L10,160 M165,55 L190,40 M165,145 L190,160" stroke="#8a95a6" stroke-width="2" opacity="0.5"/>' +
       '<circle cx="10" cy="40" r="4" fill="#8a95a6"/><circle cx="10" cy="160" r="4" fill="#8a95a6"/>' +
       '<circle cx="190" cy="40" r="4" fill="#8a95a6"/><circle cx="190" cy="160" r="4" fill="#8a95a6"/>' +
