@@ -3209,7 +3209,15 @@ export default {
       //    교체"라는 조건을 영원히 못 만족해 항상 그대로 어비샬로 남았다. 겉보기엔 "가챠가
       //    자동으로 어비샬만 뽑는" 것처럼 보이지만 실은 롤 자체는 정상 랜덤이고 결과가 그냥
       //    무시되고 있었던 것 — 가챠는 순수 랜덤이어야 하고 지금 장착된 것과는 무관해야
-      //    한다는 요청(신고)을 반영해 이 "보호" 로직 자체를 없앴다. ──
+      //    한다는 요청(신고)을 반영해 이 "보호" 로직 자체를 없앴다.
+      //
+      //    ⚠️ 인벤토리는 절대 건드리지 않는다("봇 뽑기를 했을 때 아이템이 절대 얻어지거나
+      //    바뀌면 안 된다" 요청 반영) — 한때 "봇을 되팔아도 장비가 안 사라지게" 가챠 결과를
+      //    인벤토리에도 정식으로 한 벌씩 쌓아준 적이 있었는데, 그러면 가챠 가격(Basic은 겨우
+      //    1,000코인)만 내고 상점가 수십만~수백만 코인짜리 장비를 실제 소유물로 얻어버리는
+      //    구멍이 된다(그 장비를 플레이어 본인이나 다른 봇에도 장착할 수 있으므로). 그래서
+      //    가챠 결과는 이 봇의 equipped_* 칼럼에만 남고 인벤토리와는 완전히 분리된다 — 이
+      //    봇을 되팔면 그 가챠 장비는 그냥 사라진다(더 이상 인벤토리에 보존되지 않음). ──
       if (request.method === "POST" && path === "/bots/gacha") {
         const body = await request.json().catch(function () { return {}; });
         const tierDef = BOT_GACHA_TIERS[body.tier];
@@ -3224,14 +3232,8 @@ export default {
         const rolled = rollBotGacha(body.tier);
         row.pocket_coins -= tierDef.price;
 
-        await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
-        // 가챠로 나온 3개는 인벤토리에도 정식으로 한 벌씩 쌓아둔다 — 이래야 이 봇을 되팔아도
-        // (장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가 사라지지 않고, 다른
-        // 슬롯에 다시 꺼내 쓸 수도 있다.
         await env.DB.batch([
-          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.weapon),
-          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.armor),
-          env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.core),
+          env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id),
           env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
         ]);
 
@@ -3243,9 +3245,9 @@ export default {
       }
 
       // ── POST /bots/sell { botId } — 모집 당시 낸 비용(recruit_cost)의 BOT_SELL_RATE(50%)만
-      //    환불하고 그 봇을 삭제한다. 장착돼 있던 장비(수동 장착이든 가챠든 이제 둘 다 인벤토리에
-      //    정식으로 보유 중이므로)는 인벤토리 수량 그대로 남아있으니 다른 슬롯에 다시 쓸 수
-      //    있다 — 봇의 equipped_* 참조만 사라질 뿐 인벤토리 쪽 소유 자체는 건드리지 않는다. ──
+      //    환불하고 그 봇을 삭제한다. 수동 장착한 장비는 인벤토리 소유 자체를 건드리지 않으므로
+      //    (봇의 equipped_* 참조만 사라짐) 그대로 남아 다른 슬롯에 다시 쓸 수 있다. 가챠로 뽑은
+      //    장비는 애초에 인벤토리에 없던 것(위 /bots/gacha 참고)이라 봇과 함께 그냥 사라진다. ──
       if (request.method === "POST" && path === "/bots/sell") {
         const body = await request.json().catch(function () { return {}; });
         const botId = parseInt(body.botId, 10);
