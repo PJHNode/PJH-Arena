@@ -237,15 +237,30 @@
     15% { opacity: 1; }
     100% { transform: rotate(var(--angle)) translateY(-190%) scale(0.3); opacity: 0; }
   }
-  /* 등급이 오를수록 화려해지도록: mythic부터 파티클이 더 진해지고, secret은 살짝 더 밝게,
-     forbidden/abyssal은 아우라 자체가 회전까지 더해진 소용돌이가 된다. */
-  .rarity-fx-secret .item-fx-particle, .rarity-fx-forbidden .item-fx-particle, .rarity-fx-abyssal .item-fx-particle {
-    box-shadow: 0 0 5px var(--fx-color), 0 0 10px var(--fx-color);
+  /* mythic부터 한 단계 더 화려하게(요청 반영) — 아우라가 더 진하고 빠르게 맥동하고, 파티클
+     발광이 강해지고, 회전하는 그라디언트 링(item-fx-ring)이 추가로 둘러진다. legendary는
+     기존 그대로(은은한 아우라 + 파티클 3개)만 유지해서 단계 차이가 뚜렷하게 느껴지게 했다. */
+  .rarity-fx-flashy .item-fx-aura {
+    opacity: 0.5; filter: blur(3px);
+    animation: item-fx-aura-pulse var(--fx-aura-dur, 2s) ease-in-out infinite, item-fx-aura-spin 3s linear infinite;
   }
-  .rarity-fx-forbidden .item-fx-aura, .rarity-fx-abyssal .item-fx-aura {
-    animation: item-fx-aura-pulse var(--fx-aura-dur, 2.4s) ease-in-out infinite, item-fx-aura-spin 3.2s linear infinite;
+  .rarity-fx-flashy .item-fx-particle {
+    width: 3.6px; height: 3.6px; margin: -1.8px 0 0 -1.8px;
+    box-shadow: 0 0 6px var(--fx-color), 0 0 12px var(--fx-color);
   }
-  @keyframes item-fx-aura-spin { from { filter: blur(2px) hue-rotate(0deg); } to { filter: blur(2px) hue-rotate(20deg); } }
+  @keyframes item-fx-aura-spin { from { filter: blur(3px) hue-rotate(0deg); } to { filter: blur(3px) hue-rotate(25deg); } }
+  .item-fx-ring {
+    position: absolute; inset: -30%; border-radius: 50%; z-index: 0; pointer-events: none;
+    background: conic-gradient(from 0deg, transparent 0%, var(--fx-color) 35%, transparent 55%, var(--fx-color) 90%, transparent 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    opacity: 0.75;
+    animation: item-fx-ring-spin var(--fx-ring-dur, 2.4s) linear infinite;
+  }
+  @keyframes item-fx-ring-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  /* abyssal은 최상위 등급답게 아이콘 자체도 살짝 숨쉬듯 커졌다 작아진다. */
+  .rarity-fx-abyssal .item-icon { animation: item-fx-icon-breathe 2s ease-in-out infinite; }
+  @keyframes item-fx-icon-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
   .shop-card-icon { margin-bottom: 6px; }
   .shop-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
   .shop-card-type { font-size: 10px; margin-bottom: 4px; font-weight: bold; letter-spacing: 0.02em; }

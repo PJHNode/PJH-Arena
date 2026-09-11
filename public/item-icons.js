@@ -109,20 +109,26 @@ function wrapWithRarityFx(innerHtml, color, size, rarity) {
   const tierIdx = RARITY_FX_TIERS.indexOf(rarity);
   const plain = '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + innerHtml + "</span>";
   if (tierIdx === -1) return plain;
-  // 등급이 오를수록: 파티클 개수 ↑(3~7), 궤도 한 바퀴 도는 시간 ↓(더 빠르게 반짝임).
-  const particleCount = 3 + tierIdx;
-  const auraDur = (2.6 - tierIdx * 0.2).toFixed(2) + "s";
-  const particleDur = (2.6 - tierIdx * 0.25).toFixed(2) + "s";
+  // mythic(tierIdx>=1)부터는 한 단계 더 화려하게(요청 반영: "조금만 더 화려하게, mythic부터는")
+  // — 파티클 개수를 legendary(3개)에서 한 번에 확 늘리고(mythic 7 → abyssal 13), 회전하는
+  // 그라디언트 링을 추가로 두른다. legendary는 기존처럼 은은한 아우라 + 파티클 3개만 유지.
+  const flashy = tierIdx >= 1;
+  const flashyTier = tierIdx - 1; // mythic=0, secret=1, forbidden=2, abyssal=3
+  const particleCount = flashy ? 7 + flashyTier * 2 : 3;
+  const auraDur = (flashy ? 2.0 - flashyTier * 0.2 : 2.6).toFixed(2) + "s";
+  const particleDur = (flashy ? 1.7 - flashyTier * 0.15 : 2.6).toFixed(2) + "s";
+  const ringDur = (2.4 - flashyTier * 0.35).toFixed(2) + "s";
   let particles = "";
   for (let i = 0; i < particleCount; i++) {
     const angle = Math.round((360 / particleCount) * i);
     const delay = (particleDur.replace("s", "") * (i / particleCount)).toFixed(2) + "s";
     particles += '<span class="item-fx-particle" style="--angle:' + angle + 'deg;--fx-delay:' + delay + ';"></span>';
   }
+  const ring = flashy ? '<span class="item-fx-ring" style="--fx-ring-dur:' + ringDur + ';"></span>' : "";
   return (
-    '<span class="item-icon-fx rarity-fx-' + rarity + '" style="--fx-color:' + (color || "currentColor") +
+    '<span class="item-icon-fx rarity-fx-' + rarity + (flashy ? " rarity-fx-flashy" : "") + '" style="--fx-color:' + (color || "currentColor") +
     ";--fx-aura-dur:" + auraDur + ";--fx-particle-dur:" + particleDur + ";width:" + size + "px;height:" + size + 'px;">' +
-    '<span class="item-fx-aura"></span>' + particles +
+    '<span class="item-fx-aura"></span>' + ring + particles +
     '<span class="item-icon" style="color:' + (color || "currentColor") + ';width:100%;height:100%;">' + innerHtml + "</span>" +
     "</span>"
   );
