@@ -1291,6 +1291,7 @@
     const grid = $("enchantGrid");
     try {
       const { items } = await api("/enchants");
+      if (!items.length) { grid.innerHTML = '<p class="dim">아직 강화할 수 있는 장비가 없습니다 — 상점에서 무기/방어/코어를 하나라도 구해오면 여기 나타납니다.</p>'; return; }
       grid.innerHTML = items.map((it) => {
         const pct = Math.min(100, (it.level / it.maxLevel) * 100);
         const maxed = it.level >= it.maxLevel;

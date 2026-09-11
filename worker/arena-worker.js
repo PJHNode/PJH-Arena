@@ -153,12 +153,16 @@ const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" }
 // abyssal(최종 등급)은 forbidden의 10배 가격 · value는 forbidden의 정확히 3배 이상(요청 반영,
 // 무기/방어 250→800, 코어 100→320)으로 확실히 더 세게 설계했다 — research 행운 연구 6레벨을
 // 찍어야만 1% 확률로 등장한다.
+// legendary는 mythic 이상 등급만 x15 리밸런싱될 때 같이 안 올라서, epic 대비로는 적당한데
+// mythic 대비로는 90배 가까이 차이 나는 기형적인 가격 단절이 생겨 있었다 — 무기/방어 25,000→
+// 200,000(x8), 코어 75,000→600,000(x8)로 올려서 mythic(무기/방어 225만·코어 675만)과의 격차를
+// 약 11배로 줄였다(여전히 mythic보다는 확실히 싸다). value(스탯)는 그대로 — 가격만 조정.
 const SHOP_ITEMS = {
   rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
   packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
   plasma_cannon:    { name: "플라즈마 캐논",         type: "weapon", rarity: "rare",      price: 900,      value: 20 },
   hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 4500,     value: 35 },
-  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 25000,    value: 60 },
+  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 200000,   value: 60 },
   stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 100 },
   singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 160 },
   omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 250 },
@@ -168,7 +172,7 @@ const SHOP_ITEMS = {
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
   nano_composite:   { name: "나노 복합 장갑",         type: "armor", rarity: "rare",      price: 900,      value: 20 },
   ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 4500,     value: 35 },
-  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 25000,    value: 60 },
+  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 200000,   value: 60 },
   adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 100 },
   black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 160 },
   absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 250 },
@@ -178,7 +182,7 @@ const SHOP_ITEMS = {
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
   quantum_core:       { name: "양자 연산 장치",      type: "core", rarity: "rare",      price: 2700,     value: 8 },
   neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 13500,    value: 14 },
-  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 75000,    value: 24 },
+  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 600000,   value: 24 },
   dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 40 },
   observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 64 },
   algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 100 },
@@ -246,7 +250,10 @@ function computeAttackStaminaCost(attackerLevel, defenderLevel, online) {
 }
 const ONLINE_THRESHOLD_MS = 150 * 1000;
 const BANK_DEPOSIT_TAX_RATE = 0.10;
-const DIAMOND_EXCHANGE_COIN_COST = 10000; // 코인 10,000개 -> 다이아 1개(단방향, 코인 싱크)
+// Jobs/Galaxy Map/Property 코인 소득이 x15 뛴 뒤에도 이 환전 시세는 그대로 10,000이라 다이아가
+// 상대적으로 15배 싸져 있었다(연구 비용이 너무 싸다는 문제의 실제 원인). 소득과 같은 배율로
+// 올려서 "다이아=특수 재화"라는 상대적 희소성을 예전 수준으로 되돌렸다.
+const DIAMOND_EXCHANGE_COIN_COST = 150000; // 코인 150,000개 -> 다이아 1개(단방향, 코인 싱크)
 const SHOP_REROLL_DIAMOND_COST = 2; // 다이아 2개로 자연 타이머 안 기다리고 내 상점 즉시 리롤
 
 // ── Trade — 유저 간 코인+아이템 동시 거래. "고인물이 초보를 코인으로 그냥 키워주는" 것을
@@ -416,7 +423,7 @@ async function recordWarScoreIfHostile(env, attackerUserId, defenderUserId) {
     ]);
   }
 }
-const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
+const RESEARCH_EXPEDITION_UNLOCK_COST = 300; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금(x15)
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
 // 경비병 시스템이 생기면서 봇 하나가 "내 전투력용"과 "행성 방어용"을 놓고 경합하게 됐다 —
@@ -592,9 +599,11 @@ function hashStr(s) {
 }
 
 // ── 연구(Research) — 상점 행운 연구 레벨만큼 rare 이상 등급의 "뜰 확률"에 고정 보너스가
-//    붙는다(등급별 상한 1.0). 레벨업 비용은 매번 RESEARCH_SHOP_GROWTH배씩 뛴다. ──
+//    붙는다(등급별 상한 1.0). 레벨업 비용은 매번 RESEARCH_SHOP_GROWTH배씩 뛴다. 다이아 환전
+//    시세가 x15 오른 것과 같은 배율로 기본 비용도 올렸다(안 그러면 다이아가 비싸진 만큼
+//    연구가 상대적으로 더 싸져 버림 — 실제로 그게 "연구가 너무 싸다"는 문제의 원인이었다). ──
 const RESEARCH_SHOP_BONUS_PER_LEVEL = 0.02;
-const RESEARCH_SHOP_BASE_COST = 10;
+const RESEARCH_SHOP_BASE_COST = 150;
 const RESEARCH_SHOP_GROWTH = 1.6;
 function researchShopUpgradeCost(level) { return Math.round(RESEARCH_SHOP_BASE_COST * Math.pow(RESEARCH_SHOP_GROWTH, level)); }
 // abyssal은 다른 등급과 달리 "연구 레벨에 비례해서 서서히 확률이 붙는" 방식이 아니라, 상점 행운
@@ -2600,9 +2609,16 @@ export default {
         ]);
         const ownedQty = {};
         ownedRes.results.forEach(function (r) { ownedQty[r.item_id] = r.qty; });
+        // 한 번도 얻어본 적 없는 아이템은 아예 목록에 안 보인다 — "지금 보유 중"이거나(qty>0)
+        // "예전에 얻어서 강화까지 해뒀다가 지금은 다 팔았음"(level>0, 투자는 유지됨) 둘 중
+        //하나라도 해당해야 노출한다. 둘 다 아니면 그 아이템은 아직 본 적도 없는 것이므로 제외.
         const entries = Object.keys(SHOP_ITEMS)
           .map(function (id) { return [id, SHOP_ITEMS[id]]; })
-          .filter(function (pair) { return pair[1].type === "weapon" || pair[1].type === "armor" || pair[1].type === "core"; });
+          .filter(function (pair) {
+            const id = pair[0], item = pair[1];
+            if (item.type !== "weapon" && item.type !== "armor" && item.type !== "core") return false;
+            return (ownedQty[id] || 0) > 0 || (enchantMap[id] || 0) > 0;
+          });
         const items = sortedShopEntries(entries).map(function (pair) {
           const id = pair[0], item = pair[1];
           const level = enchantMap[id] || 0;
