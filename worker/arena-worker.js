@@ -292,6 +292,13 @@ const ATTACK_COOLDOWN_MS = 30 * 1000;
 function attackCooldownRemainingMs(row) {
   return row.last_attack_at ? Math.max(0, attackCooldownMsFor(row) - (Date.now() - row.last_attack_at)) : 0;
 }
+// Hacking Jobs 쿨다운 — 에너지만 있으면 몇 초에 몇 번이든 반복 가능했던 게, 레벨업 시 에너지
+// 전액 회복 보상과 맞물려 "레벨업→에너지 완전 충전→즉시 재실행"을 무한 반복할 수 있는 구멍이
+// 됐다(요청 반영). 에너지 잔량과 무관하게 최소 이 간격은 지나야 다음 작업을 실행할 수 있다.
+const JOB_COOLDOWN_MS = 5 * 1000;
+function jobCooldownRemainingMs(row) {
+  return row.last_job_at ? Math.max(0, JOB_COOLDOWN_MS - (Date.now() - row.last_job_at)) : 0;
+}
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
@@ -1220,6 +1227,13 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_activity_summary_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 공격 쿨다운(30초) — 마지막으로 공격(PvP/행성/원정 무엇이든)한 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // Hacking Jobs 쿨다운 — 마지막으로 /hack-job을 실행한 시각. 원래 Hacking Jobs는 에너지만
+  // 있으면 바로바로 반복 가능했는데, "레벨업 시 에너지 전액 회복" 보상과 겹치면(특히 코인/EXP
+  // 2배 이벤트 중처럼 레벨업이 잦아질 때) 매 작업이 레벨업 → 에너지 완전 충전 → 다시 작업을
+  // 무한 반복할 수 있는 구멍이 됐다(실제로 이 방식으로 초당 여러 번씩 하루 종일 쉬지 않고
+  // 작업을 돌려 비정상적으로 빠르게 레벨업하는 계정이 발견됨). 에너지가 얼마나 남아있든
+  // 상관없이 최소 간격을 둬서 막는다(요청 반영: "jobs 무한 반복으로 레벨업하는 걸 막아줘").
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_job_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 출석 + 오늘의 미션 3종을 전부 끝내면 20분간 켜지는 코인/XP 2배 부스트의 만료 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN daily_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 환생 상점 — 환생할 때마다 쌓이는 전용 화폐(rebirth_stones)와, 그 화폐로 산 소장품 id
@@ -1975,9 +1989,12 @@ export default {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
         if (row.level < tier.minLevel) return json({ error: "레벨이 부족합니다. (필요 Lv." + tier.minLevel + ")" }, 400);
+        const jobCooldownLeft = jobCooldownRemainingMs(row);
+        if (jobCooldownLeft > 0) return json({ error: "작업 후 " + Math.ceil(jobCooldownLeft / 1000) + "초 동안은 다시 실행할 수 없습니다." }, 400);
         if (row.energy < tier.energyCost) return json({ error: "에너지가 부족합니다." }, 400);
 
         row.energy -= tier.energyCost;
+        row.last_job_at = Date.now();
         const clubBonus = await clubCoinBonusMult(env, user.userId);
         const boostMult = activityBoostMult(row);
         const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
@@ -1987,9 +2004,9 @@ export default {
 
         await env.DB.prepare(
           "UPDATE arena_users SET energy=?, stamina=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
-          "pocket_coins=?, xp=?, level=?, stat_points=? WHERE user_id=?"
+          "pocket_coins=?, xp=?, level=?, stat_points=?, last_job_at=? WHERE user_id=?"
         ).bind(row.energy, row.stamina, row.hp, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick,
-               row.pocket_coins, row.xp, row.level, row.stat_points, row.user_id).run();
+               row.pocket_coins, row.xp, row.level, row.stat_points, row.last_job_at, row.user_id).run();
         await insertLog(env, user.userId, "job", null, tier.label, "success", coinsGained, 0);
         await bumpDailyProgress(env, user.userId, "jobs");
 
