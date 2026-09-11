@@ -63,17 +63,33 @@ const HP_REGEN_PER_TICK = 10, HP_TICK_MS = 5 * 60 * 1000; // 5분당 +10(최대�
 function baseAtkFor(level) { return 10 + level * 2; }
 function baseDefFor(level) { return 10 + level * 2; }
 
-// 80레벨까지는 기존 그대로(level*100, 선형)라 초중반 성장감은 안 바뀐다. 81~100 구간만
-// 3제곱으로 요구량이 급격히 불어나 100레벨에서 기존 대비 10배(10,000 → 100,000)까지
-// 커진다 — Hacking Jobs 무한 반복 악용(레벨업 시 자원 전액 회복 → 즉시 재실행) 건 이후
-// "특히 90~100은 jobs로도 쉽게 얻지 못하게" 요청 반영. nextExpFor는 jobs뿐 아니라
-// PvP/행성/업적 등 모든 XP 획득의 공통 기준이라, 여기 하나만 바꾸면 어떤 수단으로도
-// 90~100 구간을 순식간에 뚫을 수 없게 된다.
+// 80레벨까지는 기존 그대로(level*100, 선형)라 초중반 성장감은 안 바뀐다. 이후로는 100/
+// 200/300 세 구간에 걸쳐 배율이 계속 더 가팔라지다가("100 넘어서도, 200 넘어서도 계속
+// 어려워져야 한다" 요청 반영), 300을 넘기면 아예 (레벨-300)의 제곱에 비례해 폭증하는
+// 진짜 끝판 구간으로 들어간다("300부터는 제곱적으로" 요청 반영) — 레벨 300을 찍은 유저가
+// 실제로 나온 뒤 그 다음 벽을 얼마나 세게 세울지 고민한 결과. 각 구간 경계에서 배율이
+// 이어지도록(80→1배, 100→10배, 200→40배, 300→120배) 설계해 계단 없이 매끄럽게 커진다.
+// nextExpFor는 jobs뿐 아니라 PvP/행성/업적 등 모든 XP 획득의 공통 기준이라 여기 하나만
+// 바꾸면 어떤 수단으로도 각 구간을 순식간에 뚫을 수 없게 된다.
 function nextExpFor(level) {
   const base = level * 100;
-  if (level <= 80) return base;
-  const t = Math.min(1, (level - 80) / 20); // 레벨 80→0, 100→1로 정규화
-  const mult = 1 + Math.pow(t, 3) * 9; // 80→1배, 90→약 2.1배, 100→10배
+  let mult = 1;
+  if (level > 80) {
+    const t = Math.min(1, (Math.min(level, 100) - 80) / 20); // 80→0, 100→1
+    mult = 1 + Math.pow(t, 3) * 9; // 80→1배, 90→약 2.1배, 100→10배
+  }
+  if (level > 100) {
+    const t = Math.min(1, (Math.min(level, 200) - 100) / 100); // 100→0, 200→1
+    mult = 10 + Math.pow(t, 2) * 30; // 100→10배, 150→약 17.5배, 200→40배
+  }
+  if (level > 200) {
+    const t = Math.min(1, (Math.min(level, 300) - 200) / 100); // 200→0, 300→1
+    mult = 40 + Math.pow(t, 2) * 80; // 200→40배, 250→60배, 300→120배
+  }
+  if (level > 300) {
+    const over = level - 300;
+    mult = 120 + over * over * 0.5; // 300 이후로는 제곱적으로 폭증(310→170배, 350→1370배, 400→5120배)
+  }
   return Math.round(base * mult);
 }
 
@@ -944,6 +960,10 @@ const ACHIEVEMENTS = {
   // 대가로 영구 +1%"를 주는 구조라, 여기에 스탯까지 얹으면 "환생 안 하고 계속 레벨만 올리는
   // 게 이득"이 되어 환생 시스템의 존재 의미가 흐려진다) — 순수 명예(코인+칭호)만.
   level_200:     { name: "초월적 해커",   desc: "레벨 200 달성",                    title: "초월적 해커",   reward: 500000, check: function (ctx) { return ctx.row.level >= 200; } },
+  // 레벨 300을 찍은 유저가 실제로 나온 뒤("마지막 뱃지를 만들어달라" 요청 반영) nextExpFor를
+  // 300 이후 제곱적으로 폭증하게 고친 것과 세트로 추가한, 현재 기준 게임 내 최고 보상 업적
+  // (rebirth_max의 60만보다도 위) — "마지막 뱃지"라는 이름에 맞게 의도적으로 최상단에 둔다.
+  level_300:     { name: "궁극의 해커",   desc: "레벨 300 달성",                    title: "궁극의 해커",   reward: 1000000, check: function (ctx) { return ctx.row.level >= 300; } },
   rebirth_1:     { name: "첫 환생",       desc: "환생 1회 달성",                    title: "환생자",       reward: 60000,  check: function (ctx) { return (ctx.row.rebirth_count || 0) >= 1; } },
   rebirth_max:   { name: "윤회의 끝",     desc: "환생 " + REBIRTH_BONUS_MAX_COUNT + "회(최대) 달성", title: "윤회의 지배자", reward: 600000, check: function (ctx) { return (ctx.row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT; } },
   plunder_10:    { name: "약탈자",       desc: "PvP 약탈 승리 10회",               title: "약탈자",       reward: 6000,   check: function (ctx) { return (ctx.row.plunder_wins || 0) >= 10; } },
@@ -1017,7 +1037,8 @@ const TITLE_RARITY = {
   level_100: "mythic", planet_emperor: "mythic",
   abyssal_owner: "secret",
   level_200: "forbidden",
-  rebirth_max: "abyssal", // 환생 10회(최대) — 게임에서 가장 얻기 어려운 칭호
+  rebirth_max: "abyssal", // 환생 10회(최대)
+  level_300: "abyssal", // 레벨 300 — "마지막 뱃지" 요청 반영, rebirth_max와 동급 최상위
 };
 // 텍스트뿐 아니라 등급/색까지 한 번에 반환 — 칭호가 표시되는 모든 곳(프로필/헤더/리더보드/
 // PvP 목록·정찰)이 전부 이 함수 하나만 거치게 해서 색/아우라가 항상 통일되게 한다.
