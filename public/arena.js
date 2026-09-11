@@ -167,14 +167,22 @@
     if (state.equippedTitle) { titleTag.textContent = "🏷️ " + state.equippedTitle; titleTag.style.display = ""; }
     else titleTag.style.display = "none";
 
-    // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다.
+    // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다. 등급(브론즈~
+    // 무지개)은 tier-N 클래스로 표시색을 바꾼다(rebirthTier 참고, 서버와 동일한 계단식).
     const rebirthTag = $("rebirthTag"), rebirthBtn = $("rebirthBtn");
-    if (state.rebirthCount > 0) { rebirthTag.textContent = "🔄 환생 " + toRoman(state.rebirthCount) + " (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)"; rebirthTag.style.display = ""; }
-    else rebirthTag.style.display = "none";
+    if (state.rebirthCount > 0) {
+      const tierName = REBIRTH_TIER_NAMES[state.rebirthTier] || "";
+      rebirthTag.textContent = "🔄 환생 " + toRoman(state.rebirthCount) + (tierName ? " · " + tierName : "") + " (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)";
+      rebirthTag.className = "rebirth-tag tier-" + state.rebirthTier;
+      rebirthTag.style.display = "";
+    } else rebirthTag.style.display = "none";
     if (state.rebirthReady) { rebirthBtn.style.display = ""; rebirthBtn.disabled = false; }
     else if (state.level >= state.rebirthLevelRequirement - 20) { rebirthBtn.style.display = ""; rebirthBtn.disabled = true; rebirthBtn.textContent = "🔄 환생 (Lv." + state.rebirthLevelRequirement + " 필요)"; }
     else rebirthBtn.style.display = "none";
     if (state.rebirthReady) rebirthBtn.textContent = "🔄 환생하기";
+
+    // 환생 마스터(10회) 전용 사이트 테마 — 본인이 프로필 탭에서 끄지 않은 이상 자동 적용.
+    document.body.classList.toggle("theme-ascended", !!(state.maxThemeUnlocked && state.maxThemeEnabled));
 
     // 관리자 테스트 계정에게만 Admin 탭을 보여준다.
     $("adminTabBtn").style.display = state.isAdmin ? "" : "none";
@@ -284,6 +292,7 @@
     bank: renderBankTab,
     research: renderResearchTab,
     enchant: renderEnchantTab,
+    rebirthshop: renderRebirthShopTab,
     trade: renderTradeTab,
     club: renderClubTab,
     profile: renderProfileTab,
@@ -1429,6 +1438,61 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // ── 환생 상점 — 환생석(환생할 때만 얻는 전용 화폐)으로 사는 1회성 소장품. 업적 카드와
+  //    똑같은 그리드/카드 마크업을 재사용한다(디자인 일관성 + 새 CSS 불필요). ──
+  async function renderRebirthShopTab() {
+    const grid = $("rebirthShopGrid");
+    try {
+      const { stones, items, equippedTitleId } = await api("/rebirth-shop");
+      $("rebirthShopStones").textContent = "💠 " + stones;
+      grid.innerHTML = items.map((it) => {
+        const canAfford = stones >= it.cost;
+        const isTitle = it.type === "title";
+        const equipped = isTitle && equippedTitleId === it.id;
+        let btnHtml;
+        if (it.owned && isTitle) {
+          btnHtml = equipped
+            ? '<button class="btn-ghost" data-unequip-title="1" disabled>장착 중</button>'
+            : '<button class="btn-primary" data-equip-title="' + it.id + '">칭호 장착</button>';
+        } else if (it.owned) {
+          btnHtml = '<button class="btn-ghost" disabled>보유 중</button>';
+        } else {
+          btnHtml = '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + '>구매 (💠' + it.cost + ")</button>";
+        }
+        return (
+          '<div class="achievement-card" style="border-left-color:' + (it.owned ? "var(--accent)" : "var(--border)") + '">' +
+          '<div style="font-weight:bold;margin-bottom:4px;">' + (it.type === "frame" ? "🖼️ " : "🏷️ ") + escapeHtml(it.name) + "</div>" +
+          '<div class="dim" style="margin-bottom:10px;">' + escapeHtml(it.desc) + "</div>" +
+          btnHtml +
+          "</div>"
+        );
+      }).join("") || '<p class="dim">준비된 아이템이 없습니다.</p>';
+
+      grid.querySelectorAll("button[data-buy-rebirth-item]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api("/rebirth-shop/buy", { method: "POST", body: { itemId: btn.dataset.buyRebirthItem } });
+            toast("✨ 구매 완료!");
+            renderRebirthShopTab();
+            refreshState();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-equip-title]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api("/achievements/set-title", { method: "POST", body: { id: btn.dataset.equipTitle } });
+            toast("🏷️ 칭호를 장착했습니다.");
+            renderRebirthShopTab();
+            refreshState();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
   // ── Trade — 유저 간 코인+아이템 거래. "내가 줄 것"은 내 인벤토리(장착 중인 건 빼고 남는
   //    수량)에서 고르고, "내가 받을 것"은 상대 인벤토리를 볼 수 없으니 전체 카탈로그에서
   //    고른다(상대가 실제로 갖고 있는지는 승낙 시점에 서버가 검증). ──
@@ -1906,8 +1970,10 @@
 
   // 리더보드 모달/프로필 탭이 똑같은 카드 마크업을 쓰므로 한 함수로 통일했다.
   function profileCardHtml(p) {
-    const glowCls = p.rebirthEffectEnabled ? " rebirth-glow" : "";
-    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge">🔄 환생 ' + toRoman(p.rebirthCount) + "</span>" : "";
+    const tier = rebirthTier(p.rebirthCount || 0);
+    const glowCls = p.rebirthEffectEnabled ? " rebirth-glow tier-" + tier : "";
+    const frameCls = p.auroraFrameOwned ? " frame-aurora" : "";
+    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge tier-' + tier + '">🔄 환생 ' + toRoman(p.rebirthCount) + "</span>" : "";
     const titleBadge = p.title ? '<span class="title-badge">[' + escapeHtml(p.title) + "]</span> " : "";
     const slots = [0, 1, 2].map((i) => {
       const s = p.showcase[i];
@@ -1923,7 +1989,7 @@
         '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div></div>";
     }).join("");
     return (
-      '<div class="profile-card' + glowCls + '">' +
+      '<div class="profile-card' + glowCls + frameCls + '">' +
       '<div class="profile-card-name">Lv.' + p.level + " " + titleBadge + escapeHtml(p.realName) + rebirthBadge + "</div>" +
       '<div class="profile-card-meta">' + (p.clubName ? "🛡️ " + escapeHtml(p.clubName) + " · " : "") + "약탈 승리 " + p.plunderWins + "회</div>" +
       '<div class="profile-card-status">' + (p.statusMessage ? escapeHtml(p.statusMessage) : '<span class="dim">상태메시지 없음</span>') + "</div>" +
@@ -1975,6 +2041,9 @@
         (p.rebirthCount > 0
           ? '<label class="profile-edit-toggle"><input type="checkbox" id="profileRebirthToggle"' + (p.rebirthEffectEnabled ? " checked" : "") + " /> 환생 이팩트 표시(카드 테두리 반짝임)</label>"
           : "") +
+        (p.maxThemeUnlocked
+          ? '<label class="profile-edit-toggle"><input type="checkbox" id="profileThemeToggle"' + (p.maxThemeEnabled ? " checked" : "") + " /> 🌌 환생 마스터 전용 테마 적용(사이트 전체 색상 변경)</label>"
+          : "") +
         '<button class="btn-primary" id="profileSaveBtn" style="width:100%;">저장</button>' +
         "</div>";
       [0, 1, 2].forEach((i) => { const sel = $("profileSlot" + i); if (sel) sel.value = currentValue(i); });
@@ -2004,10 +2073,14 @@
       const statusMessage = $("profileStatusInput").value;
       const toggle = $("profileRebirthToggle");
       const rebirthEffectEnabled = toggle ? toggle.checked : true;
+      const themeToggle = $("profileThemeToggle");
+      const body = { statusMessage, showcase, rebirthEffectEnabled };
+      if (themeToggle) body.maxThemeEnabled = themeToggle.checked;
       try {
-        await api("/profile/update", { method: "POST", body: { statusMessage, showcase, rebirthEffectEnabled } });
+        await api("/profile/update", { method: "POST", body });
         toast("프로필을 저장했습니다.");
         loadAndRenderProfile(state.userId);
+        refreshState();
       } catch (err) { toast(err.message, true); }
       btn.disabled = false;
     });
@@ -2104,9 +2177,21 @@
     for (const [value, sym] of table) { while (num >= value) { out += sym; num -= value; } }
     return out;
   }
+  // 환생 등급(0~4, 브론즈/실버/골드/무지개) — 서버(arena-worker.js의 rebirthTier)와 완전히
+  // 동일한 계단식. 서버 응답에 이미 rebirthTier가 실려오지만(자기 자신), 리더보드/다른 사람
+  // 프로필처럼 rebirthCount만 오는 곳도 있어서 클라이언트에서도 똑같이 계산할 수 있게 둔다.
+  const REBIRTH_TIER_NAMES = ["", "브론즈", "실버", "골드", "무지개"];
+  function rebirthTier(count) {
+    const c = count || 0;
+    if (c >= 10) return 4;
+    if (c >= 5) return 3;
+    if (c >= 3) return 2;
+    if (c >= 1) return 1;
+    return 0;
+  }
   // 닉네임 옆에 붙이는 환생 뱃지 — 헤더/프로필/리더보드 전부 이 한 함수로 통일.
   function rebirthBadgeHtml(count) {
-    return count > 0 ? ' <span class="rebirth-name-badge">환생 ' + toRoman(count) + "</span>" : "";
+    return count > 0 ? ' <span class="rebirth-name-badge tier-' + rebirthTier(count) + '">환생 ' + toRoman(count) + "</span>" : "";
   }
 
   document.addEventListener("DOMContentLoaded", () => {

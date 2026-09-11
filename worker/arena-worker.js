@@ -73,6 +73,27 @@ const REBIRTH_LEVEL_REQUIREMENT = 100;
 const REBIRTH_BONUS_PER_COUNT = 0.01;
 const REBIRTH_BONUS_MAX_COUNT = 10;
 
+// ── 환생 등급(티어) — 환생 횟수를 브론즈/실버/골드/무지개 4단계로 묶어서 프로필 테두리·
+//    이름표가 환생할수록 단계적으로 화려해지게 한다. 순수 표시용 등급이라 클라이언트에서도
+//    (public/arena.js의 동일한 계단식으로) 그대로 다시 계산할 수 있다 — 서버는 신뢰 판정에만 쓴다.
+function rebirthTier(count) {
+  const c = count || 0;
+  if (c >= REBIRTH_BONUS_MAX_COUNT) return 4; // 무지개(최고 등급) — 전투력 보너스 상한(10회)과 일치
+  if (c >= 5) return 3; // 골드
+  if (c >= 3) return 2; // 실버
+  if (c >= 1) return 1; // 브론즈
+  return 0;
+}
+// 환생 등급별 전투/QoL 특권 — "작고 상한 있게" 원칙을 그대로 이어받아 인챈트 최대 레벨
+// +2/티어(최대 +8), 봇 모집 한도 +1/티어(최대 +4), 공격 쿨다운 -4초/티어(최소 14초)만 준다.
+function enchantMaxLevelFor(row) { return ENCHANT_MAX_LEVEL + rebirthTier(row.rebirth_count) * 2; }
+function botMaxCountFor(row) { return BOT_MAX_COUNT + rebirthTier(row.rebirth_count); }
+function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - rebirthTier(row.rebirth_count) * 4000); }
+
+// 환생석 — 환생할 때마다 지급되는 전용 화폐. 코인/다이아 경제와 완전히 분리해서 인플레이션
+// 걱정 없이 "환생 상점" 전용 코스메틱/칭호 구매에만 쓴다.
+const REBIRTH_STONES_PER_REBIRTH = 5;
+
 // 코인 보상은 전부 x15 — Property 수익이 가격의 1/4(예전 대비 약 15배)로 오른 것과 밸런스를
 // 맞추기 위함. 에너지 소모/필요 레벨/XP는 그대로 둔다.
 const JOB_TIERS = {
@@ -224,7 +245,7 @@ const ATTACK_LIMIT_RESET_MS = 8 * 60 * 60 * 1000;
 // 때리는 것 자체를 막는 전역 쿨다운이라, 위 8시간/5회 한도(같은 상대 한정)와는 별개다.
 const ATTACK_COOLDOWN_MS = 30 * 1000;
 function attackCooldownRemainingMs(row) {
-  return row.last_attack_at ? Math.max(0, ATTACK_COOLDOWN_MS - (Date.now() - row.last_attack_at)) : 0;
+  return row.last_attack_at ? Math.max(0, attackCooldownMsFor(row) - (Date.now() - row.last_attack_at)) : 0;
 }
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
@@ -699,6 +720,39 @@ const ACHIEVEMENTS = {
   club_leader:   { name: "리더십",       desc: "클럽 대표(리더) 취임",              title: "클럽 리더",     reward: 12000,  check: function (ctx) { return ctx.isClubLeader; } },
   lucky_researcher: { name: "행운의 연구자", desc: "상점 행운 연구 레벨 " + ABYSSAL_RESEARCH_UNLOCK_LEVEL + " 달성(Abyssal 해금)", title: "행운의 연구자", reward: 60000, check: function (ctx) { return (ctx.row.research_shop_level || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL; } },
 };
+
+// ── 환생 상점 — 환생석으로만 사는 1회성 소장품. 코인 경제와 무관한 순수 명예/코스메틱
+//    보상이라 밸런스 걱정 없이 계속 늘려도 된다. type:"frame"은 보유 즉시 자동 적용(별도
+//    장착 절차 없음 — 프레임이 하나뿐이라 온오프 개념이 필요 없다), type:"title"은
+//    ACHIEVEMENTS와 같은 방식으로 /achievements/set-title에서 장착한다. ──
+const REBIRTH_SHOP_ITEMS = {
+  rebirth_frame_aurora: {
+    name: "오로라 프로필 프레임", type: "frame", cost: 6,
+    desc: "프로필 카드 테두리에 오로라 애니메이션을 추가로 겹쳐 표시합니다(환생 등급 발광과 별개로 항상 적용).",
+  },
+  rebirth_title_wanderer: {
+    name: "칭호: 차원 방랑자", type: "title", title: "차원 방랑자", cost: 8,
+    desc: "환생 상점 전용 칭호 — 구매 즉시 장착 가능.",
+  },
+  rebirth_title_witness: {
+    name: "칭호: 만물의 목격자", type: "title", title: "만물의 목격자", cost: 15,
+    desc: "환생 상점 최고가 전용 칭호.",
+  },
+};
+function rebirthShopOwnedSet(row) {
+  try { return new Set(JSON.parse(row.rebirth_shop_owned || "[]")); } catch (e) { return new Set(); }
+}
+// 칭호 텍스트 조회를 ACHIEVEMENTS(업적 달성)와 REBIRTH_SHOP_ITEMS(환생석 구매) 두 출처
+// 어디서 왔는지 신경 안 쓰고 한 곳에서 통일해서 찾는다 — equipped_title_id는 둘 중 하나의
+// id를 그대로 담을 뿐이라, 표시 로직은 항상 이 함수 하나만 거치면 된다.
+function lookupTitleText(id) {
+  if (!id) return null;
+  if (ACHIEVEMENTS[id]) return ACHIEVEMENTS[id].title;
+  const shopItem = REBIRTH_SHOP_ITEMS[id];
+  if (shopItem && shopItem.type === "title") return shopItem.title;
+  return null;
+}
+
 // 달성 판정에 필요한 부가 정보(봇 수/Abyssal 보유/보유 행성 수/클럽 소속 등)를 한 번에 모아
 // ctx로 만든다 — GET /achievements와 POST /achievements/claim이 공유.
 async function buildAchievementContext(env, row) {
@@ -954,6 +1008,12 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 출석 + 오늘의 미션 3종을 전부 끝내면 20분간 켜지는 코인/XP 2배 부스트의 만료 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN daily_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 환생 상점 — 환생할 때마다 쌓이는 전용 화폐(rebirth_stones)와, 그 화폐로 산 소장품 id
+  // 목록(rebirth_shop_owned, JSON 배열 문자열). max_theme_enabled는 환생 10회(최대 등급)만
+  // 잠금 해제되는 사이트 전체 테마의 온오프 — 프로필 탭에서 본인이 직접 켜고 끌 수 있다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_stones INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_shop_owned TEXT NOT NULL DEFAULT '[]'"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN max_theme_enabled INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
 
   // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
   // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
@@ -1118,7 +1178,10 @@ const ENCHANT_MAX_LEVEL = 10;
 const ENCHANT_BONUS_PCT_PER_LEVEL = 0.02;
 const ENCHANT_COST_BASE_PCT = 0.05; // 1레벨 비용 = 아이템 가격의 5%
 const ENCHANT_COST_GROWTH = 1.6;
-function enchantMultiplier(level) { return 1 + Math.min(level || 0, ENCHANT_MAX_LEVEL) * ENCHANT_BONUS_PCT_PER_LEVEL; }
+// maxLevel을 안 넘기면(기존 호출부 다수) ENCHANT_MAX_LEVEL(기본 10레벨)로 동작한다 — 하위 호환.
+// 환생 등급이 있는 유저는 enchantMaxLevelFor(row)로 계산한 개인별 상한을 넘겨서 그만큼 더
+// 강화할 수 있게 한다(환생 등급별 전투 특권, rebirthTier 참고).
+function enchantMultiplier(level, maxLevel) { return 1 + Math.min(level || 0, maxLevel == null ? ENCHANT_MAX_LEVEL : maxLevel) * ENCHANT_BONUS_PCT_PER_LEVEL; }
 function enchantUpgradeCost(item, currentLevel) { return Math.max(1, Math.round(item.price * ENCHANT_COST_BASE_PCT * Math.pow(ENCHANT_COST_GROWTH, currentLevel))); }
 async function loadEnchantMap(env, userId) {
   const res = await env.DB.prepare("SELECT item_id, level FROM arena_item_enchants WHERE user_id = ?").bind(userId).all();
@@ -1127,24 +1190,26 @@ async function loadEnchantMap(env, userId) {
   return map;
 }
 
-function slotBonus(itemId, wantType, enchantMap) {
+function slotBonus(itemId, wantType, enchantMap, maxLevel) {
   const it = itemId ? SHOP_ITEMS[itemId] : null;
   if (!it || it.type !== wantType) return 0;
-  const mult = enchantMap ? enchantMultiplier(enchantMap[itemId]) : 1;
+  const mult = enchantMap ? enchantMultiplier(enchantMap[itemId], maxLevel) : 1;
   return Math.round(it.value * mult);
 }
-function equipStats(unit, enchantMap) {
+function equipStats(unit, enchantMap, maxLevel) {
   return {
-    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap),
-    def: slotBonus(unit.equipped_armor, "armor", enchantMap),
-    crit: slotBonus(unit.equipped_core, "core", enchantMap),
+    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap, maxLevel),
+    def: slotBonus(unit.equipped_armor, "armor", enchantMap, maxLevel),
+    crit: slotBonus(unit.equipped_core, "core", enchantMap, maxLevel),
   };
 }
 
 async function totalCombatStats(env, row) {
   // 이 유저 소유의 모든 장비(본인 + 봇)가 같은 인챈트 표를 공유하므로 한 번만 불러온다.
   const enchantMap = await loadEnchantMap(env, row.user_id);
-  const self = equipStats(row, enchantMap);
+  // 인챈트 최대 레벨도 이 유저의 환생 등급에 따라 개인별로 달라진다(봇 포함 전부 동일하게 적용).
+  const maxLevel = enchantMaxLevelFor(row);
+  const self = equipStats(row, enchantMap, maxLevel);
   let atk = baseAtkFor(row.level) + self.atk;
   let def = baseDefFor(row.level) + self.def;
   let crit = BASE_CRIT_PCT + self.crit;
@@ -1155,7 +1220,7 @@ async function totalCombatStats(env, row) {
   ).bind(row.user_id).all();
   const bots = botsRes.results;
   for (const b of bots) {
-    const bs = equipStats(b, enchantMap);
+    const bs = equipStats(b, enchantMap, maxLevel);
     atk += bs.atk; def += bs.def; crit += bs.crit;
   }
   // 환생 보너스 — 회당 ATK/DEF +1%(치명타는 제외), 최대 10회(+10%)에서 상한. 봇까지 합산한
@@ -1177,9 +1242,13 @@ async function planetGarrisonStats(env, planetId, ownerUserId) {
     "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE stationed_planet_id = ?"
   ).bind(planetId).all();
   const enchantMap = ownerUserId ? await loadEnchantMap(env, ownerUserId) : null;
+  // enchantMap이 null이면(위 N+1 방지 경로) 어차피 slotBonus가 mult=1로 무시하므로 maxLevel도
+  // 안 쓰인다 — ownerUserId가 확정된 실제 전투 판정 경로에서만 주인의 환생 등급을 한 번 더 조회한다.
+  const ownerRow = ownerUserId ? await env.DB.prepare("SELECT rebirth_count FROM arena_users WHERE user_id = ?").bind(ownerUserId).first() : null;
+  const maxLevel = ownerRow ? enchantMaxLevelFor(ownerRow) : ENCHANT_MAX_LEVEL;
   let atk = 0, def = 0, crit = 0;
   for (const b of res.results) {
-    const s = equipStats(b, enchantMap);
+    const s = equipStats(b, enchantMap, maxLevel);
     atk += s.atk; def += s.def; crit += s.crit;
   }
   return { atk: atk, def: def, crit: crit, count: res.results.length };
@@ -1226,14 +1295,21 @@ async function buildPublicProfile(env, userId) {
     }
   }
 
+  const shopOwned = rebirthShopOwnedSet(row);
   return {
     userId: row.user_id, realName: row.real_name, level: row.level,
     rebirthCount: row.rebirth_count || 0,
-    title: (row.equipped_title_id && ACHIEVEMENTS[row.equipped_title_id]) ? ACHIEVEMENTS[row.equipped_title_id].title : null,
+    title: lookupTitleText(row.equipped_title_id),
     plunderWins: row.plunder_wins, clubName: clubName,
     statusMessage: profileRow ? (profileRow.status_message || "") : "",
     showcase: showcase,
     rebirthEffectEnabled: (row.rebirth_count || 0) > 0 && (!profileRow || !!profileRow.rebirth_effect_enabled),
+    // 환생 상점 전용 코스메틱 — 프레임은 보유 즉시 자동 적용(별도 온오프 없음).
+    auroraFrameOwned: shopOwned.has("rebirth_frame_aurora"),
+    // 환생 10회(최대 등급)만 잠기는 사이트 전체 테마 — 자기 프로필/다른 사람 프로필 모두
+    // 표시엔 필요 없지만(적용은 /state에서만), 이 함수가 isSelf 응답도 겸하므로 같이 내려준다.
+    maxThemeUnlocked: (row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT,
+    maxThemeEnabled: row.max_theme_enabled === undefined ? true : !!row.max_theme_enabled,
   };
 }
 
@@ -1263,9 +1339,19 @@ function publicState(row, combat) {
     rebirthBoostUntil: row.rebirth_boost_until || 0,
     dailyBoostActive: dailyBoostMult(row) > 1,
     dailyBoostUntil: row.daily_boost_until || 0,
-    // 칭호 텍스트는 저장하지 않고 매번 ACHIEVEMENTS 정의에서 새로 읽는다 — 장착한 뒤 이름이
-    // 바뀌어도 안 꼬이고, 업적 자체가 삭제되면 자연히 칭호도 조용히 사라진다.
-    equippedTitle: (row.equipped_title_id && ACHIEVEMENTS[row.equipped_title_id]) ? ACHIEVEMENTS[row.equipped_title_id].title : null,
+    // 칭호 텍스트는 저장하지 않고 매번 정의(ACHIEVEMENTS 또는 REBIRTH_SHOP_ITEMS)에서 새로
+    // 읽는다 — 장착한 뒤 이름이 바뀌어도 안 꼬이고, 정의 자체가 삭제되면 자연히 칭호도 사라진다.
+    equippedTitle: lookupTitleText(row.equipped_title_id),
+    // 환생 등급(0~4, 프로필/이름표 발광 단계) + 환생 상점(환생석) + 환생 등급별 전투/QoL 특권 —
+    // 전부 클라이언트가 그대로 표시/계산에 쓸 수 있게 여기서 최종값으로 내려준다.
+    rebirthTier: rebirthTier(row.rebirth_count),
+    rebirthStones: row.rebirth_stones || 0,
+    enchantMaxLevel: enchantMaxLevelFor(row),
+    botMaxCount: botMaxCountFor(row),
+    attackCooldownMs: attackCooldownMsFor(row),
+    auroraFrameOwned: rebirthShopOwnedSet(row).has("rebirth_frame_aurora"),
+    maxThemeUnlocked: (row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT,
+    maxThemeEnabled: row.max_theme_enabled === undefined ? true : !!row.max_theme_enabled,
   };
 }
 
@@ -1565,14 +1651,15 @@ export default {
         row.rebirth_count = (row.rebirth_count || 0) + 1;
         // 기본 30분 + 환생 가속 연구 레벨당 +5분(연구 안 했으면 그대로 30분).
         row.rebirth_boost_until = now + rebirthBoostTotalMs(row.research_rebirth_level); // 해킹 작업/PvP/행성 약탈 XP·코인 2배
+        row.rebirth_stones = (row.rebirth_stones || 0) + REBIRTH_STONES_PER_REBIRTH;
         await env.DB.prepare(
           "UPDATE arena_users SET level=?, xp=?, stat_points=?, max_hp=?, max_energy=?, max_stamina=?, hp=?, energy=?, stamina=?, " +
-          "rebirth_count=?, rebirth_boost_until=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          "rebirth_count=?, rebirth_boost_until=?, rebirth_stones=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
         ).bind(row.level, row.xp, row.stat_points, row.max_hp, row.max_energy, row.max_stamina, row.hp, row.energy, row.stamina,
-               row.rebirth_count, row.rebirth_boost_until, now, now, now, row.user_id).run();
+               row.rebirth_count, row.rebirth_boost_until, row.rebirth_stones, now, now, now, row.user_id).run();
 
         const combat = await totalCombatStats(env, row);
-        return json({ ok: true, rebirthCount: row.rebirth_count, state: publicState(row, combat) });
+        return json({ ok: true, rebirthCount: row.rebirth_count, rebirthStonesGained: REBIRTH_STONES_PER_REBIRTH, state: publicState(row, combat) });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -2367,6 +2454,14 @@ export default {
           statusMessage, JSON.stringify(validated), rebirthEffectEnabled, Date.now()
         ).run();
 
+        // 환생 마스터 전용 테마 온오프 — 편집 폼에 이 체크박스 자체가 환생 10회 미만이면 아예
+        // 안 그려지므로(잠금), body에 필드가 없을 땐 건드리지 않는다(값을 없앤 걸로 오해해서
+        // 매번 강제로 다시 켜는 걸 방지).
+        if (body.maxThemeEnabled !== undefined) {
+          const maxThemeEnabled = body.maxThemeEnabled === false ? 0 : 1;
+          await env.DB.prepare("UPDATE arena_users SET max_theme_enabled = ? WHERE user_id = ?").bind(maxThemeEnabled, user.userId).run();
+        }
+
         const profile = await buildPublicProfile(env, user.userId);
         return json(Object.assign({ ok: true, isSelf: true }, profile));
       }
@@ -2540,9 +2635,11 @@ export default {
         // 보너스 포함, 실제 전투 판정과 정확히 같은 값).
         // gacha_rarity가 없으면(한 번도 가챠를 안 돌린 봇) 등급 배지 자체가 없는 상태다.
         const enchantMap = await loadEnchantMap(env, user.userId);
+        const enchantMaxLvl = enchantMaxLevelFor(row);
+        const botMaxCnt = botMaxCountFor(row);
         const botsWithStats = botsRes.results.map(function (b) {
           return Object.assign({}, b, {
-            stats: equipStats(b, enchantMap),
+            stats: equipStats(b, enchantMap, enchantMaxLvl),
             gachaRarityLabel: b.gacha_rarity ? RARITY_META[b.gacha_rarity].label : null,
             gachaRarityColor: b.gacha_rarity ? RARITY_META[b.gacha_rarity].color : null,
           });
@@ -2557,11 +2654,11 @@ export default {
           return { id: p.id, name: p.name, garrisonCount: garrisonCounts[p.id] || 0 };
         });
         return json({
-          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row, enchantMap) },
+          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row, enchantMap, enchantMaxLvl) },
           bots: botsWithStats,
           botCount: botsRes.results.length,
-          maxBots: BOT_MAX_COUNT,
-          nextBotCost: botsRes.results.length < BOT_MAX_COUNT ? botRecruitCost(botsRes.results.length) : null,
+          maxBots: botMaxCnt,
+          nextBotCost: botsRes.results.length < botMaxCnt ? botRecruitCost(botsRes.results.length) : null,
           botSellRate: BOT_SELL_RATE,
           availableItems: availableItems,
           stationOptions: stationOptions, garrisonMax: PLANET_GARRISON_MAX_PER_PLANET,
@@ -2570,9 +2667,10 @@ export default {
 
       if (request.method === "POST" && path === "/bots/recruit") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const botMaxCnt = botMaxCountFor(row);
         const countRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_bots WHERE user_id = ?").bind(user.userId).first();
         const count = (countRow && countRow.cnt) || 0;
-        if (count >= BOT_MAX_COUNT) return json({ error: "더 이상 봇을 모집할 수 없습니다(최대 " + BOT_MAX_COUNT + "기)." }, 400);
+        if (count >= botMaxCnt) return json({ error: "더 이상 봇을 모집할 수 없습니다(최대 " + botMaxCnt + "기)." }, 400);
         const cost = botRecruitCost(count);
         if (row.pocket_coins < cost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost) + ")" }, 400);
 
@@ -2734,6 +2832,8 @@ export default {
       // ── GET /enchants — 무기/방어/코어 타입 아이템 전부(보유 여부 무관, 상점 카탈로그처럼)에
       //    대해 내 현재 강화 레벨/다음 비용/보유 수량을 같이 내려준다. ──
       if (request.method === "GET" && path === "/enchants") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const maxLevel = enchantMaxLevelFor(row);
         const [enchantMap, ownedRes] = await Promise.all([
           loadEnchantMap(env, user.userId),
           env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all(),
@@ -2756,12 +2856,12 @@ export default {
           return Object.assign({ id: id }, item, {
             rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
             typeLabel: ITEM_TYPE_META[item.type].label, typeColor: ITEM_TYPE_META[item.type].color,
-            owned: ownedQty[id] || 0, level: level, maxLevel: ENCHANT_MAX_LEVEL,
-            bonusPct: Math.round(enchantMultiplier(level) * 10000 - 10000) / 100,
-            nextCost: level >= ENCHANT_MAX_LEVEL ? null : enchantUpgradeCost(item, level),
+            owned: ownedQty[id] || 0, level: level, maxLevel: maxLevel,
+            bonusPct: Math.round(enchantMultiplier(level, maxLevel) * 10000 - 10000) / 100,
+            nextCost: level >= maxLevel ? null : enchantUpgradeCost(item, level),
           });
         });
-        return json({ items: items, maxLevel: ENCHANT_MAX_LEVEL, bonusPctPerLevel: ENCHANT_BONUS_PCT_PER_LEVEL * 100 });
+        return json({ items: items, maxLevel: maxLevel, bonusPctPerLevel: ENCHANT_BONUS_PCT_PER_LEVEL * 100 });
       }
 
       // ── POST /enchants/upgrade { itemId } — 코인을 내고 그 아이템 종류의 강화 레벨을 1
@@ -2777,9 +2877,10 @@ export default {
         if (!owned || owned.qty <= 0) return json({ error: "보유하지 않은 아이템은 강화할 수 없습니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const maxLevel = enchantMaxLevelFor(row);
         const existing = await env.DB.prepare("SELECT level FROM arena_item_enchants WHERE user_id=? AND item_id=?").bind(user.userId, itemId).first();
         const currentLevel = existing ? existing.level : 0;
-        if (currentLevel >= ENCHANT_MAX_LEVEL) return json({ error: "이미 최대 강화 레벨입니다." }, 400);
+        if (currentLevel >= maxLevel) return json({ error: "이미 최대 강화 레벨입니다." }, 400);
         const cost = enchantUpgradeCost(item, currentLevel);
         if (row.pocket_coins < cost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost) + ")" }, 400);
 
@@ -2793,8 +2894,8 @@ export default {
         const newLevel = currentLevel + 1;
         return json({
           ok: true, pocketCoins: row.pocket_coins, itemId: itemId, level: newLevel,
-          bonusPct: Math.round(enchantMultiplier(newLevel) * 10000 - 10000) / 100,
-          nextCost: newLevel >= ENCHANT_MAX_LEVEL ? null : enchantUpgradeCost(item, newLevel),
+          bonusPct: Math.round(enchantMultiplier(newLevel, maxLevel) * 10000 - 10000) / 100,
+          nextCost: newLevel >= maxLevel ? null : enchantUpgradeCost(item, newLevel),
         });
       }
 
@@ -2842,8 +2943,10 @@ export default {
         return json({ ok: true, reward: achievement.reward, pocketCoins: row.pocket_coins, title: achievement.title });
       }
 
-      // ── POST /achievements/set-title { id|null } — 청구해 둔 업적의 칭호로 장착 변경(닉네임
-      //    옆에 표시). null이면 칭호를 뗀다. ──
+      // ── POST /achievements/set-title { id|null } — 업적 칭호 또는 환생 상점에서 산 칭호로
+      //    장착 변경(닉네임 옆에 표시). null이면 칭호를 뗀다. 두 출처 중 어디서 왔는지는
+      //    id만 보고 구분한다(ACHIEVEMENTS에 있으면 업적 달성 여부, REBIRTH_SHOP_ITEMS에
+      //    있으면 구매 여부를 확인). ──
       if (request.method === "POST" && path === "/achievements/set-title") {
         const body = await request.json().catch(function () { return {}; });
         const id = body.id;
@@ -2851,11 +2954,51 @@ export default {
           await env.DB.prepare("UPDATE arena_users SET equipped_title_id = NULL WHERE user_id = ?").bind(user.userId).run();
           return json({ ok: true, equippedTitleId: null, equippedTitle: null });
         }
-        if (!ACHIEVEMENTS[id]) return json({ error: "존재하지 않는 업적입니다." }, 404);
-        const claimedRow = await env.DB.prepare("SELECT 1 FROM arena_achievement_claims WHERE user_id=? AND achievement_id=?").bind(user.userId, id).first();
-        if (!claimedRow) return json({ error: "아직 받지 않은 업적의 칭호는 장착할 수 없습니다." }, 400);
+        if (ACHIEVEMENTS[id]) {
+          const claimedRow = await env.DB.prepare("SELECT 1 FROM arena_achievement_claims WHERE user_id=? AND achievement_id=?").bind(user.userId, id).first();
+          if (!claimedRow) return json({ error: "아직 받지 않은 업적의 칭호는 장착할 수 없습니다." }, 400);
+        } else if (REBIRTH_SHOP_ITEMS[id] && REBIRTH_SHOP_ITEMS[id].type === "title") {
+          const row = await loadOrCreateUser(env, user.userId, user.realName);
+          if (!rebirthShopOwnedSet(row).has(id)) return json({ error: "환생 상점에서 구매하지 않은 칭호입니다." }, 400);
+        } else {
+          return json({ error: "존재하지 않는 칭호입니다." }, 404);
+        }
         await env.DB.prepare("UPDATE arena_users SET equipped_title_id = ? WHERE user_id = ?").bind(id, user.userId).run();
-        return json({ ok: true, equippedTitleId: id, equippedTitle: ACHIEVEMENTS[id].title });
+        return json({ ok: true, equippedTitleId: id, equippedTitle: lookupTitleText(id) });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  Rebirth Shop — 환생으로만 얻는 "환생석"을 소비하는 전용 상점. 코인/다이아 경제와
+      //  완전히 분리된 명예/코스메틱 재화라 인플레이션 걱정 없이 계속 늘려도 안전하다.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /rebirth-shop — 보유 환생석 + 카탈로그(구매 여부 포함). ──
+      if (request.method === "GET" && path === "/rebirth-shop") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const owned = rebirthShopOwnedSet(row);
+        const items = Object.keys(REBIRTH_SHOP_ITEMS).map(function (id) {
+          return Object.assign({ id: id, owned: owned.has(id) }, REBIRTH_SHOP_ITEMS[id]);
+        });
+        return json({ stones: row.rebirth_stones || 0, items: items, equippedTitleId: row.equipped_title_id || null });
+      }
+
+      // ── POST /rebirth-shop/buy { itemId } — 환생석으로 전용 소장품을 1회성으로 구매한다
+      //    (전부 중복 구매 불가). 코인 상점과 달리 재고/로테이션 개념이 없다. ──
+      if (request.method === "POST" && path === "/rebirth-shop/buy") {
+        const body = await request.json().catch(function () { return {}; });
+        const itemId = String(body.itemId || "");
+        const item = REBIRTH_SHOP_ITEMS[itemId];
+        if (!item) return json({ error: "존재하지 않는 아이템입니다." }, 404);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const owned = rebirthShopOwnedSet(row);
+        if (owned.has(itemId)) return json({ error: "이미 보유한 아이템입니다." }, 400);
+        if ((row.rebirth_stones || 0) < item.cost) return json({ error: "환생석이 부족합니다. (필요 💠" + item.cost + ")" }, 400);
+        owned.add(itemId);
+        row.rebirth_stones -= item.cost;
+        row.rebirth_shop_owned = JSON.stringify(Array.from(owned));
+        await env.DB.prepare("UPDATE arena_users SET rebirth_stones=?, rebirth_shop_owned=? WHERE user_id=?")
+          .bind(row.rebirth_stones, row.rebirth_shop_owned, row.user_id).run();
+        return json({ ok: true, stones: row.rebirth_stones, itemId: itemId });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -3352,7 +3495,7 @@ export default {
           "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count, equipped_title_id FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
         ).bind(ADMIN_USER_ID).all();
         const rows = res.results.map(function (r) {
-          return Object.assign({}, r, { title: (r.equipped_title_id && ACHIEVEMENTS[r.equipped_title_id]) ? ACHIEVEMENTS[r.equipped_title_id].title : null });
+          return Object.assign({}, r, { title: lookupTitleText(r.equipped_title_id) });
         });
         return json({ type: type, rows: rows });
       }

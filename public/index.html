@@ -21,6 +21,14 @@
     --stamina: #ffb020;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
   }
+  /* ── 환생 마스터(10회, 최고 등급) 전용 사이트 테마 — body.theme-ascended가 붙으면 초록
+     사이버펑크 팔레트 대신 자수정/마젠타 팔레트로 전체가 바뀐다. 레이아웃은 그대로 두고
+     색상 변수만 갈아끼우는 방식이라 나머지 CSS를 전혀 건드리지 않는다. 서버가 rebirthCount
+     10회 이상일 때만 내려주는 maxThemeUnlocked를 프로필 탭에서 본인이 직접 켜고 끌 수 있다. ── */
+  body.theme-ascended {
+    --bg: #0a0510; --surface: #150a22; --surface-2: #1f1032; --border: #3d1f5c;
+    --accent: #ff2ec4; --accent-glow: rgba(255, 46, 196, 0.35); --cyan: #c46bff;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono);
@@ -28,6 +36,7 @@
     background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(0,255,157,0.05), transparent 60%);
     background-attachment: fixed;
   }
+  body.theme-ascended { background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(255,46,196,0.09), transparent 60%); }
   a { color: var(--cyan); }
   .dim { color: var(--sub); font-size: 12px; }
   button { cursor: pointer; font-family: inherit; }
@@ -285,11 +294,44 @@
   .profile-lookup-form { display: flex; gap: 8px; margin-bottom: 18px; }
   .profile-lookup-form input { flex: 1; }
   .profile-card { background: var(--surface); border: 2px solid var(--border); padding: 20px; margin-bottom: 18px; position: relative; }
-  .profile-card.rebirth-glow { border-color: #ffd700; animation: profileGlow 2s ease-in-out infinite; }
+  .profile-card.rebirth-glow { animation: profileGlow 2s ease-in-out infinite; }
   @keyframes profileGlow { 0%, 100% { box-shadow: 0 0 8px rgba(255,215,0,0.4); } 50% { box-shadow: 0 0 22px rgba(255,215,0,0.8); } }
   .profile-card-name { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
   .profile-card-name .rebirth-badge { color: #ffd700; font-size: 12px; border: 1px solid #ffd700; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
   .rebirth-name-badge { color: #ffd700; font-size: 10px; font-weight: bold; border: 1px solid #ffd700; padding: 1px 6px; white-space: nowrap; }
+
+  /* ── 환생 등급(티어) — 브론즈(1)/실버(2)/골드(3)/무지개(4). 환생 횟수에 따라 프로필 테두리·
+     이름표·헤더 태그가 단계적으로 화려해진다(공통 색상표를 tier-N 클래스 하나로 재사용). ── */
+  .tier-1.rebirth-glow, .rebirth-badge.tier-1, .rebirth-name-badge.tier-1, .rebirth-tag.tier-1 { --tier-color: #cd7f32; }
+  .tier-2.rebirth-glow, .rebirth-badge.tier-2, .rebirth-name-badge.tier-2, .rebirth-tag.tier-2 { --tier-color: #c0c0c0; }
+  .tier-3.rebirth-glow, .rebirth-badge.tier-3, .rebirth-name-badge.tier-3, .rebirth-tag.tier-3 { --tier-color: #ffd700; }
+  .profile-card-name .rebirth-badge.tier-1, .profile-card-name .rebirth-badge.tier-2, .profile-card-name .rebirth-badge.tier-3 { color: var(--tier-color); border-color: var(--tier-color); }
+  .rebirth-name-badge.tier-1, .rebirth-name-badge.tier-2, .rebirth-name-badge.tier-3 { color: var(--tier-color); border-color: var(--tier-color); }
+  .rebirth-tag.tier-1, .rebirth-tag.tier-2, .rebirth-tag.tier-3 { color: var(--tier-color); border-color: var(--tier-color); }
+  .profile-card.rebirth-glow.tier-1 { box-shadow: none; animation-name: profileGlowTier; }
+  .profile-card.rebirth-glow.tier-2 { animation-name: profileGlowTier; }
+  .profile-card.rebirth-glow.tier-3 { animation-name: profileGlowTier; }
+  @keyframes profileGlowTier { 0%, 100% { box-shadow: 0 0 8px color-mix(in srgb, var(--tier-color) 40%, transparent); border-color: var(--tier-color); } 50% { box-shadow: 0 0 22px color-mix(in srgb, var(--tier-color) 80%, transparent); border-color: var(--tier-color); } }
+  /* 최고 등급(4, 무지개)은 고정 색 대신 색상환을 순환시킨다. */
+  .profile-card.rebirth-glow.tier-4 { animation: profileGlowRainbow 3s linear infinite; }
+  .profile-card-name .rebirth-badge.tier-4, .rebirth-name-badge.tier-4, .rebirth-tag.tier-4 { animation: rebirthRainbowText 3s linear infinite; border-color: #fff; }
+  @keyframes profileGlowRainbow {
+    0% { border-color: #ff3d68; box-shadow: 0 0 18px #ff3d68; } 25% { border-color: #ffd700; box-shadow: 0 0 18px #ffd700; }
+    50% { border-color: #00ff9d; box-shadow: 0 0 18px #00ff9d; } 75% { border-color: #2b7fff; box-shadow: 0 0 18px #2b7fff; }
+    100% { border-color: #ff3d68; box-shadow: 0 0 18px #ff3d68; }
+  }
+  @keyframes rebirthRainbowText { 0% { color: #ff3d68; } 25% { color: #ffd700; } 50% { color: #00ff9d; } 75% { color: #2b7fff; } 100% { color: #ff3d68; } }
+  /* 환생 상점 전용 "오로라 프레임" — 등급 발광 위에 추가로 겹쳐 표시되는 회전 그라데이션 테두리. */
+  .profile-card.frame-aurora { position: relative; }
+  .profile-card.frame-aurora::before {
+    content: ""; position: absolute; inset: -3px; border-radius: 6px; padding: 3px;
+    background: linear-gradient(120deg, #ff3d68, #ffd700, #00ff9d, #2b7fff, #ff3d68);
+    background-size: 300% 300%; animation: auroraShift 6s linear infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none; z-index: 1;
+  }
+  @keyframes auroraShift { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
   .lb-name-link { cursor: pointer; text-decoration: underline dotted; }
   .lb-name-link:hover { color: var(--accent); }
   .profile-card-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
@@ -568,6 +610,8 @@
       <button class="side-tab" data-tab="research">🔬 Research</button>
       <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
       <button class="side-tab" data-tab="trade">🤝 Trade</button>
+      <div class="side-section-label">환생</div>
+      <button class="side-tab" data-tab="rebirthshop">✨ Rebirth Shop</button>
       <div class="side-section-label">소셜</div>
       <button class="side-tab" data-tab="club">🛡️ Club</button>
       <button class="side-tab" data-tab="achievements">🏆 Achievements</button>
@@ -733,8 +777,14 @@
 
       <div class="tab-panel" id="panel-enchant">
         <p class="panel-title">🧬 ENCHANT</p>
-        <p class="dim" style="margin-bottom:14px;">레벨당 +2%, 최대 10레벨(+20%) · 팔아도 레벨 유지 · 강화하려면 1개 이상 보유.</p>
+        <p class="dim" style="margin-bottom:14px;">레벨당 +2% · 팔아도 레벨 유지 · 강화하려면 1개 이상 보유 · 환생 등급이 높을수록 최대 레벨이 늘어납니다.</p>
         <div class="enchant-grid" id="enchantGrid"><p class="dim">불러오는 중...</p></div>
+      </div>
+
+      <div class="tab-panel" id="panel-rebirthshop">
+        <p class="panel-title">✨ REBIRTH SHOP</p>
+        <p class="dim" style="margin-bottom:14px;">환생할 때마다 환생석을 얻습니다 — 여기서만 살 수 있는 전용 프레임·칭호 · 보유 <b id="rebirthShopStones">💠 0</b></p>
+        <div class="achievement-grid" id="rebirthShopGrid"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-trade">
