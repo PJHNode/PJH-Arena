@@ -24,12 +24,48 @@
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono);
-    min-height: 100vh; display: flex; flex-direction: column;
+    min-height: 100vh; display: flex; flex-direction: column; line-height: 1.5;
+    background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(0,255,157,0.05), transparent 60%);
+    background-attachment: fixed;
   }
   a { color: var(--cyan); }
   .dim { color: var(--sub); font-size: 12px; }
   button { cursor: pointer; font-family: inherit; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── 공통 UI 연출 — 버튼/카드/진행바를 한 곳에서 통일해서 "터미널 표"보다 "게임 패널"에
+     가깝게 만든다(라운드 코너 + 은은한 발광 + 눌림/호버 피드백). 색상 팔레트나 레이아웃은
+     그대로 두고 마감만 다듬은 것이라 위험 없이 전체 화면에 일괄 적용된다. ── */
+  .btn-primary, .btn-ghost, .btn-danger {
+    border-radius: 4px; transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px var(--accent-glow); }
+  .btn-ghost:hover:not(:disabled) { background: rgba(0,212,255,0.12); box-shadow: 0 0 8px rgba(0,212,255,0.25); }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px rgba(255,61,104,0.4); }
+  .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.96); }
+
+  .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 5px; }
+  .exp-fill, .resource-fill, .club-xp-fill, .enchant-level-fill { border-radius: 5px; }
+  .exp-fill { box-shadow: 0 0 6px var(--accent-glow); }
+  .resource-fill.hp { box-shadow: 0 0 6px rgba(43,127,255,0.6); }
+  .resource-fill.energy { box-shadow: 0 0 6px rgba(0,224,122,0.6); }
+  .resource-fill.stamina { box-shadow: 0 0 6px rgba(255,176,32,0.6); }
+
+  .job-card, .shop-card, .achievement-card, .enchant-card, .diamond-exchange-card, .research-node,
+  .trade-composer, .trade-row, .club-header, .club-browse-card, .club-create-card, .daily-widget,
+  .admin-card, .profile-card, .profile-slot, .profile-edit, .bot-card, .bot-recruit-card,
+  .property-card, .galaxy-empire, .planet-card, .bank-card, .club-chat-box {
+    border-radius: 6px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  .job-card:hover, .shop-card:hover, .achievement-card:hover, .enchant-card:hover, .bot-card:hover,
+  .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover {
+    transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  }
+  .pvp-row, .lb-row, .log-row, .inv-row, .club-member-row, .club-relation-row, .daily-quest-row {
+    transition: background 0.12s ease;
+  }
+  .pvp-row:hover, .lb-row:hover, .log-row:hover, .inv-row:hover,
+  .club-member-row:hover, .club-relation-row:hover, .daily-quest-row:hover { background: var(--surface-2); }
 
   /* ── 헤더 ── */
   header { border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -103,11 +139,16 @@
     display: flex; flex-direction: column; padding: 10px 0;
   }
   .side-tab {
-    background: none; border: none; color: var(--sub); text-align: left; padding: 12px 18px; font-size: 12px;
-    border-left: 3px solid transparent;
+    background: none; border: none; color: var(--sub); text-align: left; padding: 10px 18px; font-size: 12px;
+    border-left: 3px solid transparent; transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
   }
-  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); }
-  .side-tab:hover { color: var(--text); }
+  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 14px rgba(0,255,157,0.08); }
+  .side-tab:hover { color: var(--text); background: var(--surface-2); }
+  .side-section-label {
+    font-size: 9px; color: var(--sub); opacity: 0.6; text-transform: uppercase; letter-spacing: 0.1em;
+    padding: 14px 18px 4px; font-weight: bold;
+  }
+  .side-section-label:first-child { padding-top: 4px; }
 
   .content { flex: 1; padding: 20px; overflow-y: auto; }
   .tab-panel { display: none; }
@@ -282,7 +323,7 @@
   .bot-slot.slot-station { border-left-color: #4cd137; }
   .bot-slot select { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 10px; padding: 4px 6px; max-width: 130px; }
   .bot-recruit-card { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed var(--border); padding: 20px; color: var(--sub); font-size: 12px; text-align: center; }
-  .bot-card { transition: border-color 0.3s, box-shadow 0.3s; }
+  .bot-card { transition: border-color 0.3s, box-shadow 0.3s, transform 0.15s ease; }
   .bot-card.glow-pulse { animation: botGlow 1.8s ease-in-out infinite; }
   @keyframes botGlow { 0%, 100% { box-shadow: 0 0 6px var(--glow-color, transparent); } 50% { box-shadow: 0 0 18px var(--glow-color, transparent); } }
   .bot-gacha-row { display: flex; gap: 6px; margin-top: 10px; }
@@ -482,12 +523,12 @@
   </div>
 </header>
 
-<div id="downedBanner">⚠ HP가 0입니다 — 회복 전까지 해킹/전투 활동이 불가능합니다(시간이 지나면 자연 회복되며, 아이템으로 즉시 회복할 수도 있습니다).</div>
+<div id="downedBanner">⚠️ HP 0 — 자연 회복 대기 중 (아이템으로 즉시 회복 가능)</div>
 
 <div id="loggedOutHint">
   <h1>⚡ PJH ARENA</h1>
   <p>PJH-Hub와 동일한 아이디/비밀번호로 로그인하면 시작됩니다.</p>
-  <p class="dim">(로그인 상태는 사이트별로 따로 저장돼요 — PJH-Hub에 로그인돼 있어도 여기서 다시 로그인해야 합니다.)</p>
+  <p class="dim">로그인은 사이트별로 따로 저장됩니다.</p>
   <button id="loggedOutCta">로그인 / 가입하기</button>
 </div>
 <div id="appShell" style="display:none; flex:1; flex-direction:column; min-height:0;">
@@ -514,23 +555,27 @@
 
   <div class="app-body">
     <div class="sidebar">
-      <button class="side-tab active" data-tab="jobs">Hacking Jobs</button>
-      <button class="side-tab" data-tab="galaxy">Galaxy Map</button>
-      <button class="side-tab" data-tab="pvp">Arena P2P</button>
-      <button class="side-tab" data-tab="shop">Hardware Shop</button>
-      <button class="side-tab" data-tab="bots">Bots</button>
-      <button class="side-tab" data-tab="inventory">Digital Inventory</button>
-      <button class="side-tab" data-tab="property">Property</button>
-      <button class="side-tab" data-tab="bank">Secure Bank</button>
-      <button class="side-tab" data-tab="research">Research</button>
-      <button class="side-tab" data-tab="enchant">Enchant</button>
-      <button class="side-tab" data-tab="trade">Trade</button>
-      <button class="side-tab" data-tab="club">Club</button>
+      <div class="side-section-label">전투</div>
+      <button class="side-tab active" data-tab="jobs">💻 Hacking Jobs</button>
+      <button class="side-tab" data-tab="galaxy">🌌 Galaxy Map</button>
+      <button class="side-tab" data-tab="pvp">🎯 Arena P2P</button>
+      <div class="side-section-label">경제</div>
+      <button class="side-tab" data-tab="shop">🛒 Hardware Shop</button>
+      <button class="side-tab" data-tab="bots">🤖 Bots</button>
+      <button class="side-tab" data-tab="inventory">💾 Inventory</button>
+      <button class="side-tab" data-tab="property">🏭 Property</button>
+      <button class="side-tab" data-tab="bank">🏦 Secure Bank</button>
+      <button class="side-tab" data-tab="research">🔬 Research</button>
+      <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
+      <button class="side-tab" data-tab="trade">🤝 Trade</button>
+      <div class="side-section-label">소셜</div>
+      <button class="side-tab" data-tab="club">🛡️ Club</button>
+      <button class="side-tab" data-tab="achievements">🏆 Achievements</button>
+      <button class="side-tab" data-tab="profile">👤 Profile</button>
+      <button class="side-tab" data-tab="leaderboard">📊 Leaderboard</button>
+      <div class="side-section-label">기록</div>
+      <button class="side-tab" data-tab="logs">📜 Hack Log</button>
       <button class="side-tab" data-tab="admin" id="adminTabBtn" style="display:none;">🛠️ Admin</button>
-      <button class="side-tab" data-tab="achievements">Achievements</button>
-      <button class="side-tab" data-tab="profile">Profile</button>
-      <button class="side-tab" data-tab="leaderboard">Leaderboard</button>
-      <button class="side-tab" data-tab="logs">Hack Log</button>
     </div>
 
     <div class="content">
@@ -547,11 +592,11 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">행성을 정복해서 시간당 수익을 얻으세요(스태미나 2). 봇이 지키는 곳도, 다른 유저가 이미 정복한 곳도, 심지어 홈 행성도 빼앗을 수 있습니다(보유 개수 제한 없음). 홈 행성을 빼앗기면 다음 접속 때 새 홈 행성이 자동으로 생깁니다.</p>
+        <p class="dim" style="margin-bottom:14px;">행성을 정복해 시간당 수익을 얻으세요(⚡2) · 최대 8개. 홈 행성은 Lv.20 미만 무적, 그 이후엔 뚫려도 뺏기지 않고 코인만 몰수됩니다.</p>
 
         <div class="galaxy-empire">
           <div class="galaxy-empire-header">
-            <span>🏠 내 제국 — 정복 <b id="galaxyOwnedCount">0</b>/<b id="galaxyMaxOwned">3</b> · 대기수익 <b id="galaxyPending">0</b></span>
+            <span>🏠 내 제국 — 정복 <b id="galaxyOwnedCount">0</b>/<b id="galaxyMaxOwned">8</b> · 대기수익 <b id="galaxyPending">0</b></span>
             <button class="btn-primary" id="galaxyCollectBtn">COLLECT ALL</button>
           </div>
           <div class="galaxy-empire-grid"></div>
@@ -617,19 +662,19 @@
 
       <div class="tab-panel" id="panel-bots">
         <p class="panel-title">🤖 BOTS</p>
-        <p class="dim" style="margin-bottom:14px;">플레이어 본인과 각 봇은 무장 모듈(ATK) / 방어 장갑(DEF) / 연산 코어(치명타%) 3슬롯을 각각 갖습니다. 봇의 장비 보너스는 전투 시 전부 합산됩니다.</p>
+        <p class="dim" style="margin-bottom:14px;">무장(ATK)·방어(DEF)·코어(CRIT) 3슬롯 — 모든 봇의 스탯이 전투 시 합산됩니다.</p>
         <div class="bot-roster"></div>
       </div>
 
       <div class="tab-panel" id="panel-inventory">
         <p class="panel-title">💾 DIGITAL INVENTORY</p>
-        <p class="dim" style="margin-bottom:10px;">소비재 사용 전용 화면입니다 — 장비(무장/방어/코어) 장착은 Bots 탭에서 합니다.</p>
+        <p class="dim" style="margin-bottom:10px;">소비재 전용 — 장비 장착은 Bots 탭에서.</p>
         <div class="inv-list"></div>
       </div>
 
       <div class="tab-panel" id="panel-property">
         <p class="panel-title">🏭 PROPERTY</p>
-        <p class="dim" style="margin-bottom:14px;">자동 수익 기기는 오프라인 상태에서도 실제 경과 시간만큼 코인을 벌어들입니다(최대 24시간치까지 누적, 그 이상은 손실되니 가끔 수거하세요). 기기는 종류 합산 최대 6개까지 보유할 수 있습니다.</p>
+        <p class="dim" style="margin-bottom:14px;">오프라인에서도 수익이 쌓입니다(최대 24h치 · 가끔 수거하세요) · 기기 최대 6개.</p>
         <div class="bank-cards">
           <div class="bank-card"><div class="label">시간당 수익</div><div class="value" id="propertyRate">0 / hr</div></div>
           <div class="bank-card"><div class="label">대기 중 수익 (최대 24h)</div><div class="value" id="propertyPending">0</div></div>
@@ -654,47 +699,47 @@
           <button class="btn-ghost" id="withdrawBtn">WITHDRAW (무료)</button>
           <button class="btn-ghost" id="withdrawAllBtn">ALL</button>
         </div>
-        <p class="dim">Bank Coins는 Arena P2P 약탈 대상에서 완전히 제외됩니다. 이자는 없으며, 입금액의 10%는 보관 수수료로 즉시 차감됩니다.</p>
+        <p class="dim">🛡️ 약탈 완전 면역 · 입금 수수료 10% · 이자 없음</p>
       </div>
 
       <div class="tab-panel" id="panel-research">
         <p class="panel-title">🔬 RESEARCH</p>
-        <p class="dim" style="margin-bottom:14px;">다이아(💎)는 코인과 완전히 분리된 특수 재화입니다 — Hardware Shop 오른쪽 패널에서 코인으로 교환할 수 있습니다.</p>
+        <p class="dim" style="margin-bottom:14px;">💎 다이아는 코인과 별개인 특수 재화 — Hardware Shop에서 코인으로 교환 가능.</p>
         <div class="bank-cards" style="margin-bottom:16px;">
           <div class="bank-card"><div class="label">보유 다이아</div><div class="value" id="researchDiamonds">💎 0</div></div>
         </div>
         <div class="research-node">
           <div class="research-node-title">🍀 상점 행운 연구 <span class="research-level-tag" id="researchShopLevelTag">Lv.0</span></div>
-          <p class="dim">다이아로 상점에서 rare 이상 등급이 뜰 확률을 영구적으로 올립니다. 레벨이 오를수록 다음 레벨 비용도 크게 늘어납니다.</p>
+          <p class="dim">상점 rare 이상 등급 확률 영구 증가 (레벨↑ = 비용↑)</p>
           <div class="research-rarity-table" id="researchRarityTable"></div>
           <button class="btn-primary" id="researchShopUpgradeBtn">연구하기 (💎 <span id="researchShopCost">150</span>)</button>
         </div>
         <div class="research-node">
           <div class="research-node-title">🗄️ 상점 진열대 확장 연구 <span class="research-level-tag" id="researchSlotsLevelTag">Lv.0</span></div>
-          <p class="dim">다이아로 상점에 한 번에 뜨는 최소 진열 개수를 영구적으로 늘립니다(등급 확률과는 무관 — 순수하게 "몇 개나 보이는지"만). 현재 최소 <b id="researchSlotsCurrent">8</b>개.</p>
+          <p class="dim">상점 최소 진열 개수 영구 증가(등급 확률과는 무관) · 현재 최소 <b id="researchSlotsCurrent">8</b>개.</p>
           <button class="btn-primary" id="researchSlotsUpgradeBtn">연구하기 (💎 <span id="researchSlotsCost">15</span>)</button>
         </div>
         <div class="research-node">
           <div class="research-node-title">🛰️ 원정 연구 <span class="research-level-tag" id="researchExpeditionTag">미해금</span></div>
-          <p class="dim">해금하면 Galaxy Map의 정예/악몽/극한 등급 행성에 원정을 보낼 수 있습니다 — 태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정하므로, 자리에 없어도(오프라인이어도) 가능합니다. 결과는 나중에 Hack Log 최상단에서 확인하세요.</p>
+          <p class="dim">정예 이상 행성에 자동 원정 해금(오프라인 가능) · 결과는 Hack Log에서 확인.</p>
           <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">300</span>)</button>
         </div>
         <div class="research-node" id="researchRebirthNode">
           <div class="research-node-title">🌀 환생 가속 연구 <span class="research-level-tag" id="researchRebirthLevelTag">잠김</span></div>
-          <p class="dim">환생을 최소 1회 해야 연구할 수 있는 특수 연구입니다. 레벨당 환생 직후 XP·코인 2배 부스트 창을 5분씩 늘립니다(현재 <b id="researchRebirthMinutes">30</b>분).</p>
+          <p class="dim">환생 1회 이상 필요 · 레벨당 환생 부스트 +5분(현재 <b id="researchRebirthMinutes">30</b>분).</p>
           <button class="btn-primary" id="researchRebirthUpgradeBtn" disabled>환생 후 해금</button>
         </div>
       </div>
 
       <div class="tab-panel" id="panel-enchant">
         <p class="panel-title">🧬 ENCHANT</p>
-        <p class="dim" style="margin-bottom:14px;">코인으로 무기/방어/코어를 영구 강화합니다 — 레벨당 스탯 +2%, 최대 10레벨(+20%). 인챈트는 아이템 <b>종류</b>에 붙는 투자라, 그 아이템을 나중에 다 팔아도 레벨은 그대로 남고 다시 구해서 장착하면 바로 적용됩니다. 최소 1개는 보유해야 강화를 시작할 수 있습니다.</p>
+        <p class="dim" style="margin-bottom:14px;">레벨당 +2%, 최대 10레벨(+20%) · 팔아도 레벨 유지 · 강화하려면 1개 이상 보유.</p>
         <div class="enchant-grid" id="enchantGrid"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-trade">
         <p class="panel-title">🤝 TRADE</p>
-        <p class="dim" style="margin-bottom:14px;">한 거래에서 오가는 코인은 두 사람 중 <b>레벨이 더 낮은 쪽</b> 자산(포켓+뱅크)의 1/3(현재 <span id="tradeCoinCap">0</span>)을 넘을 수 없습니다 — 고인물이 초보를 코인으로 그냥 키워주는 걸 막기 위한 제한입니다.</p>
+        <p class="dim" style="margin-bottom:14px;">코인 한도: 레벨 낮은 쪽 자산의 1/3(현재 <span id="tradeCoinCap">0</span>)</p>
 
         <div class="trade-composer">
           <div class="trade-composer-title">새 거래 제안</div>
@@ -738,7 +783,7 @@
       </div>
 
       <div class="tab-panel" id="panel-admin">
-        <p class="panel-title">🛠️ ADMIN (테스트 전용 — pjhg0605i 계정에만 보임, 리더보드 비노출)</p>
+        <p class="panel-title">🛠️ ADMIN (테스트 전용, 리더보드 비노출)</p>
         <div class="admin-grid">
           <div class="admin-card">
             <div class="admin-card-title">경험치 추가</div>
@@ -771,7 +816,7 @@
 
       <div class="tab-panel" id="panel-achievements">
         <p class="panel-title">🏆 ACHIEVEMENTS</p>
-        <p class="dim" style="margin-bottom:14px;">달성하면 코인 보상을 받고, 그 업적의 칭호를 닉네임 옆에 장착할 수 있습니다(리더보드/프로필에도 보입니다).</p>
+        <p class="dim" style="margin-bottom:14px;">달성 시 코인 보상 + 칭호 장착(닉네임 옆 표시).</p>
         <div class="achievement-grid" id="achievementGrid"><p class="dim">불러오는 중...</p></div>
       </div>
 
