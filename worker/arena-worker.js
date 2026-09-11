@@ -431,10 +431,20 @@ const DAILY_BOOST_MULT = 2;
 function dailyBoostMult(row) {
   return (row.daily_boost_until && Date.now() < row.daily_boost_until) ? DAILY_BOOST_MULT : 1;
 }
-// 환생 부스트 + 일일 완료 부스트를 곱해서 쓰는 곳(해킹 작업/PvP 약탈/행성 약탈)에서 공통으로
-// 쓰는 합산 배율.
+// ── 전역 이벤트: 코인·EXP 2배(48시간) — 특정 유저 상태가 아니라 "지금이 이벤트 기간
+// 안인지"만 보는 서버 전역 값이라 DB 컬럼이 필요 없다. 주의: Date.now() + N을 모듈 상단
+// 에서 계산해 쓰면 Cloudflare Workers 아이솔레이트가 콜드스타트될 때마다 "지금부터 N"이
+// 다시 계산되어 이벤트가 사실상 영원히 안 끝나는 버그가 생긴다 — 그래서 반드시 배포
+// 시점에 고정한 절대 타임스탬프 리터럴을 쓴다(요청: "지금부터 2일간 코인 exp 2배 이벤트",
+// 2026-09-11 시작 기준 +48시간).
+const GLOBAL_EVENT_COIN_XP_2X_END_AT = 1789300800000; // 2026-09-13T12:00:00.000Z
+const GLOBAL_EVENT_COIN_XP_2X_MULT = 2;
+function globalEventMult() { return Date.now() < GLOBAL_EVENT_COIN_XP_2X_END_AT ? GLOBAL_EVENT_COIN_XP_2X_MULT : 1; }
+
+// 환생 부스트 + 일일 완료 부스트 + 전역 이벤트를 곱해서 쓰는 곳(해킹 작업/PvP 약탈/행성
+// 약탈과 그에 따른 XP)에서 공통으로 쓰는 합산 배율.
 function activityBoostMult(row) {
-  return rebirthBoostMult(row) * dailyBoostMult(row);
+  return rebirthBoostMult(row) * dailyBoostMult(row) * globalEventMult();
 }
 
 // ── 특수 연구: 환생 가속 연구 — 환생을 최소 1번은 해본 유저만 연구할 수 있다("리버스를 해야만
@@ -1402,6 +1412,10 @@ function publicState(row, combat) {
     maxThemeEnabled: row.max_theme_enabled === undefined ? true : !!row.max_theme_enabled,
     // 영구 EXP 부스터(연구, 다이아 500/750/1000 → x1.2/x1.5/x2) — 헤더에 항상 보이는 표시용.
     expBoosterMult: expBoosterMult(row),
+    // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배) — 모든 유저에게 동일하게 적용되는 서버
+    // 절대 시각 기준이라 유저별 상태 없이 그대로 노출한다.
+    globalEventActive: globalEventMult() > 1,
+    globalEventEndAt: GLOBAL_EVENT_COIN_XP_2X_END_AT,
   };
 }
 
@@ -2994,11 +3008,15 @@ export default {
         const ctx = await buildAchievementContext(env, row);
         if (!achievement.check(ctx)) return json({ error: "아직 달성 조건을 채우지 못했습니다." }, 400);
 
-        row.pocket_coins += achievement.reward;
-        // 업적은 1회성 큰 보상이라 경험치도 그만큼 후하게(ACHIEVEMENT_CLAIM_XP_PCT) 준다 —
-        // activityBoostMult는 여기선 안 곱한다(부스트는 "반복 활동"을 더 신나게 하려는
-        // 취지라 1회성 업적까지 배로 주면 부스트 타이밍에 몰아 청구하는 꼼수가 생김).
-        const xpGain = xpPct(row, ACHIEVEMENT_CLAIM_XP_PCT);
+        // 개인용 activityBoostMult(환생 직후/일일완료)는 여기선 안 곱한다(1회성 업적까지
+        // 배로 주면 그 부스트 타이밍에 몰아 청구하는 꼼수가 생김) — 다만 전역 이벤트(GM이
+        // 켠 기간 한정 코인·EXP 2배)는 "몰아서 청구"할 방법이 없는 서버 전체 배율이라 예외로
+        // 곱한다.
+        const eventMult = globalEventMult();
+        const coinReward = Math.round(achievement.reward * eventMult);
+        row.pocket_coins += coinReward;
+        // 업적은 1회성 큰 보상이라 경험치도 그만큼 후하게(ACHIEVEMENT_CLAIM_XP_PCT) 준다.
+        const xpGain = Math.round(xpPct(row, ACHIEVEMENT_CLAIM_XP_PCT) * eventMult);
         const leveledUp = applyXpAndLevel(row, xpGain);
         await env.DB.batch([
           env.DB.prepare(
@@ -3006,7 +3024,7 @@ export default {
           ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
           env.DB.prepare("INSERT INTO arena_achievement_claims (user_id, achievement_id, claimed_at) VALUES (?, ?, ?)").bind(user.userId, id, Date.now()),
         ]);
-        return json({ ok: true, reward: achievement.reward, pocketCoins: row.pocket_coins, title: achievement.title, xpGained: xpGain, leveledUp: leveledUp });
+        return json({ ok: true, reward: coinReward, pocketCoins: row.pocket_coins, title: achievement.title, xpGained: xpGain, leveledUp: leveledUp });
       }
 
       // ── POST /achievements/set-title { id|null } — 업적 칭호 또는 환생 상점에서 산 칭호로
@@ -3194,11 +3212,12 @@ export default {
         if (row.last_attendance_date === today) return json({ error: "오늘은 이미 출석했습니다." }, 400);
         const yesterday = kstDateString(Date.now() - 24 * 3600 * 1000);
         const streak = row.last_attendance_date === yesterday ? row.attendance_streak + 1 : 1;
-        const reward = ATTENDANCE_BASE_REWARD + Math.min(streak, ATTENDANCE_STREAK_BONUS_CAP_DAYS) * ATTENDANCE_STREAK_BONUS;
+        const eventMult = globalEventMult(); // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배)
+        const reward = Math.round((ATTENDANCE_BASE_REWARD + Math.min(streak, ATTENDANCE_STREAK_BONUS_CAP_DAYS) * ATTENDANCE_STREAK_BONUS) * eventMult);
         row.pocket_coins += reward;
         row.last_attendance_date = today;
         row.attendance_streak = streak;
-        const xpGain = xpPct(row, ATTENDANCE_XP_PCT);
+        const xpGain = Math.round(xpPct(row, ATTENDANCE_XP_PCT) * eventMult);
         const leveledUp = applyXpAndLevel(row, xpGain);
         // 미션 3종을 이미(출석보다 먼저) 다 수령해 둔 상태에서 지금 막 출석까지 마쳤다면 —
         // "출석 + 미션 전부 완료" 조건이 방금 완성된 것이므로 여기서 부스트를 켠다(순서 무관하게
@@ -3226,8 +3245,10 @@ export default {
         if ((progress[questKey] || 0) < q.goal) return json({ error: "아직 목표를 채우지 못했습니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        row.pocket_coins += q.reward;
-        const xpGain = xpPct(row, DAILY_QUEST_CLAIM_XP_PCT);
+        const eventMult = globalEventMult(); // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배)
+        const questReward = Math.round(q.reward * eventMult);
+        row.pocket_coins += questReward;
+        const xpGain = Math.round(xpPct(row, DAILY_QUEST_CLAIM_XP_PCT) * eventMult);
         const leveledUp = applyXpAndLevel(row, xpGain);
         const today = kstDateString();
         await env.DB.batch([
@@ -3246,7 +3267,7 @@ export default {
           await env.DB.prepare("UPDATE arena_users SET daily_boost_until=? WHERE user_id=?").bind(row.daily_boost_until, row.user_id).run();
           dailyBoostGranted = true;
         }
-        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
+        return json({ ok: true, reward: questReward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
       }
 
       if (request.method === "GET" && path === "/property") {

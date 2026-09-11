@@ -191,6 +191,10 @@
     // 배지 하나를 공유하고(둘 중 더 늦게 끝나는 시각 기준), 남은 시간은 renderResourceEtas의
     // 1초 타이머가 갱신한다.
     boostUntilAt = Math.max(state.rebirthBoostActive ? state.rebirthBoostUntil : 0, state.dailyBoostActive ? state.dailyBoostUntil : 0);
+    // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배) — 개인 부스트와 별개의 상단 배너, 며칠 단위라
+    // 남은 시간 표기도 fmtLongCountdown(일/시간 단위)을 따로 쓴다.
+    globalEventEndAt = state.globalEventActive ? state.globalEventEndAt : 0;
+    $("globalEventBanner").style.display = state.globalEventActive ? "" : "none";
     renderResourceEtas();
 
     $("statPointsText").textContent = state.statPoints;
@@ -893,9 +897,20 @@
     return m > 0 ? m + "분 " + (s % 60) + "초" : s + "초";
   }
 
+  // 며칠 단위로 남는 전역 이벤트용 — "2880분 12초" 식은 안 읽히니 일/시간/분 단위로 접는다.
+  function fmtLongCountdown(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    if (days > 0) return days + "일 " + hours + "시간";
+    if (hours > 0) return hours + "시간 " + mins + "분";
+    return mins + "분 " + (totalSec % 60) + "초";
+  }
+
   // ── HP/Energy/Stamina 완전 회복까지 남은 시간 표시 — renderHeader가 절대 시각을 세팅해두면
   // 1초마다 그 시각까지 남은 시간만 다시 계산해서 보여준다(다음 /state 폴링을 기다릴 필요 없음). ──
-  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, boostUntilAt = 0;
+  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, boostUntilAt = 0, globalEventEndAt = 0;
   function renderResourceEtas() {
     const now = Date.now();
     const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
@@ -908,6 +923,12 @@
     if (boostTag) {
       if (boostUntilAt > now) { boostTag.textContent = "🔥 부스트 2배 " + fmtCountdown(boostUntilAt - now); boostTag.style.display = ""; }
       else boostTag.style.display = "none";
+    }
+
+    // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배) 배너 카운트다운.
+    const eventCountdownEl = $("globalEventCountdown");
+    if (eventCountdownEl) {
+      eventCountdownEl.textContent = globalEventEndAt > now ? fmtLongCountdown(globalEventEndAt - now) : "종료";
     }
   }
   setInterval(renderResourceEtas, 1000);

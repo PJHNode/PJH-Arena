@@ -141,6 +141,15 @@
     display: none; background: var(--danger); color: #fff; text-align: center; font-size: 12px; padding: 6px;
   }
 
+  /* ── 전역 이벤트 배너(GM이 켠 기간 한정 코인·EXP 2배) — 개인용 boost-tag와는 별개로,
+     서버 전체에 켜져 있는 동안 로그인/로그아웃 여부와 무관하게 항상 눈에 띄게 알린다. ── */
+  #globalEventBanner {
+    display: none; text-align: center; font-size: 13px; font-weight: bold; padding: 8px;
+    background: linear-gradient(90deg, var(--accent), var(--cyan)); color: #052014;
+    background-size: 200% 100%; animation: eventBannerShift 4s ease-in-out infinite;
+  }
+  @keyframes eventBannerShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+
   /* ── 레이아웃 ── */
   .app-body { display: flex; flex: 1; min-height: 0; }
   .sidebar {
@@ -565,6 +574,7 @@
   </div>
 </header>
 
+<div id="globalEventBanner">🎉 코인·EXP 2배 이벤트 진행 중! 남은 시간 <b id="globalEventCountdown">-</b></div>
 <div id="downedBanner">⚠️ HP 0 — 자연 회복 대기 중 (아이템으로 즉시 회복 가능)</div>
 
 <div id="loggedOutHint">
