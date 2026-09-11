@@ -759,9 +759,9 @@ const PROPERTY_DEVICES = {
 };
 // 아이템처럼 별도 rarity 필드는 없지만, 17종을 가격 순으로 5단계(4개씩 묶고 마지막만 1개)로
 // 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
-// 등급감이 있으면 좋겠다는 취지) — 무채색 은색에서 시작해 청록/에메랄드를 거쳐 최종적으로
-// 액센트 골드·앰버로 끝난다.
-const PROPERTY_TIER_COLORS = ["#8a95a6", "#6fa8d1", "#6fae7c", "#d9a848", "#e0973f"];
+// 등급감이 있으면 좋겠다는 취지) — 원래(네온) 팔레트에 맞춰 시안 → 블루 → 그린 → 액센트
+// 네온그린 → 골드 순으로 선명하게 이어진다.
+const PROPERTY_TIER_COLORS = ["#00d4ff", "#2b7fff", "#00e07a", "#00ff9d", "#ffb020"];
 const PROPERTY_DEVICE_IDS = Object.keys(PROPERTY_DEVICES);
 function propertyTierColor(deviceId) {
   const idx = PROPERTY_DEVICE_IDS.indexOf(deviceId);
