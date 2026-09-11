@@ -19,6 +19,10 @@
     master:    { label: "MASTER",    icon: "🧠" },
     apex:      { label: "APEX",      icon: "🌐" },
     legendary: { label: "LEGENDARY", icon: "👑" },
+    mythic:    { label: "MYTHIC",    icon: "🧬" },
+    secret:    { label: "SECRET",    icon: "🗝️" },
+    forbidden: { label: "FORBIDDEN", icon: "☠️" },
+    abyssal:   { label: "ABYSSAL",   icon: "🕳️" },
   };
   // 서버 상수와 동일한 값(표시용) — 실제 검증/보상 롤은 항상 서버에서 다시 계산한다.
   const JOB_TIERS = {
@@ -31,7 +35,11 @@
     fortress:  { minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
     master:    { minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
     apex:      { minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
-    legendary: { minLevel: 35, energyCost: 50, coinMin: 37500, coinMax: 51000, xp: 260 },
+    legendary: { minLevel: 35, energyCost: 50, coinMin: 37500,  coinMax: 51000,  xp: 260 },
+    mythic:    { minLevel: 45,  energyCost: 50, coinMin: 60000,  coinMax: 82500,  xp: 380 },
+    secret:    { minLevel: 60,  energyCost: 50, coinMin: 97500,  coinMax: 135000, xp: 550 },
+    forbidden: { minLevel: 75,  energyCost: 50, coinMin: 157500, coinMax: 217500, xp: 800 },
+    abyssal:   { minLevel: 100, energyCost: 50, coinMin: 255000, coinMax: 352500, xp: 1200 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }

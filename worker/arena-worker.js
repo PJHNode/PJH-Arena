@@ -85,7 +85,15 @@ const JOB_TIERS = {
   fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
   master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
   apex:      { label: "Apex",      minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
-  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 37500, coinMax: 51000, xp: 260 },
+  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 37500,  coinMax: 51000,  xp: 260 },
+  // 레벨 35(legendary) 이후로 갈 곳이 없었다 — 아이템 등급 이름을 그대로 가져와서(장비가 mythic
+  // ~abyssal까지 있는데 작업은 legendary에서 끝나는 게 안 맞았음) 레벨 100(환생 조건과 동일)까지
+  // 이어지도록 4단계를 더 얹었다. 성장률은 legendary까지의 패턴(단계마다 최대 보상 ~1.5~1.7배)을
+  // 그대로 이어간다 — energyCost는 master부터 이미 상한(50)이라 더 안 올린다.
+  mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 50, coinMin: 60000,  coinMax: 82500,  xp: 380 },
+  secret:    { label: "Secret",    minLevel: 60,  energyCost: 50, coinMin: 97500,  coinMax: 135000, xp: 550 },
+  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 50, coinMin: 157500, coinMax: 217500, xp: 800 },
+  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 50, coinMin: 255000, coinMax: 352500, xp: 1200 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -500,19 +508,28 @@ function rollBotGacha(tierKey) {
 const PROPERTY_MAX_ACCRUAL_MS = 24 * 60 * 60 * 1000;
 const PROPERTY_MAX_DEVICES = 6;
 const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무한 사고팔기로 코인 복사 방지)
-// coinsPerHour = 가격의 1/4(요청 반영) — 즉 4시간이면 기기값을 회수한다.
+// coinsPerHour = 가격의 1/6(요청 반영, 기존 1/4에서 하향) — 대신 그만큼 종류를 늘리고 훨씬
+// 고렙까지 이어지는 상위 기기 6종을 새로 얹었다("개당 효율은 낮추는 대신 선택지와 상한을
+// 넓힌다"는 방향). PROPERTY_MAX_DEVICES(보유 슬롯 6개)는 그대로라, 17종 중 어떤 6개를
+// 채울지 고르는 게 진짜 선택이 된다.
 const PROPERTY_DEVICES = {
-  proxy_relay:     { name: "Proxy Relay",          price: 200,   coinsPerHour: 50 },
-  botnet_node:     { name: "Botnet Node",          price: 500,   coinsPerHour: 125 },
-  gpu_rig:         { name: "GPU Mining Rig",       price: 1000,  coinsPerHour: 250 },
-  packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,  coinsPerHour: 375 },
-  darkpool_bot:    { name: "Darkpool Trading Bot",  price: 2800,  coinsPerHour: 700 },
-  asic_farm:       { name: "Mining ASIC Farm",     price: 4000,  coinsPerHour: 1000 },
-  neural_farm:     { name: "Neural Farm Cluster",  price: 7000,  coinsPerHour: 1750 },
-  cloud_scraper:   { name: "Cloud Scraper Array",  price: 10000, coinsPerHour: 2500 },
-  fusion_reactor:  { name: "Fusion Reactor Node",  price: 17000, coinsPerHour: 4250 },
-  quantum_miner:   { name: "Quantum Miner",        price: 25000, coinsPerHour: 6250 },
-  dyson_node:      { name: "Dyson Swarm Node",     price: 60000, coinsPerHour: 15000 },
+  proxy_relay:     { name: "Proxy Relay",          price: 200,      coinsPerHour: 33 },
+  botnet_node:     { name: "Botnet Node",          price: 500,      coinsPerHour: 83 },
+  gpu_rig:         { name: "GPU Mining Rig",       price: 1000,     coinsPerHour: 167 },
+  packet_sniffer:  { name: "Packet Sniffer Rig",   price: 1500,     coinsPerHour: 250 },
+  darkpool_bot:    { name: "Darkpool Trading Bot",  price: 2800,     coinsPerHour: 467 },
+  asic_farm:       { name: "Mining ASIC Farm",     price: 4000,     coinsPerHour: 667 },
+  neural_farm:     { name: "Neural Farm Cluster",  price: 7000,     coinsPerHour: 1167 },
+  cloud_scraper:   { name: "Cloud Scraper Array",  price: 10000,    coinsPerHour: 1667 },
+  fusion_reactor:  { name: "Fusion Reactor Node",  price: 17000,    coinsPerHour: 2833 },
+  quantum_miner:   { name: "Quantum Miner",        price: 25000,    coinsPerHour: 4167 },
+  dyson_node:      { name: "Dyson Swarm Node",     price: 60000,    coinsPerHour: 10000 },
+  singularity_farm:{ name: "Singularity Farm",     price: 150000,   coinsPerHour: 25000 },
+  fusion_array:    { name: "Fusion Array",         price: 450000,   coinsPerHour: 75000 },
+  dyson_sphere:    { name: "Dyson Sphere",         price: 1350000,  coinsPerHour: 225000 },
+  quantum_nexus:   { name: "Quantum Nexus",        price: 4050000,  coinsPerHour: 675000 },
+  galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
+  stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
 };
 
 // ── 행성 기반 성간 전쟁(Galaxy Map) ── 각 유저는 공격받지 않는 "홈 행성"(is_home=1)을
@@ -749,9 +766,20 @@ const STOCK_WEIGHTS_BY_RARITY = {
   forbidden: { one: 0.99, two: 0.009, three: 0.001 },
   abyssal:   { one: 0.995, two: 0.004, three: 0.001 },
 };
+// 특정 소비재는 등급표 대신 자기만의 재고 범위를 쓴다(요청 반영) — 에너지 드링크는 3~5개,
+// 메가 에너지 셀은 2~4개로 시작한다. 범위 안에서 균등 랜덤(로테이션/유저별로 다시 섞임).
+const SHOP_ITEM_STOCK_OVERRIDE = {
+  energy_drink:     { min: 3, max: 5 },
+  mega_energy_cell: { min: 2, max: 4 },
+};
 function rollItemStock(itemId, bucket, rarity, userId) {
-  const w = STOCK_WEIGHTS_BY_RARITY[rarity] || STOCK_WEIGHTS_BY_RARITY.common;
   const rng = mulberry32((bucket ^ hashStr(itemId) ^ hashStr(userId || "")) | 0);
+  const override = SHOP_ITEM_STOCK_OVERRIDE[itemId];
+  if (override) {
+    const span = override.max - override.min + 1;
+    return override.min + Math.floor(rng() * span);
+  }
+  const w = STOCK_WEIGHTS_BY_RARITY[rarity] || STOCK_WEIGHTS_BY_RARITY.common;
   const r = rng();
   if (r < w.one) return 1;
   if (r < w.one + w.two) return 2;
