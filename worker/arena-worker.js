@@ -379,6 +379,17 @@ function rebirthBoostMult(row) {
   return (row.rebirth_boost_until && Date.now() < row.rebirth_boost_until) ? REBIRTH_BOOST_MULT : 1;
 }
 
+// ── 특수 연구: 환생 가속 연구 — 환생을 최소 1번은 해본 유저만 연구할 수 있다("리버스를 해야만
+// 연구 가능한 특수 연구" 요청 반영). 레벨당 환생 직후 부스트 창(REBIRTH_BOOST_MS)을 5분씩
+// 늘려준다 — 그 창 안에서 직접 버는 소득만 2배가 되는 기존 룰은 그대로고, 그냥 그 기간이
+// 길어질 뿐이라 사기성 없이(작고 상한 있게) 환생을 더 자주 하는 유저에게 자연스러운 보상이 된다.
+const RESEARCH_REBIRTH_BASE_COST = 200;
+const RESEARCH_REBIRTH_GROWTH = 1.8;
+const RESEARCH_REBIRTH_MAX_LEVEL = 10;
+const RESEARCH_REBIRTH_BOOST_MS_PER_LEVEL = 5 * 60 * 1000; // 레벨당 +5분, 최대 +50분(총 80분)
+function researchRebirthUpgradeCost(level) { return Math.round(RESEARCH_REBIRTH_BASE_COST * Math.pow(RESEARCH_REBIRTH_GROWTH, level)); }
+function rebirthBoostTotalMs(level) { return REBIRTH_BOOST_MS + Math.min(level || 0, RESEARCH_REBIRTH_MAX_LEVEL) * RESEARCH_REBIRTH_BOOST_MS_PER_LEVEL; }
+
 // KST(UTC+9) 기준 날짜 문자열 — 일일 출석/퀘스트 리셋 경계로 쓴다(PJH-Hub board-worker.js의
 // kstDateString과 동일한 방식).
 function kstDateString(ts) { return new Date((ts || Date.now()) + 9 * 3600 * 1000).toISOString().slice(0, 10); }
@@ -770,6 +781,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN diamonds INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_slots_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_rebirth_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
@@ -1478,7 +1490,8 @@ export default {
         row.energy = BASE_MAX_ENERGY;
         row.stamina = BASE_MAX_STAMINA;
         row.rebirth_count = (row.rebirth_count || 0) + 1;
-        row.rebirth_boost_until = now + REBIRTH_BOOST_MS; // 30분간 해킹 작업/PvP/행성 약탈 XP·코인 2배
+        // 기본 30분 + 환생 가속 연구 레벨당 +5분(연구 안 했으면 그대로 30분).
+        row.rebirth_boost_until = now + rebirthBoostTotalMs(row.research_rebirth_level); // 해킹 작업/PvP/행성 약탈 XP·코인 2배
         await env.DB.prepare(
           "UPDATE arena_users SET level=?, xp=?, stat_points=?, max_hp=?, max_energy=?, max_stamina=?, hp=?, energy=?, stamina=?, " +
           "rebirth_count=?, rebirth_boost_until=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
@@ -2769,6 +2782,12 @@ export default {
           slotsMaxLevel: RESEARCH_SLOTS_MAX_LEVEL,
           slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
           slotsUpgradeCost: (row.research_shop_slots_level || 0) >= RESEARCH_SLOTS_MAX_LEVEL ? null : researchSlotsUpgradeCost(row.research_shop_slots_level || 0),
+          // 환생 가속 연구 — 환생을 한 번도 안 했으면 아예 잠겨 있다("리버스를 해야만 연구 가능").
+          rebirthResearchUnlocked: (row.rebirth_count || 0) >= 1,
+          rebirthLevel: row.research_rebirth_level || 0,
+          rebirthMaxLevel: RESEARCH_REBIRTH_MAX_LEVEL,
+          rebirthBoostTotalMinutes: rebirthBoostTotalMs(row.research_rebirth_level) / 60000,
+          rebirthUpgradeCost: (row.research_rebirth_level || 0) >= RESEARCH_REBIRTH_MAX_LEVEL ? null : researchRebirthUpgradeCost(row.research_rebirth_level || 0),
         });
       }
 
@@ -2813,6 +2832,26 @@ export default {
           ok: true, diamonds: row.diamonds, slotsLevel: row.research_shop_slots_level,
           slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
           nextCost: row.research_shop_slots_level >= RESEARCH_SLOTS_MAX_LEVEL ? null : researchSlotsUpgradeCost(row.research_shop_slots_level),
+        });
+      }
+
+      // ── POST /research/rebirth-upgrade — 환생 가속 연구. 환생을 한 번도 안 했으면 잠겨서
+      //    아예 시작도 못 한다("리버스를 해야만 연구 가능한 특수 연구" 요청). 레벨당 환생 직후
+      //    부스트 창을 5분씩 늘린다. ──
+      if (request.method === "POST" && path === "/research/rebirth-upgrade") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if ((row.rebirth_count || 0) < 1) return json({ error: "환생을 최소 1회 해야 연구할 수 있는 특수 연구입니다." }, 400);
+        const level = row.research_rebirth_level || 0;
+        if (level >= RESEARCH_REBIRTH_MAX_LEVEL) return json({ error: "이미 최대 레벨입니다." }, 400);
+        const cost = researchRebirthUpgradeCost(level);
+        if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
+        row.diamonds -= cost;
+        row.research_rebirth_level = level + 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_rebirth_level=? WHERE user_id=?").bind(row.diamonds, row.research_rebirth_level, row.user_id).run();
+        return json({
+          ok: true, diamonds: row.diamonds, rebirthLevel: row.research_rebirth_level,
+          rebirthBoostTotalMinutes: rebirthBoostTotalMs(row.research_rebirth_level) / 60000,
+          nextCost: row.research_rebirth_level >= RESEARCH_REBIRTH_MAX_LEVEL ? null : researchRebirthUpgradeCost(row.research_rebirth_level),
         });
       }
 

@@ -1294,6 +1294,24 @@
         expBtn.disabled = r.diamonds < r.expeditionUnlockCost;
         expBtn.innerHTML = "해금하기 (💎 <span id=\"researchExpeditionCost\">" + fmt(r.expeditionUnlockCost) + "</span>)";
       }
+
+      // 환생 가속 연구 — 환생을 한 번도 안 했으면 통째로 잠금(버튼도 비활성 + "환생 후 해금").
+      $("researchRebirthMinutes").textContent = r.rebirthBoostTotalMinutes;
+      const rebirthBtn = $("researchRebirthUpgradeBtn");
+      if (!r.rebirthResearchUnlocked) {
+        $("researchRebirthLevelTag").textContent = "잠김";
+        rebirthBtn.disabled = true;
+        rebirthBtn.textContent = "환생 후 해금";
+      } else {
+        $("researchRebirthLevelTag").textContent = "Lv." + r.rebirthLevel;
+        if (r.rebirthUpgradeCost == null) {
+          rebirthBtn.disabled = true;
+          rebirthBtn.textContent = "최대 레벨 (" + r.rebirthBoostTotalMinutes + "분)";
+        } else {
+          rebirthBtn.innerHTML = "연구하기 (💎 <span>" + fmt(r.rebirthUpgradeCost) + "</span>)";
+          rebirthBtn.disabled = r.diamonds < r.rebirthUpgradeCost;
+        }
+      }
     } catch (e) { panel.querySelector(".research-node").insertAdjacentHTML("afterend", '<p class="dim">' + escapeHtml(e.message) + "</p>"); }
   }
 
@@ -1324,6 +1342,15 @@
         toast("🗄️ 상점 진열대 확장 Lv." + r.slotsLevel + " 달성! (최소 " + r.slotsCurrentMin + "개)");
         renderResearchTab();
       } catch (e) { toast(e.message, true); slotsBtn.disabled = false; }
+    });
+    const rebirthResearchBtn = $("researchRebirthUpgradeBtn");
+    if (rebirthResearchBtn) rebirthResearchBtn.addEventListener("click", async () => {
+      rebirthResearchBtn.disabled = true;
+      try {
+        const r = await api("/research/rebirth-upgrade", { method: "POST" });
+        toast("🌀 환생 가속 연구 Lv." + r.rebirthLevel + " 달성! (부스트 " + r.rebirthBoostTotalMinutes + "분)");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); rebirthResearchBtn.disabled = false; }
     });
   }
 
