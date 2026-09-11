@@ -1799,10 +1799,13 @@
     if (itemBtn) itemBtn.addEventListener("click", async () => {
       const itemId = $("adminItemSelect").value;
       const qty = Math.max(1, parseInt($("adminItemQty").value, 10) || 1);
+      const targetUserId = $("adminItemTarget").value.trim();
       if (!itemId) return toast("아이템을 선택하세요.", true);
       itemBtn.disabled = true;
-      try { await api("/admin/give-item", { method: "POST", body: { itemId, qty } }); toast("아이템 지급 완료!"); }
-      catch (e) { toast(e.message, true); }
+      try {
+        const r = await api("/admin/give-item", { method: "POST", body: { itemId, qty, targetUserId: targetUserId || undefined } });
+        toast((targetUserId ? r.targetUserId + "에게 " : "나에게 ") + "아이템 지급 완료!");
+      } catch (e) { toast(e.message, true); }
       itemBtn.disabled = false;
     });
     const refillBtn = $("adminRefillBtn");

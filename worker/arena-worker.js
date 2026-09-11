@@ -1592,15 +1592,20 @@ export default {
         return json({ ok: true, state: publicState(row, combat) });
       }
 
+      // 대상 계정을 지정할 수 있다(targetUserId 생략 시 본인) — 자기 계정 확인용을 넘어 다른
+      // 계정에게도 테스트용 아이템을 줄 수 있게 해달라는 요청 반영.
       if (request.method === "POST" && path === "/admin/give-item") {
         const body = await request.json().catch(function () { return {}; });
         const itemId = String(body.itemId || "");
         const qty = Math.max(1, parseInt(body.qty, 10) || 1);
+        const targetUserId = String(body.targetUserId || user.userId).trim();
         if (!SHOP_ITEMS[itemId]) return json({ error: "알 수 없는 아이템입니다." }, 400);
+        const targetRow = await env.DB.prepare("SELECT user_id FROM arena_users WHERE user_id = ?").bind(targetUserId).first();
+        if (!targetRow) return json({ error: "존재하지 않는 계정입니다: " + targetUserId }, 404);
         await env.DB.prepare(
           "INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + ?"
-        ).bind(user.userId, itemId, qty, qty).run();
-        return json({ ok: true });
+        ).bind(targetUserId, itemId, qty, qty).run();
+        return json({ ok: true, targetUserId: targetUserId });
       }
 
       // HP/에너지/스태미나를 즉시 최대치로 채우고, 구매형 자가 보호막도 풀어준다 — 전투/스캔
