@@ -91,8 +91,10 @@ function botMaxCountFor(row) { return BOT_MAX_COUNT + rebirthTier(row.rebirth_co
 function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - rebirthTier(row.rebirth_count) * 4000); }
 
 // 환생석 — 환생할 때마다 지급되는 전용 화폐. 코인/다이아 경제와 완전히 분리해서 인플레이션
-// 걱정 없이 "환생 상점" 전용 코스메틱/칭호 구매에만 쓴다.
-const REBIRTH_STONES_PER_REBIRTH = 5;
+// 걱정 없이 "환생 상점" 전용 코스메틱/칭호/버프 구매에만 쓴다. 1회차 20개부터 시작해서
+// 환생을 거듭할수록 회당 +5개씩 늘어난다(20, 25, 30, 35...) — 많이 환생한 사람일수록
+// 다음 환생이 더 후하게 보상받도록. newCount는 이번 환생으로 "방금 올라간" 횟수(1부터 시작).
+function rebirthStonesForCount(newCount) { return 15 + Math.max(1, newCount) * 5; }
 
 // 코인 보상은 전부 x15 — Property 수익이 가격의 1/4(예전 대비 약 15배)로 오른 것과 밸런스를
 // 맞추기 위함. 에너지 소모/필요 레벨/XP는 그대로 둔다.
@@ -727,16 +729,28 @@ const ACHIEVEMENTS = {
 //    ACHIEVEMENTS와 같은 방식으로 /achievements/set-title에서 장착한다. ──
 const REBIRTH_SHOP_ITEMS = {
   rebirth_frame_aurora: {
-    name: "오로라 프로필 프레임", type: "frame", cost: 6,
+    name: "오로라 프로필 프레임", type: "frame", cost: 5,
     desc: "프로필 카드 테두리에 오로라 애니메이션을 추가로 겹쳐 표시합니다(환생 등급 발광과 별개로 항상 적용).",
   },
   rebirth_title_wanderer: {
-    name: "칭호: 차원 방랑자", type: "title", title: "차원 방랑자", cost: 8,
+    name: "칭호: 차원 방랑자", type: "title", title: "차원 방랑자", cost: 15,
     desc: "환생 상점 전용 칭호 — 구매 즉시 장착 가능.",
   },
   rebirth_title_witness: {
-    name: "칭호: 만물의 목격자", type: "title", title: "만물의 목격자", cost: 15,
+    name: "칭호: 만물의 목격자", type: "title", title: "만물의 목격자", cost: 50,
     desc: "환생 상점 최고가 전용 칭호.",
+  },
+  // ── 코스메틱뿐 아니라 실질적인 버프/보상도 원하는 요청 반영 — 순수 명예 아이템 사이에
+  // 실전에 도움되는 것도 하나씩 섞는다. stat_boost는 totalCombatStats에서 rebirthMult와는
+  // 별개로 곱연산 적용(작고 상한 있게 원칙 유지 — 딱 +3%, 중복 구매 불가라 추가 인플레 없음).
+  rebirth_core_overclock: {
+    name: "환생 코어 오버클럭", type: "stat_boost", cost: 25,
+    desc: "ATK/DEF 영구 +3% (환생 등급 전투력 보너스와는 별개로 추가 곱연산 적용).",
+  },
+  // diamond_grant는 "소장품"이 아니라 1회성 보상이라 owned 플래그가 곧 "이미 수령함" 표시다.
+  rebirth_diamond_cache: {
+    name: "환생 보상 상자", type: "diamond_grant", cost: 10, diamonds: 800,
+    desc: "구매(수령) 즉시 다이아 💎800 지급 — 1인당 1회 한정.",
   },
 };
 function rebirthShopOwnedSet(row) {
@@ -1240,8 +1254,11 @@ async function totalCombatStats(env, row) {
   // 환생 보너스 — 회당 ATK/DEF +1%(치명타는 제외), 최대 10회(+10%)에서 상한. 봇까지 합산한
   // 총 전투력에 곱해서 "전체적으로 조금 더 강해짐"이 되게 한다(사기 방지를 위해 작고 상한 있게).
   const rebirthMult = 1 + Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT;
-  atk = Math.round(atk * rebirthMult);
-  def = Math.round(def * rebirthMult);
+  // 환생 상점의 "환생 코어 오버클럭"(1회 구매, 중복 불가) — 위 환생 등급 보너스와는 별개로
+  // 딱 +3%만 추가 곱연산. 중복 구매가 안 되니 인플레 걱정 없이 고정값으로 둔다.
+  const statBoostMult = rebirthShopOwnedSet(row).has("rebirth_core_overclock") ? 1.03 : 1;
+  atk = Math.round(atk * rebirthMult * statBoostMult);
+  def = Math.round(def * rebirthMult * statBoostMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
 }
 
@@ -1665,7 +1682,8 @@ export default {
         row.rebirth_count = (row.rebirth_count || 0) + 1;
         // 기본 30분 + 환생 가속 연구 레벨당 +5분(연구 안 했으면 그대로 30분).
         row.rebirth_boost_until = now + rebirthBoostTotalMs(row.research_rebirth_level); // 해킹 작업/PvP/행성 약탈 XP·코인 2배
-        row.rebirth_stones = (row.rebirth_stones || 0) + REBIRTH_STONES_PER_REBIRTH;
+        const stonesGained = rebirthStonesForCount(row.rebirth_count);
+        row.rebirth_stones = (row.rebirth_stones || 0) + stonesGained;
         await env.DB.prepare(
           "UPDATE arena_users SET level=?, xp=?, stat_points=?, max_hp=?, max_energy=?, max_stamina=?, hp=?, energy=?, stamina=?, " +
           "rebirth_count=?, rebirth_boost_until=?, rebirth_stones=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
@@ -1673,7 +1691,7 @@ export default {
                row.rebirth_count, row.rebirth_boost_until, row.rebirth_stones, now, now, now, row.user_id).run();
 
         const combat = await totalCombatStats(env, row);
-        return json({ ok: true, rebirthCount: row.rebirth_count, rebirthStonesGained: REBIRTH_STONES_PER_REBIRTH, state: publicState(row, combat) });
+        return json({ ok: true, rebirthCount: row.rebirth_count, rebirthStonesGained: stonesGained, state: publicState(row, combat) });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -3025,9 +3043,11 @@ export default {
         owned.add(itemId);
         row.rebirth_stones -= item.cost;
         row.rebirth_shop_owned = JSON.stringify(Array.from(owned));
-        await env.DB.prepare("UPDATE arena_users SET rebirth_stones=?, rebirth_shop_owned=? WHERE user_id=?")
-          .bind(row.rebirth_stones, row.rebirth_shop_owned, row.user_id).run();
-        return json({ ok: true, stones: row.rebirth_stones, itemId: itemId });
+        // diamond_grant 타입은 "소장품"이 아니라 1회성 즉시 보상 — owned 플래그로 중복 수령만 막는다.
+        if (item.type === "diamond_grant") row.diamonds += item.diamonds;
+        await env.DB.prepare("UPDATE arena_users SET rebirth_stones=?, rebirth_shop_owned=?, diamonds=? WHERE user_id=?")
+          .bind(row.rebirth_stones, row.rebirth_shop_owned, row.diamonds, row.user_id).run();
+        return json({ ok: true, stones: row.rebirth_stones, diamonds: row.diamonds, itemId: itemId });
       }
 
       // ══════════════════════════════════════════════════════════

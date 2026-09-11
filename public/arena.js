@@ -1445,9 +1445,11 @@
     try {
       const { stones, items, equippedTitleId } = await api("/rebirth-shop");
       $("rebirthShopStones").textContent = "💠 " + stones;
+      const typeIcon = { frame: "🖼️ ", title: "🏷️ ", stat_boost: "⚡ ", diamond_grant: "💎 " };
       grid.innerHTML = items.map((it) => {
         const canAfford = stones >= it.cost;
         const isTitle = it.type === "title";
+        const isGrant = it.type === "diamond_grant";
         const equipped = isTitle && equippedTitleId === it.id;
         let btnHtml;
         if (it.owned && isTitle) {
@@ -1455,13 +1457,13 @@
             ? '<button class="btn-ghost" data-unequip-title="1" disabled>장착 중</button>'
             : '<button class="btn-primary" data-equip-title="' + it.id + '">칭호 장착</button>';
         } else if (it.owned) {
-          btnHtml = '<button class="btn-ghost" disabled>보유 중</button>';
+          btnHtml = '<button class="btn-ghost" disabled>' + (isGrant ? "수령 완료" : "보유 중") + '</button>';
         } else {
-          btnHtml = '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + '>구매 (💠' + it.cost + ")</button>";
+          btnHtml = '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + '>' + (isGrant ? "수령" : "구매") + ' (💠' + it.cost + ")</button>";
         }
         return (
           '<div class="achievement-card" style="border-left-color:' + (it.owned ? "var(--accent)" : "var(--border)") + '">' +
-          '<div style="font-weight:bold;margin-bottom:4px;">' + (it.type === "frame" ? "🖼️ " : "🏷️ ") + escapeHtml(it.name) + "</div>" +
+          '<div style="font-weight:bold;margin-bottom:4px;">' + (typeIcon[it.type] || "✨ ") + escapeHtml(it.name) + "</div>" +
           '<div class="dim" style="margin-bottom:10px;">' + escapeHtml(it.desc) + "</div>" +
           btnHtml +
           "</div>"
@@ -1472,8 +1474,9 @@
         btn.addEventListener("click", async () => {
           btn.disabled = true;
           try {
-            await api("/rebirth-shop/buy", { method: "POST", body: { itemId: btn.dataset.buyRebirthItem } });
-            toast("✨ 구매 완료!");
+            const r = await api("/rebirth-shop/buy", { method: "POST", body: { itemId: btn.dataset.buyRebirthItem } });
+            const boughtItem = items.find((i) => i.id === r.itemId);
+            toast("✨ " + (boughtItem && boughtItem.type === "diamond_grant" ? "다이아 💎" + boughtItem.diamonds + " 수령!" : "구매 완료!"));
             renderRebirthShopTab();
             refreshState();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
@@ -2228,7 +2231,7 @@
       btn.disabled = true;
       try {
         const r = await api("/rebirth", { method: "POST" });
-        toast("🔄 환생 완료! (" + r.rebirthCount + "회, ATK/DEF 영구 +" + r.state.rebirthBonusPct.toFixed(0) + "%)");
+        toast("🔄 환생 완료! (" + r.rebirthCount + "회, ATK/DEF 영구 +" + r.state.rebirthBonusPct.toFixed(0) + "%) · 💠 환생석 +" + r.rebirthStonesGained);
         state = r.state; renderHeader();
         renderTab(currentTab);
       } catch (e) { toast(e.message, true); }
