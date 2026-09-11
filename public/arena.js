@@ -1171,7 +1171,10 @@
           btn.disabled = true;
           try {
             const r = await api("/bots/gacha", { method: "POST", body: { botId: btn.dataset.gacha, tier: btn.dataset.tier } });
-            toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급!");
+            // 슬롯이 하나도 안 바뀌었으면(이미 더 좋은 걸 달고 있었음) 그렇다고 알려준다 —
+            // 아이템 자체는 인벤토리에 그대로 쌓이니 손해는 없다.
+            const anyUpgraded = r.upgraded.weapon || r.upgraded.armor || r.upgraded.core;
+            toast(anyUpgraded ? "🎰 가챠 결과: [" + r.rarityLabel + "] 등급! (더 안 좋은 슬롯은 유지됨)" : "🎰 가챠 결과가 기존 장비보다 안 좋아서 장착은 그대로예요(아이템은 인벤토리에 저장됨).");
             state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });

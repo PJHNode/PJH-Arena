@@ -2558,14 +2558,17 @@ export default {
       }
 
       // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯을 한 번에 랜덤으로
-      //    채운다(기존에 장착돼 있던 건 덮어씀 — 재가챠 업그레이드 용도로도 쓸 수 있게). 인벤토리
-      //    재고와 무관하게 가챠가 직접 아이템을 만들어 붙여준다. ──
+      //    뽑는다. 슬롯마다 "새로 뽑은 게 지금 장착된 것보다 등급이 같거나 높을 때만" 실제로
+      //    교체한다 — 예전엔 결과와 무관하게 무조건 덮어써서, 좋은 장비를 달고 재가챠했다가
+      //    운 나쁘면 하위 등급으로 떨어지는 문제가 있었다(요청 반영: "아이템이 바뀌면 안돼").
+      //    인벤토리 재고와는 무관하게 가챠가 직접 아이템을 만들어 붙여준다 — 이 3개는 실제로
+      //    장착이 안 됐어도 항상 인벤토리에 쌓인다(다른 슬롯에 나중에 꺼내 쓸 수 있게). ──
       if (request.method === "POST" && path === "/bots/gacha") {
         const body = await request.json().catch(function () { return {}; });
         const tierDef = BOT_GACHA_TIERS[body.tier];
         if (!tierDef) return json({ error: "알 수 없는 가챠 등급입니다." }, 400);
         const botId = parseInt(body.botId, 10);
-        const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        const bot = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
         if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
@@ -2573,23 +2576,37 @@ export default {
 
         const rolled = rollBotGacha(body.tier);
         row.pocket_coins -= tierDef.price;
+
+        function rarityIdx(itemId) { return itemId && SHOP_ITEMS[itemId] ? RARITY_ORDER.indexOf(SHOP_ITEMS[itemId].rarity) : -1; }
+        function bestRarityAmong(ids) {
+          let bestI = -1, best = null;
+          ids.forEach(function (id) { const i = rarityIdx(id); if (i > bestI) { bestI = i; best = SHOP_ITEMS[id].rarity; } });
+          return best;
+        }
+        const finalWeapon = rarityIdx(rolled.weapon) >= rarityIdx(bot.equipped_weapon) ? rolled.weapon : bot.equipped_weapon;
+        const finalArmor  = rarityIdx(rolled.armor)  >= rarityIdx(bot.equipped_armor)  ? rolled.armor  : bot.equipped_armor;
+        const finalCore   = rarityIdx(rolled.core)   >= rarityIdx(bot.equipped_core)   ? rolled.core   : bot.equipped_core;
+        const upgraded = { weapon: finalWeapon !== bot.equipped_weapon, armor: finalArmor !== bot.equipped_armor, core: finalCore !== bot.equipped_core };
+        // 등급 배지도 "이번에 뽑은 것"이 아니라 "지금 실제로 장착된 3개 중 최고"로 매겨서,
+        // 슬롯 일부가 교체 안 됐어도(기존 장비가 더 좋아서) 배지가 거꾸로 떨어지지 않는다.
+        const bestRarity = bestRarityAmong([finalWeapon, finalArmor, finalCore]);
+
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
-        // 가챠로 나온 3개는 인벤토리에도 정식으로 한 벌씩 쌓아둔다(장착과 별개) — 이래야 나중에
-        // 이 봇을 되팔아도(장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가 사라지지
-        // 않고, 다른 슬롯에 다시 꺼내 쓸 수도 있다.
+        // 가챠로 나온 3개는 실제 장착 여부와 무관하게 인벤토리에도 정식으로 한 벌씩 쌓아둔다
+        // — 이래야 이 봇을 되팔아도(장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가
+        // 사라지지 않고, 다른 슬롯에 다시 꺼내 쓸 수도 있다.
         await env.DB.batch([
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.weapon),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.armor),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.core),
-          // gacha_rarity는 오직 여기서만 갱신된다 — 나중에 /bots/equip으로 슬롯을 바꿔도
-          // 이 값은 그대로라, 봇의 "등급" 배지는 항상 가장 최근 가챠 결과만 반영한다.
-          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
+          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(finalWeapon, finalArmor, finalCore, bestRarity, botId),
         ]);
 
         return json({
           ok: true, pocketCoins: row.pocket_coins,
-          weapon: rolled.weapon, armor: rolled.armor, core: rolled.core,
-          bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
+          weapon: finalWeapon, armor: finalArmor, core: finalCore,
+          rolledWeapon: rolled.weapon, rolledArmor: rolled.armor, rolledCore: rolled.core, upgraded: upgraded,
+          bestRarity: bestRarity, rarityLabel: RARITY_META[bestRarity].label, rarityColor: RARITY_META[bestRarity].color,
         });
       }
 
