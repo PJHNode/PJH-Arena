@@ -96,9 +96,66 @@ window.propertyIconHtml = function propertyIconHtml(deviceId, color, sizePx) {
   return '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + svg + "</span>";
 };
 
-// itemId + 색상을 받아 인라인 스타일이 적용된 아이콘 래퍼 HTML을 만든다(공용 헬퍼).
-window.itemIconHtml = function itemIconHtml(itemId, color, sizePx) {
+// ══════════════════════════════════════════════════════════
+//  등급 파티클/아우라 이펙트 — "레전더리 이상이면 주변에 파티클과 아우라, 희귀도가 올라갈수록
+//  화려하게" 요청 반영. RARITY_ORDER 전체를 여기 다시 못 박아두는 대신(서버 값과 어긋날 위험),
+//  legendary부터 최상위까지의 5단계만 알면 충분해서 그 구간만 하드코딩했다. rarity가 이
+//  목록에 없으면(=legendary 미만이거나 아예 없으면) 이펙트 없이 기존과 동일한 아이콘만 낸다.
+// ══════════════════════════════════════════════════════════
+const RARITY_FX_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal"];
+// 아이콘(SVG) 본체를 등급 이펙트 래퍼(아우라 + 궤도 파티클)로 감싼다 — 이펙트가 없을 때는
+// 기존과 완전히 같은 마크업을 내서(레이아웃 영향 없음) 호출부를 안 건드려도 되게 했다.
+function wrapWithRarityFx(innerHtml, color, size, rarity) {
+  const tierIdx = RARITY_FX_TIERS.indexOf(rarity);
+  const plain = '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + innerHtml + "</span>";
+  if (tierIdx === -1) return plain;
+  // 등급이 오를수록: 파티클 개수 ↑(3~7), 궤도 한 바퀴 도는 시간 ↓(더 빠르게 반짝임).
+  const particleCount = 3 + tierIdx;
+  const auraDur = (2.6 - tierIdx * 0.2).toFixed(2) + "s";
+  const particleDur = (2.6 - tierIdx * 0.25).toFixed(2) + "s";
+  let particles = "";
+  for (let i = 0; i < particleCount; i++) {
+    const angle = Math.round((360 / particleCount) * i);
+    const delay = (particleDur.replace("s", "") * (i / particleCount)).toFixed(2) + "s";
+    particles += '<span class="item-fx-particle" style="--angle:' + angle + 'deg;--fx-delay:' + delay + ';"></span>';
+  }
+  return (
+    '<span class="item-icon-fx rarity-fx-' + rarity + '" style="--fx-color:' + (color || "currentColor") +
+    ";--fx-aura-dur:" + auraDur + ";--fx-particle-dur:" + particleDur + ";width:" + size + "px;height:" + size + 'px;">' +
+    '<span class="item-fx-aura"></span>' + particles +
+    '<span class="item-icon" style="color:' + (color || "currentColor") + ';width:100%;height:100%;">' + innerHtml + "</span>" +
+    "</span>"
+  );
+}
+
+// itemId + 색상을 받아 인라인 스타일이 적용된 아이콘 래퍼 HTML을 만든다(공용 헬퍼). rarity를
+// 같이 넘기면(legendary 이상일 때만) 주변에 아우라 + 궤도 파티클이 붙는다.
+window.itemIconHtml = function itemIconHtml(itemId, color, sizePx, rarity) {
   const svg = window.ITEM_ICONS[itemId] || window.ITEM_ICON_FALLBACK;
   const size = sizePx || 22;
-  return '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + svg + "</span>";
+  return wrapWithRarityFx(svg, color, size, rarity);
+};
+
+// ══════════════════════════════════════════════════════════
+//  BOT 전용 아이콘 — "봇도 단순히 이모티콘으로 치부하지 말고 등급에 따라 달라지면 좋겠다"는
+//  요청 반영. 아이템(무기/방어/코어)과 같은 원칙으로, 등급이 오를수록 도안이 점점 더
+//  정교해지도록(단순 상자형 머리 → 어깨 장갑 → 바이저 → 블레이드 → 이중 안테나 → 왕관형
+//  스파이크 → 후광 → 뿔 → 보이드 코어) 9단계 전부를 손 코딩했다. 봇의 "등급"은 Bots 탭에서
+//  쓰는 gacha_rarity 그대로 재사용한다(별도 개념 아님).
+// ══════════════════════════════════════════════════════════
+window.BOT_ICONS = {
+  common: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r="1" fill="currentColor" stroke="none"/><path d="M12 8V5"/><circle cx="12" cy="4" r="1"/></svg>',
+  uncommon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="8" width="12" height="10" rx="2"/><rect x="3" y="10" width="2.4" height="5" rx="1"/><rect x="18.6" y="10" width="2.4" height="5" rx="1"/><circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13" r="1" fill="currentColor" stroke="none"/><path d="M12 8V5"/><circle cx="12" cy="4" r="1"/></svg>',
+  rare: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="8" width="12" height="10" rx="2"/><rect x="3" y="10" width="2.4" height="5" rx="1"/><rect x="18.6" y="10" width="2.4" height="5" rx="1"/><rect x="8" y="12" width="8" height="2" rx="1" fill="currentColor" stroke="none"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1.3"/></svg>',
+  epic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="8" width="12" height="10" rx="2"/><path d="M6 10l-3 1.5 3 2M18 10l3 1.5-3 2"/><rect x="8" y="11.5" width="8" height="2" rx="1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.3" r="1.3" fill="currentColor" stroke="none"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1.3"/></svg>',
+  legendary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="8" width="12" height="10" rx="2"/><path d="M6 10l-3.5 1.5L6 13M18 10l3.5 1.5L18 13"/><rect x="8" y="11.5" width="8" height="2" rx="1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.3" r="1.3" fill="currentColor" stroke="none"/><path d="M10 8V4M14 8V4"/><circle cx="10" cy="3" r="1"/><circle cx="14" cy="3" r="1"/></svg>',
+  mythic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="9" width="12" height="9" rx="2"/><path d="M6 10l-3.5 1.5L6 13M18 10l3.5 1.5L18 13"/><rect x="8" y="12" width="8" height="2" rx="1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.3" r="1.3" fill="currentColor" stroke="none"/><path d="M7 9l1-4 2 3 2-4 2 4 2-3 1 4"/></svg>',
+  secret: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><ellipse cx="12" cy="6.5" rx="6.5" ry="2" stroke-dasharray="2 1.5"/><rect x="6" y="9" width="12" height="9" rx="2"/><path d="M6 10l-3.5 1.5L6 13M18 10l3.5 1.5L18 13"/><rect x="8" y="12" width="8" height="2" rx="1" fill="currentColor" stroke="none"/><circle cx="12" cy="16.3" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  forbidden: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.5 9l-2.5-5 4 3M17.5 9l2.5-5-4 3"/><rect x="6" y="9" width="12" height="9" rx="1.5"/><path d="M6 10l-3.5 1.5L6 13M18 10l3.5 1.5L18 13"/><path d="M8 12.5l2 2 2-2 2 2 2-2"/><circle cx="12" cy="16.8" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  abyssal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.5 9l-2.5-5 4 3M17.5 9l2.5-5-4 3"/><rect x="6" y="9" width="12" height="9" rx="1.5"/><path d="M9 12.5c0-1.8 1.8-2.7 2.7-1.3s0 3.1-1.8 3.1-2.7-1.3-2.7-2.7 1-2.7 2.3-2.7"/><path d="M4 18c2.2 1.8 5 2.6 8 2.6s5.8-.8 8-2.6"/></svg>',
+};
+window.botIconHtml = function botIconHtml(rarity, color, sizePx) {
+  const svg = window.BOT_ICONS[rarity] || window.BOT_ICONS.common;
+  const size = sizePx || 22;
+  return wrapWithRarityFx(svg, color, size, rarity);
 };

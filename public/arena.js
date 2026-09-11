@@ -956,7 +956,7 @@
         const stockLine = it.totalStock != null ? '<div class="shop-card-type" style="color:' + (soldOut ? "var(--danger)" : "var(--sub)") + ';">재고 ' + it.remainingStock + " / " + it.totalStock + "</div>" : "";
         return (
         '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
-        '<div class="shop-card-icon">' + itemIconHtml(it.id, it.rarityColor, 30) + "</div>" +
+        '<div class="shop-card-icon">' + itemIconHtml(it.id, it.rarityColor, 30, it.rarity) + "</div>" +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
         '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned + (it.maxOwned ? "/" + it.maxOwned : "") : (it.maxOwned ? " · 최대 " + it.maxOwned + "개" : "")) + "</div>" +
         stockLine +
@@ -1043,7 +1043,7 @@
       if (!usableItems.length) { list.innerHTML = '<p class="dim">보유한 소비재/상자가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
       list.innerHTML = usableItems.map((it) => (
         '<div class="inv-row" style="border-left-color:' + it.rarityColor + '">' +
-        '<div class="inv-name">' + itemIconHtml(it.id, it.rarityColor, 18) + " " + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
+        '<div class="inv-name">' + itemIconHtml(it.id, it.rarityColor, 18, it.rarity) + " " + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
         '<div class="dim">' + itemStatLabel(it) + "</div>" +
         '<button class="btn-ghost" data-use="' + it.id + '">' + (it.type === "box" ? "개봉" : "사용") + "</button>" +
         "</div>"
@@ -1108,7 +1108,7 @@
         // 장착 중인 아이템 아이콘을 라벨 옆에 보여준다(빈 슬롯이면 자리만 차지하는 빈 칸으로
         // 대체해서 아이콘 유무와 상관없이 라벨/드롭다운 위치가 흔들리지 않게 한다).
         const icon = currentItem
-          ? itemIconHtml(equippedId, currentItem.rarityColor, 20)
+          ? itemIconHtml(equippedId, currentItem.rarityColor, 20, currentItem.rarity)
           : '<span class="item-icon" style="width:20px;height:20px;"></span>';
         let optionsHtml = '<option value="">— 비어있음 —</option>';
         if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>[' + (currentItem ? currentItem.rarityLabel : "") + "] " + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
@@ -1178,8 +1178,12 @@
         const stationedNote = stationedPlanet
           ? '<div class="dim" style="font-size:10px;margin-bottom:6px;">🪐 ' + escapeHtml(stationedPlanet.name) + '에 경비병으로 배치됨 — 개인 전투력엔 반영 안 됨</div>'
           : "";
+        // 봇 아이콘도 이모티콘 하나로 퉁치지 않고 등급(gacha_rarity)에 따라 도안 자체가
+        // 달라진다(요청 반영) — 아직 가챠를 한 번도 안 돌린 봇은 회색 common 도안으로 표시.
+        const botIcon = botIconHtml(rarityInfo ? rarityInfo.rarity : "common", rarityInfo ? rarityInfo.rarityColor : "var(--sub)", 20);
         html += '<div class="bot-card' + attrs.cls + '" ' + attrs.style + '>' +
-          '<div class="bot-card-title">🤖 BOT #' + (i + 1) + '<button class="bot-sell-btn" data-sell="' + b.id + '" title="봇 되팔기">되팔기 💰' + fmt(sellRefund) + "</button></div>" +
+          '<div class="bot-card-title"><span class="bot-card-title-name">' + botIcon + " BOT #" + (i + 1) + "</span>" +
+          '<button class="bot-sell-btn" data-sell="' + b.id + '" title="봇 되팔기">되팔기 💰' + fmt(sellRefund) + "</button></div>" +
           attrs.tag +
           statLine(b.stats) +
           stationedNote +
@@ -1443,7 +1447,7 @@
         const btnLabel = maxed ? "최대 레벨" : it.owned <= 0 ? "미보유" : "강화 (💰 " + fmt(it.nextCost) + ")";
         return (
           '<div class="enchant-card" style="border-left-color:' + it.typeColor + '">' +
-          '<div>' + itemIconHtml(it.id, it.rarityColor, 30) + "</div>" +
+          '<div>' + itemIconHtml(it.id, it.rarityColor, 30, it.rarity) + "</div>" +
           '<div class="enchant-card-name">' + escapeHtml(it.name) + "</div>" +
           '<div class="rarity-badge" style="color:' + it.rarityColor + '">' + it.rarityLabel + "</div>" +
           '<div class="dim" style="font-size:10px;">보유 ' + it.owned + "개 · +" + it.bonusPct.toFixed(0) + "% 적용 중</div>" +
@@ -2141,12 +2145,13 @@
       if (!s) return '<div class="profile-slot empty">비어있음</div>';
       if (s.type === "item") {
         return '<div class="profile-slot" style="border-left-color:' + s.typeColor + ';">' +
-          '<div>' + itemIconHtml(s.id, s.rarityColor, 26) + "</div>" +
+          '<div>' + itemIconHtml(s.id, s.rarityColor, 26, s.rarity) + "</div>" +
           '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">' + escapeHtml(s.name) + "</div>" +
           '<div class="profile-slot-stat">' + (s.typeLabel || "") + " · " + s.rarityLabel + "</div></div>";
       }
       return '<div class="profile-slot" style="border-left-color:' + s.rarityColor + ';">' +
-        '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">🤖 봇 (' + s.rarityLabel + ")</div>" +
+        '<div>' + botIconHtml(s.rarity, s.rarityColor, 26) + "</div>" +
+        '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">봇 (' + s.rarityLabel + ")</div>" +
         '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div></div>";
     }).join("");
     return (
