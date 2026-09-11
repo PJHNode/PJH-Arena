@@ -399,6 +399,8 @@
   .galaxy-empire-header b { color: var(--energy); }
   .galaxy-empire-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .galaxy-empire-empty { font-size: 11px; color: var(--sub); grid-column: 1/-1; }
+  .galaxy-scout-form { display: flex; gap: 8px; margin-bottom: 12px; }
+  .galaxy-scout-form input { flex: 1; }
   .galaxy-legend-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
   .galaxy-tier-legend { display: flex; gap: 6px; flex-wrap: wrap; }
   .galaxy-tier-chip { font-size: 9px; color: var(--sub); background: var(--surface-2); border: 1px solid var(--border); padding: 3px 8px; }
@@ -646,14 +648,17 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">행성을 정복해 시간당 수익 + 제국 보너스(행성당 ATK/DEF +2%)를 얻으세요(⚡2) · 최대 8개. 홈 행성은 Lv.20 미만 무적, 그 이후엔 뚫려도 뺏기지 않고 코인만 몰수됩니다.</p>
+        <p class="dim" style="margin-bottom:14px;">🤖 봇 구역은 영원히 PVE — 이겨도 소유권은 절대 안 넘어가고, 그 자리에서 즉시 약탈 후 새 난이도로 리롤됩니다(⚡2). 👤 사람 구역(홈 행성)은 먼저 정찰해야만 보이고 공격할 수 있습니다(⚡1) — 이기면 포켓 코인 20%를 몰수합니다(뺏지는 않음).</p>
 
         <div class="galaxy-empire">
           <div class="galaxy-empire-header">
-            <span>🏠 내 제국 — 정복 <b id="galaxyOwnedCount">0</b>/<b id="galaxyMaxOwned">8</b> (전투력 <b id="galaxyEmpireBonus">+0%</b>) · 대기수익 <b id="galaxyPending">0</b></span>
-            <button class="btn-primary" id="galaxyCollectBtn">COLLECT ALL</button>
+            <span>👤 사람 구역 — 정찰 후 공격</span>
           </div>
-          <div class="galaxy-empire-grid"></div>
+          <div class="galaxy-scout-form">
+            <input id="galaxyScoutInput" type="text" placeholder="정찰할 상대 아이디" />
+            <button class="btn-primary" id="galaxyScoutBtn">정찰하기 (⚡1)</button>
+          </div>
+          <div class="galaxy-empire-grid" id="galaxyScoutResult"></div>
         </div>
 
         <div class="galaxy-legend-row">
@@ -661,6 +666,7 @@
           <div class="galaxy-reroll-countdown" id="galaxyRerollCountdown"></div>
         </div>
 
+        <p class="panel-subtitle">🤖 봇 구역 (PVE 전용, 절대 고갈되지 않음)</p>
         <div class="galaxy-filter-bar">
           <div class="galaxy-filter-group" data-filter-group="tier">
             <button class="galaxy-filter-btn active" data-tier="all">전체 난이도</button>
@@ -670,11 +676,6 @@
             <button class="galaxy-filter-btn" data-tier="elite">정예</button>
             <button class="galaxy-filter-btn" data-tier="nightmare">악몽</button>
             <button class="galaxy-filter-btn" data-tier="apex">극한</button>
-          </div>
-          <div class="galaxy-filter-group" data-filter-group="type">
-            <button class="galaxy-filter-btn active" data-type="all">전체</button>
-            <button class="galaxy-filter-btn" data-type="bot">🤖 PVE 봇</button>
-            <button class="galaxy-filter-btn" data-type="player">⚔️ 유저 소유</button>
           </div>
         </div>
 

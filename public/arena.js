@@ -511,7 +511,7 @@
   //    않는다 — 캐시가 없을 때만(최초 진입, 공격 후) 네트워크를 탄다. ──
   let galaxyCache = null;
   let galaxyExpeditionUnlocked = false;
-  let galaxyTierFilter = "all", galaxyTypeFilter = "all", galaxyShowCount = 12;
+  let galaxyTierFilter = "all", galaxyShowCount = 12;
   const GALAXY_PAGE_SIZE = 12;
   const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
 
@@ -532,24 +532,18 @@
     renderGalaxyContent();
   }
 
+  // 사람 구역 정찰 결과 — 서버를 다시 안 불러도 되게 세션 동안만 들고 있는다(탭 재진입/필터
+  // 조작으로 다시 그릴 때도 유지되도록 galaxyCache와 별도로 둔다).
+  let galaxyScoutResult = null;
+
   function renderGalaxyContent() {
     const data = galaxyCache;
     if (!data) return;
     const panel = $("panel-galaxy");
-    const empireGrid = panel.querySelector(".galaxy-empire-grid");
     const grid = panel.querySelector(".planet-grid");
     const moreBtn = $("galaxyShowMoreBtn");
 
-    $("galaxyOwnedCount").textContent = data.myOwnedWild;
-    $("galaxyMaxOwned").textContent = data.maxOwnedWild == null ? "무제한" : data.maxOwnedWild;
-    $("galaxyEmpireBonus").textContent = "+" + (state && state.empireBonusPct ? state.empireBonusPct.toFixed(0) : 0) + "%";
     galaxyNextRerollAt = data.nextRerollAt;
-    // 예전엔 "p.isHome || p.mine"이라 남의 홈 행성까지 전부 내 제국 칸에 끼어 보이는 버그가
-    // 있었다(isHome은 "그 행성이 누군가의 홈"이라는 뜻이지 "내 홈"이라는 뜻이 아님) — 내
-    // 홈 행성은 어차피 p.mine이 이미 true라 mine 하나로도 충분하다.
-    const empire = data.planets.filter((p) => p.mine);
-    const pendingTotal = empire.reduce((sum, p) => sum + (p.pendingCoins || 0), 0);
-    $("galaxyPending").textContent = fmt(pendingTotal);
 
     // 난이도별 등장 확률 + 다음 리롤까지 남은 시간 — 필터 바로 위에 작은 범례로 보여준다.
     const legendEl = $("galaxyTierLegend");
@@ -563,52 +557,47 @@
     function statLine(p) {
       if (!p.combatStats) return "";
       const s = p.combatStats;
-      // 정복된 야생 행성(홈 아님)은 방어력이 곧 배치된 경비병 수와 직결되니 옆에 같이 보여준다
-      // — garrisonCount가 null이면 홈/PVE 행성이라 해당 없음.
-      const garrisonNote = p.ownerUserId && !p.isHome ? ' <span class="dim">(경비병 ' + (p.garrisonCount || 0) + "/" + (p.garrisonMax || 3) + ")</span>" : "";
-      return '<div class="planet-card-combat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%" + garrisonNote + "</div>";
+      return '<div class="planet-card-combat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div>";
     }
 
     function planetCard(p, withButton) {
       const cls = p.isHome ? "home" : p.mine ? "mine" : "";
       const ownerLine = p.isHome
-        ? "🏠 홈 행성" + (!p.mine && p.homeInvulnerable ? " · 🛡️ 무적" : "")
-        : p.mine ? "내 소유" : p.ownerUserId ? "소유: " + escapeHtml(p.ownerName) : "🤖 무주인 (PVE)";
+        ? (p.mine ? "🏠 내 홈 행성" : "🏠 " + escapeHtml(p.ownerName) + "의 홈 행성") + (!p.mine && p.homeInvulnerable ? " · 🛡️ 무적" : "")
+        : "🤖 무주인 (PVE)";
       const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
-      const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr" + (p.mine && p.pendingCoins > 0 ? " · 대기 " + fmt(p.pendingCoins) : "") + "</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
+      const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
       const attackBtn = !withButton ? "" : p.attackable
         ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
-        : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "홈 행성" : "내 행성") + "</button>";
+        : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "내 홈 행성" : "내 행성") + "</button>";
       const expeditionBtn = withButton && p.expeditionEligible && galaxyExpeditionUnlocked
         ? '<button class="btn-ghost" data-expedition="' + p.id + '" style="margin-top:6px;width:100%;"' + (state.stamina < 2 ? " disabled" : "") + ">🛰️ 원정 보내기 (⚡2)</button>"
-        : "";
-      // 내 제국 칸에서만 — 홈 행성 제외, 내가 정복해 둔 야생 행성은 포기할 수 있다.
-      const abandonBtn = !withButton && p.mine && !p.isHome
-        ? '<button class="btn-ghost" data-abandon="' + p.id + '" style="margin-top:6px;width:100%;">포기하기</button>'
         : "";
       return (
         '<div class="planet-card ' + cls + '">' +
         '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
         '<div class="planet-card-owner">' + ownerLine + "</div>" +
-        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn + abandonBtn +
+        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn +
         "</div>"
       );
     }
 
-    // 내 제국 — 항상 전부 보여준다(최대 1 홈 + 3 야생이라 얼마 안 됨).
-    empireGrid.innerHTML = empire.length
-      ? empire.map((p) => planetCard(p, false)).join("")
-      : '<p class="galaxy-empire-empty">아직 정복한 행성이 없습니다. 아래에서 첫 행성을 노려보세요.</p>';
+    // 사람 구역 — 정찰 결과가 있을 때만 카드 하나를 보여준다(정찰 안 하면 아무도 안 보임).
+    const scoutGrid = $("galaxyScoutResult");
+    if (scoutGrid) {
+      scoutGrid.innerHTML = galaxyScoutResult
+        ? planetCard(galaxyScoutResult, true)
+        : '<p class="galaxy-empire-empty">정찰한 대상이 없습니다. 위에서 아이디를 입력해 정찰하세요.</p>';
+      scoutGrid.querySelectorAll("button[data-planet]").forEach((btn) => {
+        btn.addEventListener("click", () => openPlanetAttackSequence(galaxyScoutResult));
+      });
+    }
 
-    // 정복 대상 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출. 이제 남의 홈 행성도
-    // 공격 대상에 포함된다(내 것만 "내 제국" 쪽으로 빠지고 여기선 제외).
+    // 봇 구역 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출. 내 홈 행성(mine)은 애초에
+    // 공격 대상이 아니므로 제외.
     const targets = data.planets.filter((p) => {
       if (p.mine) return false;
-      // 정복된 행성은 원래의 봇 난이도 정보가 사라지므로(bot_tier가 NULL이 됨), 난이도 필터는
-      // 아직 봇이 지키고 있는 행성에만 적용된다 — 유저 소유 행성은 난이도 필터와 무관하게 남는다.
-      if (galaxyTierFilter !== "all" && p.botTier && p.botTier !== galaxyTierFilter) return false;
-      if (galaxyTypeFilter === "bot" && p.ownerUserId) return false;
-      if (galaxyTypeFilter === "player" && !p.ownerUserId) return false;
+      if (galaxyTierFilter !== "all" && p.botTier !== galaxyTierFilter) return false;
       return true;
     });
     const visible = targets.slice(0, galaxyShowCount);
@@ -624,18 +613,6 @@
     grid.querySelectorAll("button[data-expedition]").forEach((btn) => {
       btn.addEventListener("click", () => sendExpedition(btn.dataset.expedition, btn));
     });
-    empireGrid.querySelectorAll("button[data-abandon]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        if (!confirm("이 행성을 포기하시겠습니까? 대기 수익은 먼저 정산됩니다.")) return;
-        btn.disabled = true;
-        try {
-          const r = await api("/planets/abandon", { method: "POST", body: { planetId: btn.dataset.abandon } });
-          toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 정산 후 포기 완료" : "포기 완료");
-          state.pocketCoins = r.pocketCoins; renderHeader();
-          galaxyCache = null; renderGalaxyTab();
-        } catch (e) { toast(e.message, true); btn.disabled = false; }
-      });
-    });
   }
 
   // ── 원정(오프라인 자동 전투) — 태세/타이밍 미니게임 없이 즉시 서버 판정. 결과는 토스트로
@@ -645,7 +622,7 @@
     try {
       const r = await api("/planets/expedition", { method: "POST", body: { planetId } });
       const xpNote = " (EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + ")";
-      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 정복" + (r.captured ? "" : "(한도 초과, 약탈만)") + " +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName) + xpNote, !r.attackerWins);
+      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 약탈 +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName) + xpNote, !r.attackerWins);
       state = r.state; renderHeader();
       galaxyCache = null; renderGalaxyTab();
     } catch (e) { toast(e.message, true); btn.disabled = false; }
@@ -664,21 +641,6 @@
     el.textContent = "다음 난이도 리롤까지 " + fmtCountdown(remain);
   }, 1000);
 
-  // 난이도(약함~극한) 필터는 PVE 봇이 지키는 행성에만 의미가 있다 — "유저 소유"만 보기로
-  // 걸면 화면엔 애초에 봇 행성이 하나도 안 나오니(botTier가 없어서), 난이도 버튼들이 떠 있어도
-  // 아무 효과가 없어서 혼란스러웠다. "유저 소유"를 고르면 난이도 필터 자체를 숨기고 "전체"로
-  // 되돌린다.
-  function updateTierFilterVisibility() {
-    const tierGroup = document.querySelector('.galaxy-filter-group[data-filter-group="tier"]');
-    if (!tierGroup) return;
-    const hide = galaxyTypeFilter === "player";
-    tierGroup.style.display = hide ? "none" : "";
-    if (hide && galaxyTierFilter !== "all") {
-      galaxyTierFilter = "all";
-      document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((b) => b.classList.toggle("active", b.dataset.tier === "all"));
-    }
-  }
-
   function initGalaxyFilters() {
     document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -689,34 +651,36 @@
         renderGalaxyContent();
       });
     });
-    document.querySelectorAll(".galaxy-filter-btn[data-type]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".galaxy-filter-btn[data-type]").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        galaxyTypeFilter = btn.dataset.type;
-        galaxyShowCount = GALAXY_PAGE_SIZE;
-        updateTierFilterVisibility();
-        renderGalaxyContent();
-      });
-    });
-    updateTierFilterVisibility();
     const moreBtn = $("galaxyShowMoreBtn");
     if (moreBtn) moreBtn.addEventListener("click", () => { galaxyShowCount += GALAXY_PAGE_SIZE; renderGalaxyContent(); });
   }
 
-  function initGalaxyButtons() {
-    initGalaxyFilters();
-    const btn = $("galaxyCollectBtn");
+  // ── 사람 구역 정찰 — /arena/scan(PvP 정찰)과 똑같은 발상. 정찰해야만 그 순간 상대 홈
+  //    행성 정보(전투력/무적 여부/planetId)가 드러나고 공격 버튼이 뜬다. ──
+  function initGalaxyScout() {
+    const btn = $("galaxyScoutBtn");
     if (!btn) return;
     btn.addEventListener("click", async () => {
+      const targetUserId = $("galaxyScoutInput").value.trim();
+      if (!targetUserId) return toast("정찰할 아이디를 입력하세요.", true);
       btn.disabled = true;
       try {
-        const r = await api("/planets/collect", { method: "POST" });
-        toast(r.collected > 0 ? "+" + fmt(r.collected) + " 코인 수거" : "수거할 대기 수익이 없습니다.");
-        state.pocketCoins = r.pocketCoins; renderHeader(); galaxyCache = null; renderGalaxyTab();
-      } catch (e) { toast(e.message, true); }
-      btn.disabled = false;
+        const r = await api("/planets/scout", { method: "POST", body: { targetUserId } });
+        galaxyScoutResult = {
+          id: r.planetId, name: r.planetName, isHome: true, mine: false,
+          ownerUserId: r.ownerUserId, ownerName: r.ownerName,
+          combatStats: r.combatStats, homeInvulnerable: r.homeInvulnerable, attackable: r.attackable,
+          botTier: null, botTierLabel: null, coinsPerHour: 0, expeditionEligible: false,
+        };
+        state = r.state; renderHeader();
+        renderGalaxyContent();
+      } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
     });
+  }
+
+  function initGalaxyButtons() {
+    initGalaxyFilters();
+    initGalaxyScout();
   }
 
   // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
@@ -749,10 +713,8 @@
   function openPlanetAttackSequence(planet) {
     $("attackModal").style.display = "flex";
     const hint = planet.botTier
-      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다."
-      : planet.isHome
-      ? "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 방어력이 실전의 2배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다."
-      : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b> — 정복하면 그동안 쌓인 수익을 약탈합니다.";
+      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이겨도 소유권은 안 넘어가고 그 자리에서 약탈만 합니다."
+      : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 방어력이 실전의 2배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다(행성은 뺏지 않음).";
     renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
   }
 
@@ -847,13 +809,14 @@
         "</div>";
       let resultDetail;
       if (isPlanet) {
-        if (r.attackerWins && r.isHome) {
-          // 홈 행성은 이제 절대 정복되지 않는다 — 이겨도 보상(코인 몰수)만 받고 행성은 그대로.
-          resultDetail = "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인";
+        // 봇 구역/사람 구역 둘 다 소유권이 절대 안 넘어간다 — 이겨도 그 자리에서 약탈(홈 행성은
+        // 포켓 코인 몰수, 봇 구역은 시세 약탈)만 받고, 행성 자체는 원래 상태 그대로 남는다.
+        if (r.attackerWins) {
+          resultDetail = r.isHome
+            ? "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인"
+            : "🤖 침투 성공! +" + fmt(r.lootCoins) + " 코인 약탈";
         } else {
-          resultDetail = r.attackerWins
-            ? (r.captured ? "🌍 행성 정복! " : "(정복 한도 초과 — 약탈만) ") + "+" + fmt(r.lootCoins) + " 코인 약탈"
-            : "정복 실패";
+          resultDetail = "침투 실패";
         }
       } else {
         const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
@@ -1163,6 +1126,9 @@
       // 계산에서 서버가 빼버림) 그 행성 하나의 방어에만 들어간다.
       function stationRow(bot) {
         const opts = data.stationOptions || [];
+        // 봇 구역/사람 구역 개편으로 야생 행성을 아예 소유할 수 없어져서(항상 봇 소유) 배치
+        // 대상이 없다 — 옵션이 하나도 없으면 "나와 함께"만 있는 무의미한 드롭다운을 아예 숨긴다.
+        if (!opts.length) return "";
         const max = data.garrisonMax || 3;
         let html = '<option value=""' + (!bot.stationed_planet_id ? " selected" : "") + ">🧑‍💻 나와 함께 (개인 전투력)</option>";
         opts.forEach((p) => {
@@ -2326,8 +2292,8 @@
         if (l.kind === "job") { icon = "💾"; desc = (l.opponent_name || "") + " 작업 완료"; }
         else if (l.kind === "pvp_attack") { icon = l.result === "crit" ? "💥" : attackWon ? "⚔️" : "🛡️"; desc = (l.result === "crit" ? "크리티컬 침투 성공: " : attackWon ? "침투 성공: " : "침투 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "pvp_defend") { icon = l.result === "win" ? "🛡️" : "💥"; desc = (l.result === "win" ? "방어 성공: " : "피격당함: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
-        else if (l.kind === "planet_attack") { icon = attackWon ? "🌍" : "🛡️"; desc = (attackWon ? "행성 정복: " : "행성 공격 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
-        else if (l.kind === "planet_lost") { icon = "💥"; desc = "행성을 빼앗김: " + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "planet_attack") { icon = attackWon ? "🌍" : "🛡️"; desc = (attackWon ? "행성 침투 성공: " : "행성 공격 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "home_breached") { icon = "💥"; desc = "홈 행성 피습당함: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "planet_expedition") { icon = attackWon ? "🛰️" : "🛰️"; desc = (attackWon ? "원정 성공: " : "원정 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
