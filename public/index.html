@@ -148,6 +148,13 @@
     background-size: 200% 100%; animation: eventBannerShift 4s ease-in-out infinite;
   }
   @keyframes eventBannerShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+  /* ── 긴급 정지 배너 — 관리자가 Admin 탭에서 켜면 전체 유저에게 즉시 보인다(정지 사유를
+     몰라 답답해하지 않도록). 전역 이벤트 배너보다 훨씬 위급해 보이게 danger 색 + 빠른 점멸. ── */
+  #economyFrozenBanner {
+    display: none; text-align: center; font-size: 13px; font-weight: bold; padding: 8px;
+    background: var(--danger); color: #fff; animation: frozenBannerPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes frozenBannerPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 
   /* ── 레이아웃 ── */
   .app-body { display: flex; flex: 1; min-height: 0; }
@@ -342,6 +349,10 @@
   .admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
   .admin-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--danger); padding: 14px; }
   .admin-card-title { font-weight: bold; font-size: 12px; margin-bottom: 10px; }
+  /* 긴급 정지 카드는 다른 admin-card보다 한 단계 더 위급해 보이게 테두리 전체를 danger로 두르고
+     은은한 붉은 배경을 깐다 — 실수로 다른 치트 버튼과 헷갈리면 안 되는 스위치라서. */
+  .admin-card-danger { border: 1px solid var(--danger); background: rgba(255, 61, 104, 0.08); }
+  .admin-card-danger .admin-card-title { color: var(--danger); font-size: 14px; }
   .admin-form { display: flex; gap: 8px; }
   .admin-form input, .admin-form select { flex: 1; min-width: 0; }
 
@@ -626,6 +637,7 @@
   </div>
 </header>
 
+<div id="economyFrozenBanner">🚨 긴급 정지 중 — 관리자가 게임 경제를 잠시 동결했습니다. 잠시 후 다시 시도해주세요.</div>
 <div id="globalEventBanner">🎉 코인·EXP 2배 이벤트 진행 중! 남은 시간 <b id="globalEventCountdown">-</b></div>
 <div id="downedBanner">⚠️ HP 0 — 자연 회복 대기 중 (아이템으로 즉시 회복 가능)</div>
 
@@ -903,6 +915,12 @@
 
       <div class="tab-panel" id="panel-admin">
         <p class="panel-title">🛠️ ADMIN (테스트 전용, 리더보드 비노출)</p>
+        <div class="admin-card admin-card-danger" style="margin-bottom:16px;">
+          <div class="admin-card-title">🚨 긴급 정지</div>
+          <p class="dim" style="margin:0 0 10px;">켜면 이 계정을 제외한 모든 유저의 재화·상점 관련 액션(해킹 작업/상점/PvP/행성/은행/클럽/가챠/거래 등)이 즉시 전부 막힙니다. 악용/버그 발견 시 원인 파악할 동안만 켜두고, 확인되면 바로 꺼주세요.</p>
+          <p style="margin:0 0 10px;">현재 상태: <b id="adminFreezeStatus" style="color:var(--sub);">확인 중...</b></p>
+          <button class="btn-danger" id="adminFreezeToggleBtn" style="width:100%;">긴급 정지 켜기</button>
+        </div>
         <div class="admin-grid">
           <div class="admin-card">
             <div class="admin-card-title">경험치 추가</div>

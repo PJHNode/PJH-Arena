@@ -1300,7 +1300,25 @@ async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS arena_item_enchants (user_id TEXT NOT NULL, item_id TEXT NOT NULL, " +
     "level INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, item_id))"
   );
+
+  // ── 서버 전역 설정(key-value 한 줄) — 지금은 "긴급 정지" 하나뿐이다. 유제민/이윤규 계정
+  // 악용 건 이후 "관리자 계정에 이런 사태가 또 발생할 수 있으니 긴급 정지 탭을 만들어달라"는
+  // 요청 반영: 코드 재배포 없이 관리자가 버튼 한 번으로 전체 경제(재화가 오가는 모든 POST
+  // 액션 — 해킹 작업/상점/PvP/행성/은행/클럽/가챠/거래 등 전부)를 즉시 얼렸다 풀었다 할 수
+  // 있게 한다. PJH-Hub와 공유하는 SESSIONS/USERS KV에는 절대 안 쓴다는 원칙이 있어서
+  // (파일 맨 위 주석 참고) Arena 전용 D1에 새 테이블로 둔다.
+  await env.DB.exec("CREATE TABLE IF NOT EXISTS arena_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   schemaReady = true;
+}
+
+async function isEconomyFrozen(env) {
+  const row = await env.DB.prepare("SELECT value FROM arena_settings WHERE key = 'economy_frozen'").first();
+  return !!(row && row.value === "1");
+}
+async function setEconomyFrozen(env, frozen) {
+  await env.DB.prepare(
+    "INSERT INTO arena_settings (key, value) VALUES ('economy_frozen', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).bind(frozen ? "1" : "0").run();
 }
 
 // 오늘자 진행도 행이 없으면 만들어서 돌려준다(멱등) — 하루 지나면 자연히 새 행을 만들게 된다.
@@ -1812,11 +1830,20 @@ export default {
       if (!user) return json({ error: "로그인이 필요합니다." }, 401);
       if (user._error) return json({ error: user._error }, user._status);
 
+      // ── 긴급 정지 — 관리자가 켜면 이 서버의 모든 POST 액션(재화가 오가는 것이든 아니든
+      //    전부 — 해킹 작업/상점/PvP/행성/은행/클럽/가챠/거래 등)이 즉시 막힌다. GET(조회)은
+      //    막지 않아서 다들 자기 상태/공지는 그대로 볼 수 있다. /admin/* 자체와 관리자 본인의
+      //    다른 액션은 예외 — 관리자가 원인 조사·해제하는 동안 발이 묶이면 안 되기 때문. ──
+      const economyFrozen = await isEconomyFrozen(env);
+      if (economyFrozen && request.method === "POST" && user.userId !== ADMIN_USER_ID && path.indexOf("/admin") !== 0) {
+        return json({ error: "🚨 긴급 정지 중입니다 — 관리자가 게임 경제를 잠시 동결했습니다. 잠시 후 다시 시도해주세요." }, 503);
+      }
+
       if (request.method === "GET" && path === "/state") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         await persistRegen(env, row);
         const combat = await totalCombatStats(env, row);
-        return json(Object.assign(publicState(row, combat), { avatarIcon: AVATAR_ICONS[user.avatar] || null }));
+        return json(Object.assign(publicState(row, combat), { avatarIcon: AVATAR_ICONS[user.avatar] || null, economyFrozen: economyFrozen }));
       }
 
       // ── GET /activity-summary — "자리를 비운 사이 무슨 일이 있었는지" 한 번에 보여준다(PvP로
@@ -1991,6 +2018,16 @@ export default {
         const refreshed = await loadOrCreateUser(env, user.userId, user.realName);
         const combat = await totalCombatStats(env, refreshed);
         return json({ ok: true, state: publicState(refreshed, combat) });
+      }
+
+      // ── POST /admin/freeze { frozen: boolean } — 긴급 정지 토글. 켜면 이 함수 맨 앞의
+      //    economyFrozen 체크가 즉시 모든 POST 액션을 막는다(관리자 본인 제외). 코드 재배포
+      //    없이 버튼 하나로 즉시 반영되고, 원인 파악 후 다시 눌러서 풀면 된다. ──
+      if (request.method === "POST" && path === "/admin/freeze") {
+        const body = await request.json().catch(function () { return {}; });
+        const frozen = !!body.frozen;
+        await setEconomyFrozen(env, frozen);
+        return json({ ok: true, frozen: frozen });
       }
 
       if (request.method === "POST" && path === "/hack-job") {

@@ -197,6 +197,8 @@
     // 주의: #globalEventBanner의 CSS 기본값이 display:none이라 ""로 지우면 그 기본값으로
     // 되돌아갈 뿐 안 보인다(.tab-panel/downedBanner와 똑같은 함정) — 반드시 "block"으로 명시.
     $("globalEventBanner").style.display = state.globalEventActive ? "block" : "none";
+    // 긴급 정지 배너 — 관리자가 켜면 모두에게(관리자 본인 포함) 즉시 보인다. 같은 함정이라 "block" 명시.
+    $("economyFrozenBanner").style.display = state.economyFrozen ? "block" : "none";
     renderResourceEtas();
 
     $("statPointsText").textContent = state.statPoints;
@@ -2000,6 +2002,15 @@
         sel.dataset.loaded = "1";
       } catch (e) {}
     }
+    // 긴급 정지 상태 — state는 15초마다 갱신되니 그동안의 값을 그대로 반영(별도 API 호출 불필요).
+    const statusEl = $("adminFreezeStatus"), toggleBtn = $("adminFreezeToggleBtn");
+    if (statusEl && toggleBtn && state) {
+      const frozen = !!state.economyFrozen;
+      statusEl.textContent = frozen ? "🚨 정지됨" : "🟢 정상 운영 중";
+      statusEl.style.color = frozen ? "var(--danger)" : "var(--energy)";
+      toggleBtn.textContent = frozen ? "긴급 정지 해제하기" : "긴급 정지 켜기";
+      toggleBtn.className = frozen ? "btn-primary" : "btn-danger";
+    }
   }
 
   function initAdminButtons() {
@@ -2051,6 +2062,22 @@
     });
     const refillBtn = $("adminRefillBtn");
     if (refillBtn) refillBtn.addEventListener("click", () => run(refillBtn, "/admin/refill", {}, "전체 회복 완료"));
+
+    // ── 긴급 정지 토글 — 켜기 전엔 한 번 더 확인(되돌릴 순 있지만 그동안 모두의 플레이가
+    //    막히는 영향이 크므로), 끌 때는 바로 반영한다. ──
+    const freezeBtn = $("adminFreezeToggleBtn");
+    if (freezeBtn) freezeBtn.addEventListener("click", async () => {
+      const turningOn = !state.economyFrozen;
+      if (turningOn && !confirm("긴급 정지를 켜면 관리자 본인을 제외한 모든 유저의 재화·상점 관련 액션이 즉시 막힙니다. 계속할까요?")) return;
+      freezeBtn.disabled = true;
+      try {
+        const r = await api("/admin/freeze", { method: "POST", body: { frozen: turningOn } });
+        state.economyFrozen = r.frozen;
+        renderHeader(); renderAdminTab();
+        toast(r.frozen ? "🚨 긴급 정지를 켰습니다." : "🟢 긴급 정지를 해제했습니다.");
+      } catch (e) { toast(e.message, true); }
+      freezeBtn.disabled = false;
+    });
   }
 
   // ── Profile — 누구나 조회 가능(다른 유저 아이디로 조회), 내 프로필일 때만 편집 폼이 뜬다.
