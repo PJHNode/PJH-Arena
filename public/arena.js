@@ -90,10 +90,27 @@
     await refreshState();
     refreshWidgetBar();
     renderTab(currentTab);
+    checkActivitySummary();
     if (!startDashboard._timer) {
       startDashboard._timer = setInterval(refreshState, 15000);
       setInterval(refreshWidgetBar, 60000);
     }
+  }
+
+  // ── 오프라인 활동 요약 — 세션당(대시보드 진입마다) 한 번만 확인한다. 서버가 조회 즉시
+  // "확인 처리"(last_activity_summary_at 갱신)까지 같이 하므로, 여기서 또 ack할 필요가 없다.
+  // 아무 일도 없었으면(hasActivity: false) 조용히 넘어가고 모달을 안 띄운다.
+  async function checkActivitySummary() {
+    try {
+      const r = await api("/activity-summary");
+      if (!r.hasActivity) return;
+      const rows = [];
+      if (r.pvpDefendLossCount > 0) rows.push('<div class="activity-row"><span>⚔️ PvP로 당함 ' + r.pvpDefendLossCount + "회</span><span>-" + fmt(r.pvpCoinsLost) + " 코인</span></div>");
+      if (r.planetLostCount > 0) rows.push('<div class="activity-row"><span>🌍 행성 침투당함 ' + r.planetLostCount + "회</span><span>-" + fmt(r.planetCoinsLost) + " 코인</span></div>");
+      $("activityModalBody").innerHTML = rows.join("") +
+        '<div class="activity-row" style="border-bottom:none;font-weight:bold;"><span>총 손실</span><span>-' + fmt(r.totalCoinsLost) + " 코인</span></div>";
+      $("activityModal").style.display = "flex";
+    } catch (e) { /* 조용히 무시 — 다음 로그인 때 다시 시도 */ }
   }
 
   let firstStateLoaded = false;
@@ -136,6 +153,11 @@
     $("defText").textContent = state.def;
     $("critText").textContent = state.crit;
     $("shieldTag").style.display = state.shielded ? "" : "none";
+
+    // 칭호 — 업적을 청구하면 골라 장착할 수 있다(Achievements 탭).
+    const titleTag = $("titleTag");
+    if (state.equippedTitle) { titleTag.textContent = "🏷️ " + state.equippedTitle; titleTag.style.display = ""; }
+    else titleTag.style.display = "none";
 
     // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다.
     const rebirthTag = $("rebirthTag"), rebirthBtn = $("rebirthBtn");
@@ -251,10 +273,12 @@
     property: renderPropertyTab,
     bank: renderBankTab,
     research: renderResearchTab,
+    enchant: renderEnchantTab,
     trade: renderTradeTab,
     club: renderClubTab,
     profile: renderProfileTab,
     admin: renderAdminTab,
+    achievements: renderAchievementsTab,
     leaderboard: renderLeaderboardTab,
     logs: renderLogsTab,
   };
@@ -1261,6 +1285,43 @@
     });
   }
 
+  // ── Enchant — 무기/방어/코어 전체 카탈로그를 보여주고, 보유한(qty>0) 것만 강화 버튼이
+  //    활성화된다. 서버가 이미 다음 레벨 비용까지 계산해서 내려주므로 프론트는 그대로 표시만. ──
+  async function renderEnchantTab() {
+    const grid = $("enchantGrid");
+    try {
+      const { items } = await api("/enchants");
+      grid.innerHTML = items.map((it) => {
+        const pct = Math.min(100, (it.level / it.maxLevel) * 100);
+        const maxed = it.level >= it.maxLevel;
+        const canAfford = it.nextCost != null && state.pocketCoins >= it.nextCost;
+        const disabled = it.owned <= 0 || maxed || !canAfford;
+        const btnLabel = maxed ? "최대 레벨" : it.owned <= 0 ? "미보유" : "강화 (💰 " + fmt(it.nextCost) + ")";
+        return (
+          '<div class="enchant-card" style="border-left-color:' + it.typeColor + '">' +
+          '<div>' + itemIconHtml(it.id, it.rarityColor, 30) + "</div>" +
+          '<div class="enchant-card-name">' + escapeHtml(it.name) + "</div>" +
+          '<div class="rarity-badge" style="color:' + it.rarityColor + '">' + it.rarityLabel + "</div>" +
+          '<div class="dim" style="font-size:10px;">보유 ' + it.owned + "개 · +" + it.bonusPct.toFixed(0) + "% 적용 중</div>" +
+          '<div class="enchant-level-track"><div class="enchant-level-fill" style="width:' + pct + '%;"></div></div>' +
+          '<div class="enchant-level-text">Lv.' + it.level + " / " + it.maxLevel + "</div>" +
+          '<button class="btn-primary" data-enchant="' + it.id + '"' + (disabled ? " disabled" : "") + ">" + btnLabel + "</button>" +
+          "</div>"
+        );
+      }).join("");
+      grid.querySelectorAll("button[data-enchant]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/enchants/upgrade", { method: "POST", body: { itemId: btn.dataset.enchant } });
+            toast("🧬 Lv." + r.level + " 강화 완료! (+" + r.bonusPct.toFixed(0) + "%)");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderEnchantTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
   // ── Trade — 유저 간 코인+아이템 거래. "내가 줄 것"은 내 인벤토리(장착 중인 건 빼고 남는
   //    수량)에서 고르고, "내가 받을 것"은 상대 인벤토리를 볼 수 없으니 전체 카탈로그에서
   //    고른다(상대가 실제로 갖고 있는지는 승낙 시점에 서버가 검증). ──
@@ -1410,10 +1471,33 @@
   // 교체가 아니라). 버튼도 매번 새로 그려지므로 이벤트는 컨테이너에 위임해서 한 번만 건다. ──
   const RELATION_LABEL = { hostile: "⚔️ 적대", allied: "🤝 동맹", neutral: "· 중립", friendly: "🤝 우호 선언" };
 
+  // 클럽 전쟁 시즌 섹션 — war-season 조회가 실패해도(클럽 API 자체 문제 등) 클럽 탭 전체가
+  // 죽으면 안 되므로 조용히 빈 문자열로 넘어간다.
+  function warSeasonSectionHtml(ws) {
+    if (!ws) return "";
+    const remain = Math.max(0, ws.seasonEndsAt - Date.now());
+    const rankLine = ws.myClubRank
+      ? "이번 시즌 순위 <b>#" + ws.myClubRank + "</b> (점수 " + fmt(ws.myClubScore) + ")"
+      : "이번 시즌 아직 전적이 없습니다.";
+    const standingsHtml = ws.standings.length
+      ? ws.standings.slice(0, 10).map((s, i) => (
+          '<div class="club-relation-row"><span>' + (i + 1) + "위 " + escapeHtml(s.name) + "</span><span>" + fmt(s.score) + "점</span></div>"
+        )).join("")
+      : '<p class="dim">아직 이번 시즌 전적이 있는 클럽이 없습니다.</p>';
+    const claimHtml = ws.previousSeasonReward
+      ? '<div class="club-contribute-form"><span>직전 시즌 ' + ws.previousSeasonReward.rank + "위 보상 💰" + fmt(ws.previousSeasonReward.coins) + '</span><button class="btn-primary" id="clubWarClaimBtn">받기</button></div>'
+      : "";
+    return (
+      '<div class="club-section-title">⚔️ 클럽 전쟁 시즌 (남은 시간 ' + fmtCountdown(remain) + ")</div>" +
+      '<p class="dim">' + rankLine + " 적대 클럽 소속을 상대로 이기면(PvP·행성 침투 불문) 올라갑니다.</p>" +
+      standingsHtml + claimHtml
+    );
+  }
+
   async function renderClubTab() {
     const el = $("clubContent");
     try {
-      const data = await api("/club");
+      const [data, warSeason] = await Promise.all([api("/club"), api("/club/war-season").catch(() => null)]);
       if (!data.myClub) {
         el.innerHTML =
           '<div class="club-create-card">' +
@@ -1469,7 +1553,8 @@
           '<select id="clubRelationStatus"><option value="hostile">적대 선언</option><option value="friendly">우호 선언</option><option value="neutral">중립으로</option></select>' +
           '<button class="btn-primary" id="clubRelationSetBtn">설정</button>' +
           "</div><p class=\"dim\" style=\"margin-top:6px;\">적대는 한쪽만 선언해도 전쟁, 동맹은 서로 선언해야 성립합니다.</p>"
-          : "");
+          : "") +
+        warSeasonSectionHtml(warSeason);
       renderClubChat();
       startClubChatPolling();
     } catch (e) { el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
@@ -1554,6 +1639,13 @@
         try { await api("/club/chat/send", { method: "POST", body: { message } }); input.value = ""; renderClubChat(); }
         catch (err) { toast(err.message, true); }
         t.disabled = false;
+      } else if (t.id === "clubWarClaimBtn") {
+        t.disabled = true;
+        try {
+          const r = await api("/club/war-season/claim", { method: "POST" });
+          toast("⚔️ " + r.rank + "위 시즌 보상 +" + fmt(r.coins) + " 코인!");
+          state.pocketCoins = r.pocketCoins; renderHeader(); renderClubTab();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
       }
     });
     el.addEventListener("keydown", (e) => {
@@ -1627,6 +1719,63 @@
   // 타입+값 두 단계 드롭다운 없이 한 번에 고르게 했다. ──
   let profileViewingUserId = null;
 
+  // ── Achievements — 목록 전체를 보여주고 카드마다 상태에 맞는 버튼 하나(청구하기/장착하기/
+  //    장착 해제하기)만 활성화한다. 미달성인데 이미 청구된 경우는 없으므로(서버가 조건을
+  //    다시 검사) 신경 쓸 상태 조합이 적다. ──
+  async function renderAchievementsTab() {
+    const grid = $("achievementGrid");
+    try {
+      const { items, equippedTitleId } = await api("/achievements");
+      grid.innerHTML = items.map((a) => {
+        const equipped = a.id === equippedTitleId;
+        const cls = equipped ? "equipped" : a.completed ? "done" : "";
+        let actionHtml;
+        if (equipped) actionHtml = '<button class="btn-ghost" data-untitle="1">칭호 해제</button>';
+        else if (a.claimed) actionHtml = '<button class="btn-primary" data-equip="' + a.id + '">칭호 장착</button>';
+        else if (a.completed) actionHtml = '<button class="btn-primary" data-claim="' + a.id + '">받기 (💰 ' + fmt(a.reward) + ")</button>";
+        else actionHtml = '<button class="btn-ghost" disabled>미달성</button>';
+        return (
+          '<div class="achievement-card ' + cls + '">' +
+          '<div class="achievement-name">' + (equipped ? "🏷️ " : a.claimed ? "✅ " : "") + escapeHtml(a.name) + "</div>" +
+          '<div class="achievement-desc">' + escapeHtml(a.desc) + "</div>" +
+          '<div class="achievement-reward">칭호: [' + escapeHtml(a.title) + "] · 보상 💰" + fmt(a.reward) + "</div>" +
+          '<div class="achievement-actions">' + actionHtml + "</div>" +
+          "</div>"
+        );
+      }).join("");
+      grid.querySelectorAll("button[data-claim]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/achievements/claim", { method: "POST", body: { id: btn.dataset.claim } });
+            toast("🏆 업적 달성! +" + fmt(r.reward) + " 코인, 칭호 [" + r.title + "] 획득");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderAchievementsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-equip]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/achievements/set-title", { method: "POST", body: { id: btn.dataset.equip } });
+            toast("🏷️ 칭호 [" + r.equippedTitle + "] 장착");
+            state.equippedTitle = r.equippedTitle; renderHeader(); renderAchievementsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-untitle]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api("/achievements/set-title", { method: "POST", body: { id: null } });
+            toast("칭호를 해제했습니다.");
+            state.equippedTitle = null; renderHeader(); renderAchievementsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
   async function renderProfileTab() {
     await loadAndRenderProfile(profileViewingUserId || (state && state.userId));
   }
@@ -1649,6 +1798,7 @@
   function profileCardHtml(p) {
     const glowCls = p.rebirthEffectEnabled ? " rebirth-glow" : "";
     const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge">🔄 환생 ' + toRoman(p.rebirthCount) + "</span>" : "";
+    const titleBadge = p.title ? '<span class="title-badge">[' + escapeHtml(p.title) + "]</span> " : "";
     const slots = [0, 1, 2].map((i) => {
       const s = p.showcase[i];
       if (!s) return '<div class="profile-slot empty">비어있음</div>';
@@ -1664,7 +1814,7 @@
     }).join("");
     return (
       '<div class="profile-card' + glowCls + '">' +
-      '<div class="profile-card-name">Lv.' + p.level + " " + escapeHtml(p.realName) + rebirthBadge + "</div>" +
+      '<div class="profile-card-name">Lv.' + p.level + " " + titleBadge + escapeHtml(p.realName) + rebirthBadge + "</div>" +
       '<div class="profile-card-meta">' + (p.clubName ? "🛡️ " + escapeHtml(p.clubName) + " · " : "") + "약탈 승리 " + p.plunderWins + "회</div>" +
       '<div class="profile-card-status">' + (p.statusMessage ? escapeHtml(p.statusMessage) : '<span class="dim">상태메시지 없음</span>') + "</div>" +
       '<div class="profile-showcase">' + slots + "</div>" +
@@ -1787,7 +1937,8 @@
         const valueLabel = lbType === "level" ? "Lv." + r.level :
           lbType === "assets" ? fmt(r.pocket_coins + r.bank_coins) + " 코인" :
           r.plunder_wins + "승";
-        return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
+        const titleHtml = r.title ? '<span class="title-badge">[' + escapeHtml(r.title) + "]</span> " : "";
+        return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + titleHtml + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
       }).join("") || '<p class="dim">기록이 없습니다.</p>';
       list.querySelectorAll("[data-profile]").forEach((el) => {
         el.addEventListener("click", () => openProfileModal(el.dataset.profile));
@@ -1868,6 +2019,10 @@
     $("attackModal").addEventListener("click", (e) => { if (e.target.id === "attackModal") closeAttackModal(); });
     $("profileModalClose").addEventListener("click", closeProfileModal);
     $("profileModal").addEventListener("click", (e) => { if (e.target.id === "profileModal") closeProfileModal(); });
+    const closeActivityModal = () => { $("activityModal").style.display = "none"; };
+    $("activityModalClose").addEventListener("click", closeActivityModal);
+    $("activityModalOkBtn").addEventListener("click", closeActivityModal);
+    $("activityModal").addEventListener("click", (e) => { if (e.target.id === "activityModal") closeActivityModal(); });
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
     const cta = $("loggedOutCta");
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());

@@ -331,6 +331,33 @@ async function clubCoinBonusMult(env, userId) {
   return 1 + Math.min(clubLevelForXp(club.xp), CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL;
 }
 
+// ── 클럽 전쟁 시즌 — 기존 war_score(전체 누적)와 별개로 "이번 시즌 점수"만 따로 쌓는다.
+// 시즌 경계는 상점 로테이션과 같은 방식으로 시간을 나눈 결정론적 버킷이라 크론이 필요 없다
+// — 지금이 몇 번째 시즌인지는 그냥 Date.now()로 계산하면 되고, "방금 끝난 시즌"의 순위/보상은
+// 그 버킷 번호로 그때 쌓인 점수를 그대로 다시 읽으면 된다(더 이상 그 버킷에 쓰기가 없으므로
+// 안전하게 고정된 결과). recordWarScoreIfHostile이 전체 누적과 이번 시즌 점수를 동시에 올린다. ──
+const CLUB_WAR_SEASON_MS = 7 * 24 * 3600 * 1000; // 7일
+function clubWarSeasonBucket(nowMs) { return Math.floor((nowMs || Date.now()) / CLUB_WAR_SEASON_MS); }
+// 순위별 보상(코인, 멤버 1인당) — 시즌 종료 후 그 클럽 소속이면 누구나 한 번씩 받는다.
+const CLUB_WAR_REWARD_TIERS = [
+  { minRank: 1, maxRank: 1, coins: 50000 },
+  { minRank: 2, maxRank: 3, coins: 25000 },
+  { minRank: 4, maxRank: 10, coins: 10000 },
+];
+function clubWarRewardForRank(rank) {
+  const tier = CLUB_WAR_REWARD_TIERS.find(function (t) { return rank >= t.minRank && rank <= t.maxRank; });
+  return tier ? tier.coins : 0;
+}
+// 특정 시즌 버킷의 순위표(점수 내림차순, 0점인 클럽은 제외) — 방금 끝난 시즌의 보상 계산과
+// 진행 중인 시즌의 실시간 순위 표시에 둘 다 쓴다.
+async function clubWarStandings(env, seasonBucket, limit) {
+  const res = await env.DB.prepare(
+    "SELECT s.club_id, s.score, c.name FROM arena_club_war_seasons s JOIN arena_clubs c ON c.id = s.club_id " +
+    "WHERE s.season_bucket = ? AND s.score > 0 ORDER BY s.score DESC LIMIT ?"
+  ).bind(seasonBucket, limit || 50).all();
+  return res.results;
+}
+
 // ── 환생 직후 30분 부스트 — 경험치/코인 2배. "다시 약해진 채로 처음부터"인 기간을 좀 편하게
 // 넘어가라는 취지라, 실제로 그 창 안에서 직접 플레이해서 버는 소득(해킹 작업 XP/코인, PvP
 // 약탈, 행성 약탈)에만 건다 — Property처럼 켜 놓고 안 해도 쌓이는 소득까지 2배로 치면 "환생
@@ -379,7 +406,14 @@ async function recordWarScoreIfHostile(env, attackerUserId, defenderUserId) {
   if (!clubB || clubA === clubB) return;
   const relation = await effectiveClubRelation(env, clubA, clubB);
   if (relation === "hostile") {
-    await env.DB.prepare("UPDATE arena_clubs SET war_score = war_score + 1 WHERE id = ?").bind(clubA).run();
+    const seasonBucket = clubWarSeasonBucket(Date.now());
+    await env.DB.batch([
+      env.DB.prepare("UPDATE arena_clubs SET war_score = war_score + 1 WHERE id = ?").bind(clubA),
+      env.DB.prepare(
+        "INSERT INTO arena_club_war_seasons (club_id, season_bucket, score) VALUES (?, ?, 1) " +
+        "ON CONFLICT(club_id, season_bucket) DO UPDATE SET score = score + 1"
+      ).bind(clubA, seasonBucket),
+    ]);
   }
 }
 const RESEARCH_EXPEDITION_UNLOCK_COST = 20; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금
@@ -571,6 +605,50 @@ const ABYSSAL_CHANCE = 0.01;
 function effectiveRarityChance(rarity, researchLevel) {
   if (rarity === "abyssal") return (researchLevel || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL ? ABYSSAL_CHANCE : 0;
   return clamp(RARITY_META[rarity].chance + (researchLevel || 0) * RESEARCH_SHOP_BONUS_PER_LEVEL, 0, 1);
+}
+
+// ══════════════════════════════════════════════════════════
+//  업적/칭호 — 진행도를 따로 저장하지 않는다(레벨/환생/보유 행성 수 등은 이미 다른 테이블에
+//  정확히 남아있으므로, check(ctx)가 그때그때 다시 계산해서 "지금 달성했는지"를 판정한다).
+//  DB엔 "누가 언제 뭘 청구(claim)했는지"만 남는다 — 청구하면 코인 보상 + 그 업적의 칭호를
+//  장착할 수 있게 된다(칭호 텍스트 자체는 항상 여기서 새로 읽으므로 나중에 이름을 바꿔도
+//  이미 장착 중인 유저에게 안 꼬인다).
+// ══════════════════════════════════════════════════════════
+const ACHIEVEMENTS = {
+  level_10:      { name: "견습 해커",     desc: "레벨 10 달성",                    title: "견습 해커",     reward: 3000,   check: function (ctx) { return ctx.row.level >= 10; } },
+  level_25:      { name: "숙련 해커",     desc: "레벨 25 달성",                    title: "숙련 해커",     reward: 10000,  check: function (ctx) { return ctx.row.level >= 25; } },
+  level_50:      { name: "베테랑 해커",   desc: "레벨 50 달성",                    title: "베테랑 해커",   reward: 30000,  check: function (ctx) { return ctx.row.level >= 50; } },
+  level_100:     { name: "전설의 해커",   desc: "레벨 100 달성(환생 조건)",          title: "전설의 해커",   reward: 120000, check: function (ctx) { return ctx.row.level >= 100; } },
+  rebirth_1:     { name: "첫 환생",       desc: "환생 1회 달성",                    title: "환생자",       reward: 60000,  check: function (ctx) { return (ctx.row.rebirth_count || 0) >= 1; } },
+  rebirth_max:   { name: "윤회의 끝",     desc: "환생 " + REBIRTH_BONUS_MAX_COUNT + "회(최대) 달성", title: "윤회의 지배자", reward: 600000, check: function (ctx) { return (ctx.row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT; } },
+  plunder_10:    { name: "약탈자",       desc: "PvP 약탈 승리 10회",               title: "약탈자",       reward: 6000,   check: function (ctx) { return (ctx.row.plunder_wins || 0) >= 10; } },
+  plunder_100:   { name: "정복왕",       desc: "PvP 약탈 승리 100회",              title: "정복왕",       reward: 90000,  check: function (ctx) { return (ctx.row.plunder_wins || 0) >= 100; } },
+  bots_full:     { name: "함대 완성",     desc: "봇 " + BOT_MAX_COUNT + "기 모집",   title: "함대 사령관",   reward: 25000,  check: function (ctx) { return ctx.botCount >= BOT_MAX_COUNT; } },
+  abyssal_owner: { name: "심연을 본 자",  desc: "Abyssal 등급 장비 보유",            title: "심연을 본 자",  reward: 250000, check: function (ctx) { return ctx.hasAbyssal; } },
+  planet_baron:  { name: "은하 남작",     desc: "야생 행성 5개 이상 동시 보유",       title: "은하 남작",     reward: 35000,  check: function (ctx) { return ctx.ownedWildCount >= 5; } },
+  planet_emperor:{ name: "은하 황제",     desc: "야생 행성 한도(" + PLANET_MAX_OWNED_WILD + "개) 전부 보유", title: "은하 황제", reward: 150000, check: function (ctx) { return ctx.ownedWildCount >= PLANET_MAX_OWNED_WILD; } },
+  club_member:   { name: "동료애",       desc: "클럽 가입",                        title: "클럽원",       reward: 3000,   check: function (ctx) { return !!ctx.clubId; } },
+  club_leader:   { name: "리더십",       desc: "클럽 대표(리더) 취임",              title: "클럽 리더",     reward: 12000,  check: function (ctx) { return ctx.isClubLeader; } },
+  lucky_researcher: { name: "행운의 연구자", desc: "상점 행운 연구 레벨 " + ABYSSAL_RESEARCH_UNLOCK_LEVEL + " 달성(Abyssal 해금)", title: "행운의 연구자", reward: 60000, check: function (ctx) { return (ctx.row.research_shop_level || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL; } },
+};
+// 달성 판정에 필요한 부가 정보(봇 수/Abyssal 보유/보유 행성 수/클럽 소속 등)를 한 번에 모아
+// ctx로 만든다 — GET /achievements와 POST /achievements/claim이 공유.
+async function buildAchievementContext(env, row) {
+  const [botCountRow, invRes, wildCountRow, membership] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_bots WHERE user_id = ?").bind(row.user_id).first(),
+    env.DB.prepare("SELECT item_id FROM arena_inventory WHERE user_id = ? AND qty > 0").bind(row.user_id).all(),
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id = ? AND is_home = 0").bind(row.user_id).first(),
+    env.DB.prepare("SELECT club_id, role FROM arena_club_members WHERE user_id = ?").bind(row.user_id).first(),
+  ]);
+  const hasAbyssal = invRes.results.some(function (r) { return SHOP_ITEMS[r.item_id] && SHOP_ITEMS[r.item_id].rarity === "abyssal"; });
+  return {
+    row: row,
+    botCount: (botCountRow && botCountRow.cnt) || 0,
+    hasAbyssal: hasAbyssal,
+    ownedWildCount: (wildCountRow && wildCountRow.cnt) || 0,
+    clubId: membership ? membership.club_id : null,
+    isClubLeader: !!(membership && membership.role === "leader"),
+  };
 }
 
 // ── 상점은 이제 유저별 로컬 로테이션이다(예전엔 전 서버 공용이라 모두가 같은 상점을 봤음) —
@@ -765,6 +843,41 @@ async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS arena_profiles (user_id TEXT PRIMARY KEY, status_message TEXT, showcase TEXT NOT NULL DEFAULT '[]', " +
     "rebirth_effect_enabled INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL)"
   );
+
+  // ── 업적/칭호 — 정의(ACHIEVEMENTS)는 코드에만 있고, DB엔 "누가 언제 뭘 받았는지"만 남긴다.
+  // 지금 장착 중인 칭호는 arena_users에 achievement id로만 저장하고(텍스트는 항상 정의에서
+  // 새로 읽어옴 — 나중에 이름을 바꿔도 안 꼬임), 실제 달성 여부는 매번 현재 상태(레벨/환생/
+  // 보유 행성 수 등)로 다시 계산한다(별도 진행도 테이블 없이도 항상 정확함).
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN equipped_title_id TEXT"); } catch (e) {}
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_achievement_claims (user_id TEXT NOT NULL, achievement_id TEXT NOT NULL, " +
+    "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, achievement_id))"
+  );
+
+  // ── 오프라인 활동 요약 — "마지막으로 이 요약을 확인한 시각" 하나만 저장한다. GET
+  // /activity-summary 호출 시 이 시각 이후의 arena_logs(피격/행성 강탈당함)를 모아 보여주고
+  // 그 즉시 이 시각을 지금으로 갱신한다(다음엔 또 그 이후분만 보여줌 — 읽으면 확인 처리).
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_activity_summary_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+
+  // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
+  // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
+  // SEASON_MS로 나눈 결정론적 버킷이라(상점 로테이션과 같은 방식) 인프라 추가가 필요 없다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_war_seasons (club_id INTEGER NOT NULL, season_bucket INTEGER NOT NULL, " +
+    "score INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (club_id, season_bucket))"
+  );
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_war_claims (user_id TEXT NOT NULL, season_bucket INTEGER NOT NULL, " +
+    "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, season_bucket))"
+  );
+
+  // ── 장비 강화(인챈트) — 아이템은 개별 인스턴스가 아니라 (user_id, item_id) 재고 수량으로만
+  // 존재하므로, 강화도 "이 유저가 이 아이템 종류를 얼마나 마스터했는지"로 (user_id, item_id)당
+  // 레벨 하나로 관리한다 — 그 유저가 가진 그 아이템 전부에 동일하게 적용된다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_item_enchants (user_id TEXT NOT NULL, item_id TEXT NOT NULL, " +
+    "level INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, item_id))"
+  );
   schemaReady = true;
 }
 
@@ -896,20 +1009,41 @@ function applyXpAndLevel(row, xpGain) {
   return leveledUp;
 }
 
-function slotBonus(itemId, wantType) {
-  const it = itemId ? SHOP_ITEMS[itemId] : null;
-  return it && it.type === wantType ? it.value : 0;
+// ── 장비 강화(인챈트) — 아이템은 개별 인스턴스가 없으므로(재고 수량만 존재) "이 유저가 이
+// 아이템 종류를 얼마나 마스터했는지"를 (user_id, item_id)당 레벨 하나로 관리한다. 레벨당
+// value에 +2%, 최대 10레벨(+20%)에서 상한(환생과 같은 "작고 상한 있게" 철학). enchantMap을
+// 안 넘기면(기존 호출부 다수) 그냥 보너스 없이 기존과 완전히 동일하게 동작한다 — 하위 호환.
+const ENCHANT_MAX_LEVEL = 10;
+const ENCHANT_BONUS_PCT_PER_LEVEL = 0.02;
+const ENCHANT_COST_BASE_PCT = 0.05; // 1레벨 비용 = 아이템 가격의 5%
+const ENCHANT_COST_GROWTH = 1.6;
+function enchantMultiplier(level) { return 1 + Math.min(level || 0, ENCHANT_MAX_LEVEL) * ENCHANT_BONUS_PCT_PER_LEVEL; }
+function enchantUpgradeCost(item, currentLevel) { return Math.max(1, Math.round(item.price * ENCHANT_COST_BASE_PCT * Math.pow(ENCHANT_COST_GROWTH, currentLevel))); }
+async function loadEnchantMap(env, userId) {
+  const res = await env.DB.prepare("SELECT item_id, level FROM arena_item_enchants WHERE user_id = ?").bind(userId).all();
+  const map = {};
+  res.results.forEach(function (r) { map[r.item_id] = r.level; });
+  return map;
 }
-function equipStats(unit) {
+
+function slotBonus(itemId, wantType, enchantMap) {
+  const it = itemId ? SHOP_ITEMS[itemId] : null;
+  if (!it || it.type !== wantType) return 0;
+  const mult = enchantMap ? enchantMultiplier(enchantMap[itemId]) : 1;
+  return Math.round(it.value * mult);
+}
+function equipStats(unit, enchantMap) {
   return {
-    atk: slotBonus(unit.equipped_weapon, "weapon"),
-    def: slotBonus(unit.equipped_armor, "armor"),
-    crit: slotBonus(unit.equipped_core, "core"),
+    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap),
+    def: slotBonus(unit.equipped_armor, "armor", enchantMap),
+    crit: slotBonus(unit.equipped_core, "core", enchantMap),
   };
 }
 
 async function totalCombatStats(env, row) {
-  const self = equipStats(row);
+  // 이 유저 소유의 모든 장비(본인 + 봇)가 같은 인챈트 표를 공유하므로 한 번만 불러온다.
+  const enchantMap = await loadEnchantMap(env, row.user_id);
+  const self = equipStats(row, enchantMap);
   let atk = baseAtkFor(row.level) + self.atk;
   let def = baseDefFor(row.level) + self.def;
   let crit = BASE_CRIT_PCT + self.crit;
@@ -920,7 +1054,7 @@ async function totalCombatStats(env, row) {
   ).bind(row.user_id).all();
   const bots = botsRes.results;
   for (const b of bots) {
-    const bs = equipStats(b);
+    const bs = equipStats(b, enchantMap);
     atk += bs.atk; def += bs.def; crit += bs.crit;
   }
   // 환생 보너스 — 회당 ATK/DEF +1%(치명타는 제외), 최대 10회(+10%)에서 상한. 봇까지 합산한
@@ -933,14 +1067,18 @@ async function totalCombatStats(env, row) {
 
 // 특정 행성 하나에 배치된 경비병 봇들의 장비 스탯 합 — resolvePlanetCombat(전투 1회 판정)처럼
 // 행성 하나만 필요할 때 쓴다. 여러 행성을 한 번에 나열할 때(GET /planets)는 이 함수를 행성
-// 개수만큼 반복 호출하지 않고 대신 한 번의 쿼리로 전부 묶어서 그룹화한다(N+1 방지).
-async function planetGarrisonStats(env, planetId) {
+// 개수만큼 반복 호출하지 않고 대신 한 번의 쿼리로 전부 묶어서 그룹화한다(N+1 방지) — 그
+// 경로는 여러 주인의 봇이 섞여있어 인챈트 표를 주인별로 또 조회해야 하므로(N+1 재발),
+// 일부러 인챈트 보너스를 안 붙인다(실제 전투 판정보다 약간 보수적으로 표시될 뿐 — 여기
+// ownerUserId를 넘겨줄 때만(실제 전투 판정 경로, 주인 한 명 확정) 정확히 반영한다.
+async function planetGarrisonStats(env, planetId, ownerUserId) {
   const res = await env.DB.prepare(
     "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE stationed_planet_id = ?"
   ).bind(planetId).all();
+  const enchantMap = ownerUserId ? await loadEnchantMap(env, ownerUserId) : null;
   let atk = 0, def = 0, crit = 0;
   for (const b of res.results) {
-    const s = equipStats(b);
+    const s = equipStats(b, enchantMap);
     atk += s.atk; def += s.def; crit += s.crit;
   }
   return { atk: atk, def: def, crit: crit, count: res.results.length };
@@ -990,6 +1128,7 @@ async function buildPublicProfile(env, userId) {
   return {
     userId: row.user_id, realName: row.real_name, level: row.level,
     rebirthCount: row.rebirth_count || 0,
+    title: (row.equipped_title_id && ACHIEVEMENTS[row.equipped_title_id]) ? ACHIEVEMENTS[row.equipped_title_id].title : null,
     plunderWins: row.plunder_wins, clubName: clubName,
     statusMessage: profileRow ? (profileRow.status_message || "") : "",
     showcase: showcase,
@@ -1021,6 +1160,9 @@ function publicState(row, combat) {
     isAdmin: row.user_id === ADMIN_USER_ID,
     rebirthBoostActive: rebirthBoostMult(row) > 1,
     rebirthBoostUntil: row.rebirth_boost_until || 0,
+    // 칭호 텍스트는 저장하지 않고 매번 ACHIEVEMENTS 정의에서 새로 읽는다 — 장착한 뒤 이름이
+    // 바뀌어도 안 꼬이고, 업적 자체가 삭제되면 자연히 칭호도 조용히 사라진다.
+    equippedTitle: (row.equipped_title_id && ACHIEVEMENTS[row.equipped_title_id]) ? ACHIEVEMENTS[row.equipped_title_id].title : null,
   };
 }
 
@@ -1117,7 +1259,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     // 갖든 방어가 공짜로 무한 복제된다). 실제 배치된 경비병 봇들의 장비 스탯 합 + 최소
     // 수비대(약함 등급 PVE와 동급)가 방어력이다. "평소 태세" 개념도 없다(사람이 아니라
     // 경비병이 지키는 것이므로 상성 보너스 계산에서 제외).
-    const garrison = await planetGarrisonStats(env, planet.id);
+    const garrison = await planetGarrisonStats(env, planet.id, planet.owner_user_id);
     defenderCombat = {
       atk: PLANET_UNGARRISONED_DEFENSE.atk + garrison.atk,
       def: PLANET_UNGARRISONED_DEFENSE.def + garrison.def,
@@ -1238,6 +1380,32 @@ export default {
         await persistRegen(env, row);
         const combat = await totalCombatStats(env, row);
         return json(Object.assign(publicState(row, combat), { avatarIcon: AVATAR_ICONS[user.avatar] || null }));
+      }
+
+      // ── GET /activity-summary — "자리를 비운 사이 무슨 일이 있었는지" 한 번에 보여준다(PvP로
+      //    피격당함, 행성/홈 행성을 뺏기거나 뚫림). 마지막으로 이 요약을 확인한 시각
+      //    (last_activity_summary_at) 이후분만 모으고, 조회하는 즉시 그 시각을 지금으로
+      //    갱신한다 — "읽으면 확인 처리"라 따로 ack 호출이 필요 없다. ──
+      if (request.method === "GET" && path === "/activity-summary") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const since = row.last_activity_summary_at || 0;
+        const now = Date.now();
+        const res = await env.DB.prepare(
+          "SELECT kind, coins_delta FROM arena_logs WHERE user_id = ? AND created_at > ? AND kind IN ('pvp_defend','planet_lost') AND coins_delta < 0"
+        ).bind(user.userId, since).all();
+        let pvpDefendLossCount = 0, pvpCoinsLost = 0, planetLostCount = 0, planetCoinsLost = 0;
+        res.results.forEach(function (r) {
+          if (r.kind === "pvp_defend") { pvpDefendLossCount++; pvpCoinsLost += -r.coins_delta; }
+          else { planetLostCount++; planetCoinsLost += -r.coins_delta; }
+        });
+        await env.DB.prepare("UPDATE arena_users SET last_activity_summary_at = ? WHERE user_id = ?").bind(now, user.userId).run();
+        return json({
+          since: since, until: now,
+          pvpDefendLossCount: pvpDefendLossCount, pvpCoinsLost: pvpCoinsLost,
+          planetLostCount: planetLostCount, planetCoinsLost: planetCoinsLost,
+          totalCoinsLost: pvpCoinsLost + planetCoinsLost,
+          hasActivity: pvpDefendLossCount > 0 || planetLostCount > 0,
+        });
       }
 
       if (request.method === "POST" && path === "/stats/upgrade") {
@@ -1973,6 +2141,69 @@ export default {
         return json({ ok: true });
       }
 
+      // ── GET /club/war-season — 이번 시즌 실시간 순위(전체 클럽 상위 50) + 내 클럽의 이번
+      //    시즌 점수/순위 + 남은 시간 + "방금 끝난 시즌" 보상을 아직 안 받았으면 그 액수까지. ──
+      if (request.method === "GET" && path === "/club/war-season") {
+        const now = Date.now();
+        const currentBucket = clubWarSeasonBucket(now);
+        const nextSeasonAt = (currentBucket + 1) * CLUB_WAR_SEASON_MS;
+        const standings = await clubWarStandings(env, currentBucket, 50);
+
+        const membership = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        let myClubScore = 0, myClubRank = null;
+        if (membership) {
+          const idx = standings.findIndex(function (s) { return s.club_id === membership.club_id; });
+          if (idx !== -1) { myClubScore = standings[idx].score; myClubRank = idx + 1; }
+        }
+
+        // 방금 끝난(직전) 시즌의 보상 — 이미 받았으면 다시 안 뜬다.
+        let previousReward = null;
+        if (membership) {
+          const prevBucket = currentBucket - 1;
+          const alreadyClaimed = await env.DB.prepare("SELECT 1 FROM arena_club_war_claims WHERE user_id=? AND season_bucket=?").bind(user.userId, prevBucket).first();
+          if (!alreadyClaimed) {
+            const prevStandings = await clubWarStandings(env, prevBucket, CLUB_WAR_REWARD_TIERS[CLUB_WAR_REWARD_TIERS.length - 1].maxRank);
+            const prevIdx = prevStandings.findIndex(function (s) { return s.club_id === membership.club_id; });
+            if (prevIdx !== -1) {
+              const rank = prevIdx + 1;
+              const coins = clubWarRewardForRank(rank);
+              if (coins > 0) previousReward = { seasonBucket: prevBucket, rank: rank, coins: coins };
+            }
+          }
+        }
+
+        return json({
+          standings: standings.map(function (s) { return { clubId: s.club_id, name: s.name, score: s.score }; }),
+          myClubScore: myClubScore, myClubRank: myClubRank,
+          seasonEndsAt: nextSeasonAt, rewardTiers: CLUB_WAR_REWARD_TIERS,
+          previousSeasonReward: previousReward,
+        });
+      }
+
+      // ── POST /club/war-season/claim — 직전 시즌 순위 보상을 청구한다. ──
+      if (request.method === "POST" && path === "/club/war-season/claim") {
+        const membership = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(user.userId).first();
+        if (!membership) return json({ error: "클럽에 소속돼 있지 않습니다." }, 400);
+
+        const prevBucket = clubWarSeasonBucket(Date.now()) - 1;
+        const already = await env.DB.prepare("SELECT 1 FROM arena_club_war_claims WHERE user_id=? AND season_bucket=?").bind(user.userId, prevBucket).first();
+        if (already) return json({ error: "이미 받았습니다." }, 400);
+
+        const prevStandings = await clubWarStandings(env, prevBucket, CLUB_WAR_REWARD_TIERS[CLUB_WAR_REWARD_TIERS.length - 1].maxRank);
+        const idx = prevStandings.findIndex(function (s) { return s.club_id === membership.club_id; });
+        const rank = idx === -1 ? null : idx + 1;
+        const coins = rank ? clubWarRewardForRank(rank) : 0;
+        if (!coins) return json({ error: "직전 시즌 보상 대상이 아닙니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        row.pocket_coins += coins;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare("INSERT INTO arena_club_war_claims (user_id, season_bucket, claimed_at) VALUES (?, ?, ?)").bind(user.userId, prevBucket, Date.now()),
+        ]);
+        return json({ ok: true, coins: coins, rank: rank, pocketCoins: row.pocket_coins });
+      }
+
       // ══════════════════════════════════════════════════════════
       //  Profile — 누구나 조회 가능한 프로필(상태메시지 + 자랑 진열대 최대 3칸 + 환생 이팩트).
       // ══════════════════════════════════════════════════════════
@@ -2182,11 +2413,13 @@ export default {
           return Object.assign({ id: pair[0] }, pair[1], { rarityLabel: RARITY_META[pair[1].rarity].label, rarityColor: RARITY_META[pair[1].rarity].color });
         });
         // 봇은 레벨 개념이 없어서 equipStats(장비 보너스)가 곧 그 봇의 전투력 전부다(totalCombatStats
-        // 에서도 봇은 base 없이 equipStats만 더함) — 그대로 ATK/DEF/CRIT 수치로 보여준다.
+        // 에서도 봇은 base 없이 equipStats만 더함) — 그대로 ATK/DEF/CRIT 수치로 보여준다(인챈트
+        // 보너스 포함, 실제 전투 판정과 정확히 같은 값).
         // gacha_rarity가 없으면(한 번도 가챠를 안 돌린 봇) 등급 배지 자체가 없는 상태다.
+        const enchantMap = await loadEnchantMap(env, user.userId);
         const botsWithStats = botsRes.results.map(function (b) {
           return Object.assign({}, b, {
-            stats: equipStats(b),
+            stats: equipStats(b, enchantMap),
             gachaRarityLabel: b.gacha_rarity ? RARITY_META[b.gacha_rarity].label : null,
             gachaRarityColor: b.gacha_rarity ? RARITY_META[b.gacha_rarity].color : null,
           });
@@ -2201,7 +2434,7 @@ export default {
           return { id: p.id, name: p.name, garrisonCount: garrisonCounts[p.id] || 0 };
         });
         return json({
-          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row) },
+          player: { equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core, stats: equipStats(row, enchantMap) },
           bots: botsWithStats,
           botCount: botsRes.results.length,
           maxBots: BOT_MAX_COUNT,
@@ -2348,6 +2581,134 @@ export default {
           await env.DB.prepare("UPDATE arena_bots SET " + col + " = NULL WHERE id = ? AND user_id = ?").bind(botId, user.userId).run();
         }
         return json({ ok: true });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  Enchant — 무기/방어/코어를 코인으로 영구 강화한다(레벨당 +2%, 최대 10레벨 +20%).
+      //  아이템은 인스턴스가 아니라 재고 수량으로만 존재하므로, 강화도 "이 유저가 이 아이템
+      //  종류를 얼마나 마스터했는지"로 (user_id, item_id)당 레벨 하나로 관리 — 그 유저가 가진
+      //  그 아이템 전부(본인 장착 + 봇 장착)에 동일하게 적용된다. 최소 1개 보유해야 강화를
+      //  시작/추가할 수 있지만, 한번 오른 레벨은 나중에 다 팔아도 그대로 남는다(투자 보존).
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /enchants — 무기/방어/코어 타입 아이템 전부(보유 여부 무관, 상점 카탈로그처럼)에
+      //    대해 내 현재 강화 레벨/다음 비용/보유 수량을 같이 내려준다. ──
+      if (request.method === "GET" && path === "/enchants") {
+        const [enchantMap, ownedRes] = await Promise.all([
+          loadEnchantMap(env, user.userId),
+          env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all(),
+        ]);
+        const ownedQty = {};
+        ownedRes.results.forEach(function (r) { ownedQty[r.item_id] = r.qty; });
+        const entries = Object.keys(SHOP_ITEMS)
+          .map(function (id) { return [id, SHOP_ITEMS[id]]; })
+          .filter(function (pair) { return pair[1].type === "weapon" || pair[1].type === "armor" || pair[1].type === "core"; });
+        const items = sortedShopEntries(entries).map(function (pair) {
+          const id = pair[0], item = pair[1];
+          const level = enchantMap[id] || 0;
+          return Object.assign({ id: id }, item, {
+            rarityLabel: RARITY_META[item.rarity].label, rarityColor: RARITY_META[item.rarity].color,
+            typeLabel: ITEM_TYPE_META[item.type].label, typeColor: ITEM_TYPE_META[item.type].color,
+            owned: ownedQty[id] || 0, level: level, maxLevel: ENCHANT_MAX_LEVEL,
+            bonusPct: Math.round(enchantMultiplier(level) * 10000 - 10000) / 100,
+            nextCost: level >= ENCHANT_MAX_LEVEL ? null : enchantUpgradeCost(item, level),
+          });
+        });
+        return json({ items: items, maxLevel: ENCHANT_MAX_LEVEL, bonusPctPerLevel: ENCHANT_BONUS_PCT_PER_LEVEL * 100 });
+      }
+
+      // ── POST /enchants/upgrade { itemId } — 코인을 내고 그 아이템 종류의 강화 레벨을 1
+      //    올린다. 최소 1개는 보유하고 있어야 한다(전혀 가져본 적 없는 장비를 강화할 순 없음). ──
+      if (request.method === "POST" && path === "/enchants/upgrade") {
+        const body = await request.json().catch(function () { return {}; });
+        const itemId = body.itemId;
+        const item = SHOP_ITEMS[itemId];
+        if (!item || (item.type !== "weapon" && item.type !== "armor" && item.type !== "core")) {
+          return json({ error: "강화할 수 없는 아이템입니다." }, 400);
+        }
+        const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(user.userId, itemId).first();
+        if (!owned || owned.qty <= 0) return json({ error: "보유하지 않은 아이템은 강화할 수 없습니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const existing = await env.DB.prepare("SELECT level FROM arena_item_enchants WHERE user_id=? AND item_id=?").bind(user.userId, itemId).first();
+        const currentLevel = existing ? existing.level : 0;
+        if (currentLevel >= ENCHANT_MAX_LEVEL) return json({ error: "이미 최대 강화 레벨입니다." }, 400);
+        const cost = enchantUpgradeCost(item, currentLevel);
+        if (row.pocket_coins < cost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost) + ")" }, 400);
+
+        row.pocket_coins -= cost;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare(
+            "INSERT INTO arena_item_enchants (user_id, item_id, level) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET level = level + 1"
+          ).bind(user.userId, itemId),
+        ]);
+        const newLevel = currentLevel + 1;
+        return json({
+          ok: true, pocketCoins: row.pocket_coins, itemId: itemId, level: newLevel,
+          bonusPct: Math.round(enchantMultiplier(newLevel) * 10000 - 10000) / 100,
+          nextCost: newLevel >= ENCHANT_MAX_LEVEL ? null : enchantUpgradeCost(item, newLevel),
+        });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  Achievements — 업적을 깨면 코인 보상 + 칭호(닉네임 옆에 다는 표시) 해금.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /achievements — 전체 목록 + 각각의 달성/청구 여부, 지금 장착 중인 칭호 id. ──
+      if (request.method === "GET" && path === "/achievements") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const [ctx, claimsRes] = await Promise.all([
+          buildAchievementContext(env, row),
+          env.DB.prepare("SELECT achievement_id FROM arena_achievement_claims WHERE user_id = ?").bind(user.userId).all(),
+        ]);
+        const claimed = new Set(claimsRes.results.map(function (r) { return r.achievement_id; }));
+        const items = Object.keys(ACHIEVEMENTS).map(function (id) {
+          const a = ACHIEVEMENTS[id];
+          return {
+            id: id, name: a.name, desc: a.desc, title: a.title, reward: a.reward,
+            completed: !!a.check(ctx), claimed: claimed.has(id),
+          };
+        });
+        return json({ items: items, equippedTitleId: row.equipped_title_id || null });
+      }
+
+      // ── POST /achievements/claim { id } — 달성했는데 아직 안 받은 보상을 청구한다. ──
+      if (request.method === "POST" && path === "/achievements/claim") {
+        const body = await request.json().catch(function () { return {}; });
+        const id = body.id;
+        const achievement = ACHIEVEMENTS[id];
+        if (!achievement) return json({ error: "존재하지 않는 업적입니다." }, 404);
+
+        const already = await env.DB.prepare("SELECT 1 FROM arena_achievement_claims WHERE user_id=? AND achievement_id=?").bind(user.userId, id).first();
+        if (already) return json({ error: "이미 받은 업적입니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const ctx = await buildAchievementContext(env, row);
+        if (!achievement.check(ctx)) return json({ error: "아직 달성 조건을 채우지 못했습니다." }, 400);
+
+        row.pocket_coins += achievement.reward;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare("INSERT INTO arena_achievement_claims (user_id, achievement_id, claimed_at) VALUES (?, ?, ?)").bind(user.userId, id, Date.now()),
+        ]);
+        return json({ ok: true, reward: achievement.reward, pocketCoins: row.pocket_coins, title: achievement.title });
+      }
+
+      // ── POST /achievements/set-title { id|null } — 청구해 둔 업적의 칭호로 장착 변경(닉네임
+      //    옆에 표시). null이면 칭호를 뗀다. ──
+      if (request.method === "POST" && path === "/achievements/set-title") {
+        const body = await request.json().catch(function () { return {}; });
+        const id = body.id;
+        if (id === null || id === undefined || id === "") {
+          await env.DB.prepare("UPDATE arena_users SET equipped_title_id = NULL WHERE user_id = ?").bind(user.userId).run();
+          return json({ ok: true, equippedTitleId: null, equippedTitle: null });
+        }
+        if (!ACHIEVEMENTS[id]) return json({ error: "존재하지 않는 업적입니다." }, 404);
+        const claimedRow = await env.DB.prepare("SELECT 1 FROM arena_achievement_claims WHERE user_id=? AND achievement_id=?").bind(user.userId, id).first();
+        if (!claimedRow) return json({ error: "아직 받지 않은 업적의 칭호는 장착할 수 없습니다." }, 400);
+        await env.DB.prepare("UPDATE arena_users SET equipped_title_id = ? WHERE user_id = ?").bind(id, user.userId).run();
+        return json({ ok: true, equippedTitleId: id, equippedTitle: ACHIEVEMENTS[id].title });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -2765,9 +3126,12 @@ export default {
         else orderBy = "level DESC, xp DESC";
         // 관리자 테스트 계정은 치트로 쌓인 수치가 랭킹을 오염시키지 않도록 항상 제외한다.
         const res = await env.DB.prepare(
-          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
+          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count, equipped_title_id FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
         ).bind(ADMIN_USER_ID).all();
-        return json({ type: type, rows: res.results });
+        const rows = res.results.map(function (r) {
+          return Object.assign({}, r, { title: (r.equipped_title_id && ACHIEVEMENTS[r.equipped_title_id]) ? ACHIEVEMENTS[r.equipped_title_id].title : null });
+        });
+        return json({ type: type, rows: rows });
       }
 
       return json({ error: "Not found" }, 404);
