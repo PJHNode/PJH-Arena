@@ -3638,12 +3638,15 @@ export default {
           const mine = p.owner_user_id === user.userId;
           // 봇 구역은 절대 정복되지 않으므로 is_home이 아니면 무조건 미정복 상태다 — 15분마다
           // 리롤되는 "현재" 난이도를 그때그때 계산한다(저장된 bot_tier는 최초 시드값이라 신뢰하지 않음).
-          let tierKey = null, combatStats = null, coinsPerHour = p.coins_per_hour, homeInvulnerable = false;
+          // rewardCoins는 실제로 이겼을 때 받는 약탈 보상(resolvePlanetCombat의 0.5배 로직과 동일)
+          // — "시간당 수익"이 아니라 1회성 보상이라 coinsPerHour라는 이름/표기(예전엔 "OOO/hr"로
+          // 표시했었다)를 쓰지 않는다(요청 반영: "그냥 보상이니까 이렇게 쓰지마").
+          let tierKey = null, combatStats = null, rewardCoins = 0, homeInvulnerable = false;
           if (!p.is_home) {
             tierKey = effectivePlanetTier(p.slot_index, now);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
-            coinsPerHour = t.coinsPerHour;
+            rewardCoins = Math.round(t.coinsPerHour * 0.5);
           } else {
             // 여기 나오는 홈 행성은 항상 "내" 것뿐이다(쿼리 조건상) — 내 방어 스탯 참고용으로 보여준다.
             combatStats = { atk: myCombat.atk * HOME_PLANET_DEFENSE_MULT, def: myCombat.def * HOME_PLANET_DEFENSE_MULT, crit: myCombat.crit };
@@ -3654,7 +3657,7 @@ export default {
             ownerUserId: p.owner_user_id, ownerName: p.owner_name, mine: mine,
             botTier: tierKey, botTierLabel: tierKey ? PLANET_BOT_TIERS[tierKey].label : null,
             combatStats: combatStats,
-            coinsPerHour: coinsPerHour,
+            rewardCoins: rewardCoins,
             homeInvulnerable: homeInvulnerable,
             attackable: !mine && !homeInvulnerable,
             expeditionEligible: !!(tierKey && ["elite", "nightmare", "apex"].indexOf(tierKey) !== -1),
@@ -3663,7 +3666,7 @@ export default {
         const tierMeta = {};
         for (const key in PLANET_BOT_TIERS) {
           const t = PLANET_BOT_TIERS[key];
-          tierMeta[key] = { label: t.label, weight: t.weight, atk: t.atk, def: t.def, crit: t.crit, coinsPerHour: t.coinsPerHour };
+          tierMeta[key] = { label: t.label, weight: t.weight, atk: t.atk, def: t.def, crit: t.crit, rewardCoins: Math.round(t.coinsPerHour * 0.5) };
         }
         return json({
           planets: planets, stances: STANCES,
@@ -3672,18 +3675,53 @@ export default {
         });
       }
 
-      // ── POST /planets/scout { targetUserId } — 사람 구역(홈 행성) 정찰. 스태미나
-      //    PLANET_SCOUT_STAMINA_COST를 내고 그 순간 대상의 홈 행성 정보(전투력, 무적 여부,
-      //    planetId)를 드러낸다 — 기존 PvP 정찰(/arena/scan)과 완전히 같은 발상. 정찰 없이는
-      //    다른 사람의 홈 행성이 /planets 목록에 아예 안 뜬다. ──
+      // ── GET /planets/targets — 정찰할 아이디를 몰라도 되도록, 홈 행성이 있는 다른 플레이어를
+      //    무작위로 나열해준다(요청 반영: "그냥 플레이어들을 쭉 써놓아도 돼"). 스태미나 소모
+      //    없이 이름만 보여주고, 실제 전투력/무적 여부는 그 중 하나를 골라 정찰해야 나온다. ──
+      if (request.method === "GET" && path === "/planets/targets") {
+        const res = await env.DB.prepare(
+          "SELECT u.user_id AS user_id, u.real_name AS real_name, u.level AS level FROM arena_users u " +
+          "JOIN arena_planets p ON p.owner_user_id = u.user_id AND p.is_home = 1 " +
+          "WHERE u.user_id != ? AND u.user_id != ? ORDER BY RANDOM() LIMIT 20"
+        ).bind(user.userId, ADMIN_USER_ID).all();
+        return json({ targets: res.results });
+      }
+
+      // ── POST /planets/scout { targetUserId } — 사람 구역(홈 행성) 정찰. targetUserId 자리엔
+      //    정확한 아이디뿐 아니라 닉네임(대소문자 무관, 부분 일치 포함)도 넣을 수 있다(요청
+      //    반영: "아이디 말고 닉네임도 가능하게"). 스태미나 PLANET_SCOUT_STAMINA_COST를 내고
+      //    그 순간 대상의 홈 행성 정보(전투력, 무적 여부, planetId)를 드러낸다 — 기존 PvP
+      //    정찰(/arena/scan)과 완전히 같은 발상. 정찰 없이는 다른 사람의 홈 행성이 /planets
+      //    목록에 아예 안 뜬다. ──
       if (request.method === "POST" && path === "/planets/scout") {
         const body = await request.json().catch(function () { return {}; });
-        const targetUserId = String(body.targetUserId || "").trim();
+        const query = String(body.targetUserId || "").trim();
         const me = await loadOrCreateUser(env, user.userId, user.realName);
-        if (targetUserId === user.userId) return json({ error: "자기 자신은 정찰할 수 없습니다." }, 400);
+        if (!query) return json({ error: "정찰할 아이디나 닉네임을 입력하세요." }, 400);
         if (me.stamina < PLANET_SCOUT_STAMINA_COST) return json({ error: "스태미나가 부족합니다. (정찰에 " + PLANET_SCOUT_STAMINA_COST + " 필요)" }, 400);
-        const target = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(targetUserId).first();
+
+        // 1) 아이디 정확히 일치 → 2) 닉네임 정확히 일치(대소문자 무관) → 3) 닉네임 부분 일치 순으로 찾는다.
+        let target = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ? AND user_id != ?").bind(query, ADMIN_USER_ID).first();
+        if (!target) {
+          const exact = await env.DB.prepare(
+            "SELECT * FROM arena_users WHERE LOWER(real_name) = LOWER(?) AND user_id != ? AND user_id != ? LIMIT 2"
+          ).bind(query, user.userId, ADMIN_USER_ID).all();
+          if (exact.results.length === 1) target = exact.results[0];
+          else if (exact.results.length > 1) {
+            return json({ error: "동일한 닉네임을 쓰는 유저가 여러 명입니다. 아이디로 정확히 입력하세요." }, 400);
+          } else {
+            const partial = await env.DB.prepare(
+              "SELECT * FROM arena_users WHERE real_name LIKE ? AND user_id != ? AND user_id != ? LIMIT 6"
+            ).bind("%" + query + "%", user.userId, ADMIN_USER_ID).all();
+            if (partial.results.length === 1) target = partial.results[0];
+            else if (partial.results.length > 1) {
+              return json({ error: "닉네임이 비슷한 유저가 여럿입니다: " + partial.results.map(function (r) { return r.real_name; }).join(", ") + " — 더 정확히 입력하세요." }, 400);
+            }
+          }
+        }
         if (!target) return json({ error: "대상을 찾을 수 없습니다." }, 404);
+        const targetUserId = target.user_id;
+        if (targetUserId === user.userId) return json({ error: "자기 자신은 정찰할 수 없습니다." }, 400);
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(targetUserId).first();
         if (!planet) return json({ error: "그 유저의 홈 행성을 찾을 수 없습니다." }, 404);
 
@@ -3724,8 +3762,8 @@ export default {
 
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
-        const cooldownLeft1 = attackCooldownRemainingMs(attacker);
-        if (cooldownLeft1 > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft1 / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
+        // Galaxy Map은 PvP 공격과 달리 공격 간 쿨타임이 없다(요청 반영) — 스태미나만 소모되면
+        // 연속으로 공격 가능. last_attack_at도 여기선 갱신하지 않아 PvP 쪽 쿨타임에 영향 없다.
         if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
 
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
@@ -3749,7 +3787,6 @@ export default {
         const leveledUp = applyXpAndLevel(attacker, xpGain);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
-        attacker.last_attack_at = Date.now();
         await env.DB.prepare(
           "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
           "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
@@ -3787,8 +3824,7 @@ export default {
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (!attacker.research_expedition_unlocked) return json({ error: "원정 연구를 먼저 해금하세요." }, 400);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
-        const cooldownLeft2 = attackCooldownRemainingMs(attacker);
-        if (cooldownLeft2 > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft2 / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
+        // Galaxy Map 원정도 공격과 마찬가지로 쿨타임 없음(요청 반영).
         if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
 
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
@@ -3812,7 +3848,6 @@ export default {
         const leveledUp = applyXpAndLevel(attacker, xpGain);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
-        attacker.last_attack_at = Date.now();
         await env.DB.prepare(
           "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
           "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"

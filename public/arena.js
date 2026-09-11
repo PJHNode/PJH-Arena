@@ -521,9 +521,12 @@
       const grid = document.querySelector("#panel-galaxy .planet-grid");
       grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
       try {
-        const [planetsData, researchData] = await Promise.all([api("/planets"), api("/research").catch(() => null)]);
+        const [planetsData, researchData, targetsData] = await Promise.all([
+          api("/planets"), api("/research").catch(() => null), api("/planets/targets").catch(() => null),
+        ]);
         galaxyCache = planetsData;
         galaxyExpeditionUnlocked = !!(researchData && researchData.expeditionUnlocked);
+        galaxyTargetsCache = targetsData ? targetsData.targets : [];
       } catch (e) {
         grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
         return;
@@ -535,6 +538,8 @@
   // 사람 구역 정찰 결과 — 서버를 다시 안 불러도 되게 세션 동안만 들고 있는다(탭 재진입/필터
   // 조작으로 다시 그릴 때도 유지되도록 galaxyCache와 별도로 둔다).
   let galaxyScoutResult = null;
+  // 정찰할 아이디를 몰라도 되도록 보여주는 "정찰 후보" 플레이어 목록(요청 반영).
+  let galaxyTargetsCache = null;
 
   function renderGalaxyContent() {
     const data = galaxyCache;
@@ -566,7 +571,7 @@
         ? (p.mine ? "🏠 내 홈 행성" : "🏠 " + escapeHtml(p.ownerName) + "의 홈 행성") + (!p.mine && p.homeInvulnerable ? " · 🛡️ 무적" : "")
         : "🤖 무주인 (PVE)";
       const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
-      const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 ' + fmt(p.coinsPerHour) + "/hr</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
+      const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 보상 ' + fmt(p.rewardCoins) + " 코인</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
       const attackBtn = !withButton ? "" : p.attackable
         ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
         : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "내 홈 행성" : "내 행성") + "</button>";
@@ -580,6 +585,21 @@
         tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn +
         "</div>"
       );
+    }
+
+    // 사람 구역 — 아이디/닉네임을 몰라도 고를 수 있게 정찰 후보 목록을 칩으로 나열한다.
+    const targetListEl = $("galaxyTargetList");
+    if (targetListEl) {
+      const list = galaxyTargetsCache || [];
+      targetListEl.innerHTML = list.length
+        ? list.map((t) =>
+            '<button type="button" class="galaxy-target-chip" data-target="' + escapeHtml(t.user_id) + '">' +
+            escapeHtml(t.real_name) + " (Lv." + t.level + ")</button>"
+          ).join("")
+        : '<p class="galaxy-empire-empty">정찰할 수 있는 다른 플레이어가 아직 없습니다.</p>';
+      targetListEl.querySelectorAll("button[data-target]").forEach((btn) => {
+        btn.addEventListener("click", () => scoutTarget(btn.dataset.target));
+      });
     }
 
     // 사람 구역 — 정찰 결과가 있을 때만 카드 하나를 보여준다(정찰 안 하면 아무도 안 보임).
@@ -656,26 +676,30 @@
   }
 
   // ── 사람 구역 정찰 — /arena/scan(PvP 정찰)과 똑같은 발상. 정찰해야만 그 순간 상대 홈
-  //    행성 정보(전투력/무적 여부/planetId)가 드러나고 공격 버튼이 뜬다. ──
+  //    행성 정보(전투력/무적 여부/planetId)가 드러나고 공격 버튼이 뜬다. targetUserId 자리엔
+  //    아이디뿐 아니라 닉네임도 넣을 수 있고(서버가 부분 일치까지 처리), 목록에서 후보를
+  //    클릭해도 같은 함수를 탄다. ──
+  async function scoutTarget(query) {
+    if (!query) return toast("정찰할 아이디나 닉네임을 입력하세요.", true);
+    const btn = $("galaxyScoutBtn");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api("/planets/scout", { method: "POST", body: { targetUserId: query } });
+      galaxyScoutResult = {
+        id: r.planetId, name: r.planetName, isHome: true, mine: false,
+        ownerUserId: r.ownerUserId, ownerName: r.ownerName,
+        combatStats: r.combatStats, homeInvulnerable: r.homeInvulnerable, attackable: r.attackable,
+        botTier: null, botTierLabel: null, rewardCoins: 0, expeditionEligible: false,
+      };
+      state = r.state; renderHeader();
+      renderGalaxyContent();
+    } catch (e) { toast(e.message, true); } finally { if (btn) btn.disabled = false; }
+  }
+
   function initGalaxyScout() {
     const btn = $("galaxyScoutBtn");
     if (!btn) return;
-    btn.addEventListener("click", async () => {
-      const targetUserId = $("galaxyScoutInput").value.trim();
-      if (!targetUserId) return toast("정찰할 아이디를 입력하세요.", true);
-      btn.disabled = true;
-      try {
-        const r = await api("/planets/scout", { method: "POST", body: { targetUserId } });
-        galaxyScoutResult = {
-          id: r.planetId, name: r.planetName, isHome: true, mine: false,
-          ownerUserId: r.ownerUserId, ownerName: r.ownerName,
-          combatStats: r.combatStats, homeInvulnerable: r.homeInvulnerable, attackable: r.attackable,
-          botTier: null, botTierLabel: null, coinsPerHour: 0, expeditionEligible: false,
-        };
-        state = r.state; renderHeader();
-        renderGalaxyContent();
-      } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
-    });
+    btn.addEventListener("click", () => scoutTarget($("galaxyScoutInput").value.trim()));
   }
 
   function initGalaxyButtons() {

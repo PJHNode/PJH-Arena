@@ -401,6 +401,9 @@
   .galaxy-empire-empty { font-size: 11px; color: var(--sub); grid-column: 1/-1; }
   .galaxy-scout-form { display: flex; gap: 8px; margin-bottom: 12px; }
   .galaxy-scout-form input { flex: 1; }
+  .galaxy-target-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .galaxy-target-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: var(--font-mono); }
+  .galaxy-target-chip:hover { border-color: var(--accent); color: var(--accent); }
   .galaxy-legend-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
   .galaxy-tier-legend { display: flex; gap: 6px; flex-wrap: wrap; }
   .galaxy-tier-chip { font-size: 9px; color: var(--sub); background: var(--surface-2); border: 1px solid var(--border); padding: 3px 8px; }
@@ -655,9 +658,10 @@
             <span>👤 사람 구역 — 정찰 후 공격</span>
           </div>
           <div class="galaxy-scout-form">
-            <input id="galaxyScoutInput" type="text" placeholder="정찰할 상대 아이디" />
+            <input id="galaxyScoutInput" type="text" placeholder="정찰할 상대 아이디 또는 닉네임" />
             <button class="btn-primary" id="galaxyScoutBtn">정찰하기 (⚡1)</button>
           </div>
+          <div class="galaxy-target-list" id="galaxyTargetList"></div>
           <div class="galaxy-empire-grid" id="galaxyScoutResult"></div>
         </div>
 
