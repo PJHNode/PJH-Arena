@@ -194,7 +194,9 @@
     // 전역 이벤트(GM이 켠 기간 한정 코인·EXP 2배) — 개인 부스트와 별개의 상단 배너, 며칠 단위라
     // 남은 시간 표기도 fmtLongCountdown(일/시간 단위)을 따로 쓴다.
     globalEventEndAt = state.globalEventActive ? state.globalEventEndAt : 0;
-    $("globalEventBanner").style.display = state.globalEventActive ? "" : "none";
+    // 주의: #globalEventBanner의 CSS 기본값이 display:none이라 ""로 지우면 그 기본값으로
+    // 되돌아갈 뿐 안 보인다(.tab-panel/downedBanner와 똑같은 함정) — 반드시 "block"으로 명시.
+    $("globalEventBanner").style.display = state.globalEventActive ? "block" : "none";
     renderResourceEtas();
 
     $("statPointsText").textContent = state.statPoints;
