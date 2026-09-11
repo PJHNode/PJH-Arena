@@ -1003,6 +1003,31 @@ function lookupTitleText(id) {
   return null;
 }
 
+// ── 칭호별 색/아우라 — "얻기 어려울수록 매우 화려하게" 요청 반영. 아이템/봇/PvP 아우라와
+// 완전히 같은 9단계 체계(RARITY_ORDER)를 그대로 재사용해서, legendary 이상인 칭호만 프론트의
+// 파티클/아우라 이펙트가 붙고 그 아래는 색만 다르다. 순수 보상액/획득 난이도 기준으로 직접
+// 매긴 순위라(자동 계산 아님) 새 칭호를 추가할 때마다 여기도 같이 채워야 한다 — 안 채우면
+// lookupTitleInfo가 기본값 "common"으로 조용히 대체한다.
+const TITLE_RARITY = {
+  level_10: "common", club_member: "common",
+  plunder_10: "uncommon", level_25: "uncommon", rebirth_title_wanderer: "uncommon",
+  club_leader: "rare", bots_full: "rare", level_50: "rare",
+  lucky_researcher: "epic", planet_baron: "epic", rebirth_title_witness: "epic",
+  rebirth_1: "legendary", plunder_100: "legendary",
+  level_100: "mythic", planet_emperor: "mythic",
+  abyssal_owner: "secret",
+  level_200: "forbidden",
+  rebirth_max: "abyssal", // 환생 10회(최대) — 게임에서 가장 얻기 어려운 칭호
+};
+// 텍스트뿐 아니라 등급/색까지 한 번에 반환 — 칭호가 표시되는 모든 곳(프로필/헤더/리더보드/
+// PvP 목록·정찰)이 전부 이 함수 하나만 거치게 해서 색/아우라가 항상 통일되게 한다.
+function lookupTitleInfo(id) {
+  const text = lookupTitleText(id);
+  if (!text) return { text: null, rarity: null, color: null };
+  const rarity = TITLE_RARITY[id] || "common";
+  return { text: text, rarity: rarity, color: RARITY_META[rarity].color };
+}
+
 // 달성 판정에 필요한 부가 정보(봇 수/Abyssal 보유/보유 행성 수/클럽 소속 등)를 한 번에 모아
 // ctx로 만든다 — GET /achievements와 POST /achievements/claim이 공유.
 async function buildAchievementContext(env, row) {
@@ -1613,10 +1638,11 @@ async function buildPublicProfile(env, userId) {
   }
 
   const shopOwned = rebirthShopOwnedSet(row);
+  const profileTitleInfo = lookupTitleInfo(row.equipped_title_id);
   return {
     userId: row.user_id, realName: row.real_name, level: row.level,
     rebirthCount: row.rebirth_count || 0,
-    title: lookupTitleText(row.equipped_title_id),
+    title: profileTitleInfo.text, titleRarity: profileTitleInfo.rarity, titleColor: profileTitleInfo.color,
     plunderWins: row.plunder_wins, clubName: clubName,
     statusMessage: profileRow ? (profileRow.status_message || "") : "",
     showcase: showcase,
@@ -1632,6 +1658,7 @@ async function buildPublicProfile(env, userId) {
 
 function publicState(row, combat) {
   const now = Date.now();
+  const equippedTitleInfo = lookupTitleInfo(row.equipped_title_id);
   // HP도 이제 0(다운)이든 아니든 자연 회복되므로(applyRegen 참고) 항상 완충 예상 시간을 준다.
   const hpFullInMs = msUntilFull(row.hp, row.max_hp, HP_REGEN_PER_TICK, HP_TICK_MS, row.last_hp_tick, now);
   const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, ENERGY_TICK_MS, row.last_energy_tick, now);
@@ -1658,7 +1685,7 @@ function publicState(row, combat) {
     dailyBoostUntil: row.daily_boost_until || 0,
     // 칭호 텍스트는 저장하지 않고 매번 정의(ACHIEVEMENTS 또는 REBIRTH_SHOP_ITEMS)에서 새로
     // 읽는다 — 장착한 뒤 이름이 바뀌어도 안 꼬이고, 정의 자체가 삭제되면 자연히 칭호도 사라진다.
-    equippedTitle: lookupTitleText(row.equipped_title_id),
+    equippedTitle: equippedTitleInfo.text, equippedTitleRarity: equippedTitleInfo.rarity, equippedTitleColor: equippedTitleInfo.color,
     // 환생 등급(0~4, 프로필/이름표 발광 단계) + 환생 상점(환생석) + 환생 등급별 전투/QoL 특권 —
     // 전부 클라이언트가 그대로 표시/계산에 쓸 수 있게 여기서 최종값으로 내려준다.
     rebirthTier: rebirthTier(row.rebirth_count),
@@ -2122,12 +2149,15 @@ export default {
           // 레벨 차이는 더 이상 공격을 막지 않는다 — 정보 표시용으로만 남겨둔다(스태미나가
           // 더 드는 구간에 들어왔는지 보여주기 위함, computeAttackStaminaCost와 같은 ±10 기준).
           const levelGapHigh = Math.abs(me.level - t.level) > 10;
-          // 아우라 등급 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 하나로 정해진다(요청 반영).
+          // 이름 아우라 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 하나. 칭호 배지는 이거랑
+          // 별개로 칭호 자체의 난이도 등급(리더보드와 완전히 같은 lookupTitleInfo)을 쓴다.
           const auraTier = pvpAuraTierFor(t);
+          const targetTitleInfo = lookupTitleInfo(t.equipped_title_id);
           targets.push({
             userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, atk: tCombat.atk, online: online,
             rebirthCount: t.rebirth_count || 0,
             auraTier: auraTier, auraColor: auraTier ? RARITY_META[auraTier].color : null,
+            title: targetTitleInfo.text, titleRarity: targetTitleInfo.rarity, titleColor: targetTitleInfo.color,
             offlinePendingCoins: bonusPocket,
             lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
@@ -2169,10 +2199,12 @@ export default {
         const combat = await totalCombatStats(env, me);
 
         const scanAuraTier = pvpAuraTierFor(target);
+        const scanTitleInfo = lookupTitleInfo(target.equipped_title_id);
         return json({
           targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, atk: tCombat.atk, online: online, offlinePendingCoins: offlinePendingCoins,
           rebirthCount: target.rebirth_count || 0,
           auraTier: scanAuraTier, auraColor: scanAuraTier ? RARITY_META[scanAuraTier].color : null,
+          title: scanTitleInfo.text, titleRarity: scanTitleInfo.rarity, titleColor: scanTitleInfo.color,
           lastStance: target.last_stance || null, lastStanceLabel: target.last_stance ? STANCES[target.last_stance].label : null,
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: computeAttackStaminaCost(me.level, target.level, online),
@@ -3367,7 +3399,7 @@ export default {
         const id = body.id;
         if (id === null || id === undefined || id === "") {
           await env.DB.prepare("UPDATE arena_users SET equipped_title_id = NULL WHERE user_id = ?").bind(user.userId).run();
-          return json({ ok: true, equippedTitleId: null, equippedTitle: null });
+          return json({ ok: true, equippedTitleId: null, equippedTitle: null, equippedTitleRarity: null, equippedTitleColor: null });
         }
         if (ACHIEVEMENTS[id]) {
           const claimedRow = await env.DB.prepare("SELECT 1 FROM arena_achievement_claims WHERE user_id=? AND achievement_id=?").bind(user.userId, id).first();
@@ -3379,7 +3411,8 @@ export default {
           return json({ error: "존재하지 않는 칭호입니다." }, 404);
         }
         await env.DB.prepare("UPDATE arena_users SET equipped_title_id = ? WHERE user_id = ?").bind(id, user.userId).run();
-        return json({ ok: true, equippedTitleId: id, equippedTitle: lookupTitleText(id) });
+        const setTitleInfo = lookupTitleInfo(id);
+        return json({ ok: true, equippedTitleId: id, equippedTitle: setTitleInfo.text, equippedTitleRarity: setTitleInfo.rarity, equippedTitleColor: setTitleInfo.color });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -3989,7 +4022,8 @@ export default {
           "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count, equipped_title_id FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
         ).bind(ADMIN_USER_ID).all();
         const rows = res.results.map(function (r) {
-          return Object.assign({}, r, { title: lookupTitleText(r.equipped_title_id) });
+          const titleInfo = lookupTitleInfo(r.equipped_title_id);
+          return Object.assign({}, r, { title: titleInfo.text, titleRarity: titleInfo.rarity, titleColor: titleInfo.color });
         });
         return json({ type: type, rows: rows });
       }

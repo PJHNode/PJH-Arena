@@ -162,10 +162,13 @@
     $("critText").textContent = state.crit;
     $("shieldTag").style.display = state.shielded ? "" : "none";
 
-    // 칭호 — 업적을 청구하면 골라 장착할 수 있다(Achievements 탭).
+    // 칭호 — 업적을 청구하면 골라 장착할 수 있다(Achievements 탭). 등급별 색/아우라는
+    // 리더보드·PvP와 같은 titleBadgeHtml을 재사용(요청 반영: 전부 통일된 효과).
     const titleTag = $("titleTag");
-    if (state.equippedTitle) { titleTag.textContent = "🏷️ " + state.equippedTitle; titleTag.style.display = ""; }
-    else titleTag.style.display = "none";
+    if (state.equippedTitle) {
+      titleTag.innerHTML = "🏷️ " + titleBadgeHtml(state.equippedTitle, state.equippedTitleColor, state.equippedTitleRarity);
+      titleTag.style.display = "";
+    } else titleTag.style.display = "none";
 
     // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다. 등급(브론즈~
     // 무지개)은 tier-N 클래스로 표시색을 바꾼다(rebirthTier 참고, 서버와 동일한 계단식).
@@ -467,11 +470,14 @@
         const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
         // 이름 주변 아우라/파티클 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 걸로 서버가
         // 판정한 auraTier를 그대로 시각화(요청 반영). 평범한 상대는 기존과 완전히 동일.
+        // 칭호 배지/환생 표기는 리더보드와 완전히 같은 함수(titleBadgeHtml/rebirthBadgeHtml)를
+        // 써서 통일했다(요청 반영: "리더보드랑 P2P 이름 효과 통일해줘").
         const nameHtml = window.auraNameHtml ? auraNameHtml(escapeHtml(t.realName), t.auraColor, t.auraTier) : escapeHtml(t.realName);
-        const rebirthNote = t.rebirthCount > 0 ? ' <span class="dim">🔄' + t.rebirthCount + "</span>" : "";
+        const titleHtml = titleBadgeHtml(t.title, t.titleColor, t.titleRarity);
+        const rebirthNote = rebirthBadgeHtml(t.rebirthCount);
         return (
         '<div class="pvp-row">' +
-        '<div class="pvp-name">' + nameHtml + rebirthNote + '<span class="dim"> Lv.' + t.level + "</span> " +
+        '<div class="pvp-name">' + titleHtml + nameHtml + rebirthNote + '<span class="dim"> Lv.' + t.level + "</span> " +
         (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + statusNote + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
@@ -496,8 +502,9 @@
       const r = await api("/arena/scan", { method: "POST", body: { targetUserId } });
       state = r.state; renderHeader(); // 정찰도 이제 스태미나 1을 쓴다 — 헤더 수치 바로 반영
       const scanNameHtml = window.auraNameHtml ? auraNameHtml(escapeHtml(r.realName), r.auraColor, r.auraTier) : escapeHtml(r.realName);
+      const scanTitleHtml = titleBadgeHtml(r.title, r.titleColor, r.titleRarity);
       $("scanModalBody").innerHTML =
-        "<h3>🔎 PRACTICE SCAN — " + scanNameHtml + " (Lv." + r.level + ")" + (r.rebirthCount > 0 ? ' <span class="dim">🔄 환생 ' + r.rebirthCount + "회</span>" : "") + "</h3>" +
+        "<h3>🔎 PRACTICE SCAN — " + scanTitleHtml + scanNameHtml + " (Lv." + r.level + ")" + rebirthBadgeHtml(r.rebirthCount) + "</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
         (r.online ? "" : '<div class="scan-row">대기 중인 Property 수익 <b style="color:var(--stamina);">+' + fmt(r.offlinePendingCoins) + "</b></div>") +
         '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +
@@ -2130,7 +2137,8 @@
           try {
             const r = await api("/achievements/set-title", { method: "POST", body: { id: btn.dataset.equip } });
             toast("🏷️ 칭호 [" + r.equippedTitle + "] 장착");
-            state.equippedTitle = r.equippedTitle; renderHeader(); renderAchievementsTab();
+            state.equippedTitle = r.equippedTitle; state.equippedTitleRarity = r.equippedTitleRarity; state.equippedTitleColor = r.equippedTitleColor;
+            renderHeader(); renderAchievementsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });
@@ -2140,7 +2148,8 @@
           try {
             await api("/achievements/set-title", { method: "POST", body: { id: null } });
             toast("칭호를 해제했습니다.");
-            state.equippedTitle = null; renderHeader(); renderAchievementsTab();
+            state.equippedTitle = null; state.equippedTitleRarity = null; state.equippedTitleColor = null;
+            renderHeader(); renderAchievementsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });
@@ -2165,13 +2174,23 @@
     } catch (e) { cardArea.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // 칭호 배지 — 리더보드/PvP 목록/정찰/프로필/헤더가 전부 이 함수 하나로 통일해서 쓴다
+  // (요청 반영: "리더보드랑 P2P 이름이랑 통일해서 효과 만들어줘"). 색은 항상 등급별로
+  // 다르고(titleColor), 파티클/아우라는 legendary 이상 칭호에만 auraNameHtml이 알아서 붙인다.
+  function titleBadgeHtml(text, color, rarity) {
+    if (!text) return "";
+    const bracket = "[" + escapeHtml(text) + "]";
+    const wrapped = window.auraNameHtml ? auraNameHtml(bracket, color, rarity) : bracket;
+    return '<span class="title-badge">' + wrapped + "</span> ";
+  }
+
   // 리더보드 모달/프로필 탭이 똑같은 카드 마크업을 쓰므로 한 함수로 통일했다.
   function profileCardHtml(p) {
     const tier = rebirthTier(p.rebirthCount || 0);
     const glowCls = p.rebirthEffectEnabled ? " rebirth-glow tier-" + tier : "";
     const frameCls = p.auroraFrameOwned ? " frame-aurora" : "";
-    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge tier-' + tier + '">🔄 환생 ' + toRoman(p.rebirthCount) + "</span>" : "";
-    const titleBadge = p.title ? '<span class="title-badge">[' + escapeHtml(p.title) + "]</span> " : "";
+    const rebirthBadge = p.rebirthCount > 0 ? '<span class="rebirth-badge tier-' + tier + '"> - ' + toRoman(p.rebirthCount) + "</span>" : "";
+    const titleBadge = titleBadgeHtml(p.title, p.titleColor, p.titleRarity);
     const slots = [0, 1, 2].map((i) => {
       const s = p.showcase[i];
       if (!s) return '<div class="profile-slot empty">비어있음</div>';
@@ -2318,7 +2337,7 @@
         const valueLabel = lbType === "level" ? "Lv." + r.level :
           lbType === "assets" ? fmt(r.pocket_coins + r.bank_coins) + " 코인" :
           r.plunder_wins + "승";
-        const titleHtml = r.title ? '<span class="title-badge">[' + escapeHtml(r.title) + "]</span> " : "";
+        const titleHtml = titleBadgeHtml(r.title, r.titleColor, r.titleRarity);
         return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + titleHtml + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
       }).join("") || '<p class="dim">기록이 없습니다.</p>';
       list.querySelectorAll("[data-profile]").forEach((el) => {
@@ -2388,8 +2407,9 @@
     return 0;
   }
   // 닉네임 옆에 붙이는 환생 뱃지 — 헤더/프로필/리더보드 전부 이 한 함수로 통일.
+  // 환생 횟수는 이모티콘 대신 로마숫자로만 표시한다(요청 반영: "- I 처럼 로마숫자로").
   function rebirthBadgeHtml(count) {
-    return count > 0 ? ' <span class="rebirth-name-badge tier-' + rebirthTier(count) + '">환생 ' + toRoman(count) + "</span>" : "";
+    return count > 0 ? ' <span class="rebirth-name-badge tier-' + rebirthTier(count) + '"> - ' + toRoman(count) + "</span>" : "";
   }
 
   document.addEventListener("DOMContentLoaded", () => {

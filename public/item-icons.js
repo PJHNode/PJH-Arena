@@ -154,7 +154,10 @@ function wrapWithRarityFx(innerHtml, color, size, rarity) {
 // ══════════════════════════════════════════════════════════
 window.auraNameHtml = function auraNameHtml(nameHtml, color, tier) {
   const fx = rarityFxLayers(color, tier);
-  if (!fx) return nameHtml;
+  // legendary 미만(아우라 대상이 아님)이어도 색은 항상 입힌다 — 예: 칭호는 등급마다 색이
+  // 달라야 하는데 낮은 등급은 파티클 없이 색만 다른 게 맞는 디자인(요청 반영: "칭호별로
+  // 색과 아우라가 다르게, 어려울수록 화려하게" — 색은 전부, 화려함은 상위 등급만).
+  if (!fx) return color ? '<span style="color:' + color + ';">' + nameHtml + "</span>" : nameHtml;
   return (
     '<span class="item-icon-fx name-fx ' + fx.tierClass + '" style="--fx-color:' + fx.colorVar +
     ";--fx-aura-dur:" + fx.auraDur + ";--fx-particle-dur:" + fx.particleDur + ';">' +
