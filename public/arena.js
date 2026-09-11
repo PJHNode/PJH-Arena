@@ -473,7 +473,7 @@
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapHigh ? ' style="color:var(--stamina);"' : '') + '>' + r.staminaCost + (r.levelGapHigh ? " (레벨차 큼)" : "") + "</b></div>" +
-        '<div class="scan-row">공격 횟수(8시간마다 초기화) <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
+        '<div class="scan-row">공격 횟수(최근 8시간 내) <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
         '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>" +
         '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>';
       $("scanModal").style.display = "flex";

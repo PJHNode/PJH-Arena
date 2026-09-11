@@ -211,9 +211,12 @@ const SHOP_ITEMS = {
 // 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 한 주기 안에 몇 번까지 노릴 수 있는지"만
 // 공격자별로 제한한다(아래 PVP_MAX_ATTACKS_PER_TARGET_PER_RESET). 소비재로 사는 자가 보호막
 // (stealth_cloak 등, shield_until 컬럼)은 이것과 별개로 그대로 유효하다.
-// 예전엔 "최근 24시간" 롤링 윈도우였는데, 요청으로 "8시간마다 고정 초기화"로 바꿨다 — 상점
-// 로테이션/행성 리롤/클럽 전쟁 시즌과 같은 방식(시간을 버킷으로 나누는 결정론적 경계)이라
-// 하루에 딱 3번(자정/오전8시/오후4시 UTC 기준) 정확히 초기화되고, 크론 없이 그냥 계산만 하면 된다.
+// 처음엔 "최근 24시간" 롤링 윈도우였고, 8시간으로 줄여달라는 요청을 받아 상점 로테이션 같은
+// "고정 시계 경계" 버킷 방식으로 바꿨었는데, 그 방식은 실제로 악용 가능한 구멍이었다 — 경계
+// (예: 매일 17시) 직전에 5번 몰아 때리고 경계가 지나자마자 또 5번을 몰아 때리면, 실제로는
+// 같은 사람을 1~2시간 안에 5번을 훌쩍 넘겨(최악의 경우 10번까지도) 때릴 수 있었다. 그래서
+// "지금부터 8시간 전"까지를 보는 롤링 윈도우로 되돌렸다 — 시계 경계와 무관하게 진짜로 최근
+// 8시간 동안 몇 번 맞았는지만 정확히 세므로 이 구멍이 없다.
 const PVP_MAX_ATTACKS_PER_TARGET_PER_RESET = 5;
 const ATTACK_LIMIT_RESET_MS = 8 * 60 * 60 * 1000;
 const PVP_PLUNDER_RATE = 0.10;
@@ -1248,19 +1251,25 @@ async function isTargetOnline(env, userId) {
   }
 }
 
-// ── 같은 (공격자, 방어자) 쌍이 이번 8시간 주기 안에 몇 번 붙었는지 — arena_logs에 이미 매
-// 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다. 예전엔 "최근 24시간" 롤링 윈도우였는데
-// 요청으로 "8시간마다 고정 초기화"로 바꿨다 — 상점 로테이션/행성 리롤과 같은 시간 버킷 방식이라
-// (지금 시각을 ATTACK_LIMIT_RESET_MS로 나눈 몫이 곧 "이번 주기"), 그 주기가 시작된 시각 이후
-// 기록만 세면 되고 별도 리셋 로직이나 크론이 필요 없다. ──
+// ── 같은 (공격자, 방어자) 쌍이 최근 8시간(지금부터 ATTACK_LIMIT_RESET_MS 전까지) 안에 몇 번
+// 붙었는지 — arena_logs에 이미 매 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다.
+// 한때 "고정 시계 경계(상점 로테이션과 같은 버킷 방식)"로 바꿨었는데, 경계 앞뒤로 몰아 때리면
+// 실제 8시간보다 훨씬 짧은 시간에 한도를 몇 배로 넘길 수 있는 구멍이 있어서(실사례로 발견)
+// "지금부터 8시간 전"을 보는 롤링 윈도우로 되돌렸다 — 시계 경계와 무관하게 항상 정확하다. ──
 // kind를 생략하면 기존과 동일하게 PvP 직접 결투(pvp_attack)만 센다 — 행성 공격 쪽에서
-// "이 사람의 행성들을 이번 주기 안에 몇 번이나 노렸는지"를 셀 때는 kind="planet_attack"으로
+// "이 사람의 행성들을 최근 8시간 안에 몇 번이나 노렸는지"를 셀 때는 kind="planet_attack"으로
 // 넘긴다(행성이 몇 개든 opponent_id는 그 소유자 한 명으로 고정이라 자연스럽게 "그 사람 전체"가 묶인다).
 async function countRecentAttacks(env, attackerId, defenderId, kind) {
-  const resetBucketStart = Math.floor(Date.now() / ATTACK_LIMIT_RESET_MS) * ATTACK_LIMIT_RESET_MS;
+  // 고정 시계 경계(예: 매일 17시) 버킷으로 셌더니 실제로 악용됐다 — 경계 직전에 몰아서 때리고
+  // 경계가 지나자마자 또 몰아서 때리면, 같은 사람을 1~2시간 안에 5번을 훌쩍 넘겨 때릴 수
+  // 있었다(실제로 이윤결이 16:48~18:30(1시간 42분) 사이에 6번 때린 사례로 발견됨 — 16:48
+  // 공격은 이전 버킷, 17:02 이후 5번은 새 버킷이라 버킷 기준으론 "위반 아님"으로 통과했었다).
+  // "지금부터 8시간 전"까지를 그대로 보는 슬라이딩 윈도우로 되돌려서, 시계 경계와 무관하게
+  // 실제로 최근 8시간 동안 몇 번 맞았는지를 정확히 센다.
+  const since = Date.now() - ATTACK_LIMIT_RESET_MS;
   const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = ? AND created_at >= ?"
-  ).bind(attackerId, defenderId, kind || "pvp_attack", resetBucketStart).first();
+    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = ? AND created_at > ?"
+  ).bind(attackerId, defenderId, kind || "pvp_attack", since).first();
   return (row && row.cnt) || 0;
 }
 
@@ -1758,7 +1767,7 @@ export default {
         // 레벨 차이는 더 이상 공격 자체를 막지 않는다 — computeAttackStaminaCost가 차이가
         // 클수록 스태미나를 훨씬 더 물리는 것으로 대신한다.
 
-        // 같은 상대를 이번 8시간 주기 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
+        // 같은 상대를 최근 8시간 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
         // 공격을 당해도 상대가 목록에서 아예 사라지지는 않는다(예전의 "피격 시 12시간 자동 보호막"은
         // 폐지, 소비재로 직접 사는 자가 보호막(shield_until)만 그대로 유효).
         const attackCount = await countRecentAttacks(env, attacker.user_id, defender.user_id);
@@ -3177,7 +3186,7 @@ export default {
         // 홈 행성도 이제 공격 대상이다 — 정복하면 그 즉시 일반 행성으로 강등되고(is_home=0),
         // 원래 주인은 다음 접속 때 ensureHomePlanet이 새 홈 행성을 자동으로 만들어준다.
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
-        // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 이번 8시간 주기 안에 너무 많이 노리는 것만 막는다
+        // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 최근 8시간 안에 너무 많이 노리는 것만 막는다
         // — opponent_id가 소유자 한 명으로 고정이라 그 사람 행성이 몇 개든 합쳐서 센다.
         if (planet.owner_user_id) {
           const planetAttackCount = await countRecentAttacks(env, user.userId, planet.owner_user_id, "planet_attack");
