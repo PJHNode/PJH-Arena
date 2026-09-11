@@ -542,6 +542,7 @@
 
     $("galaxyOwnedCount").textContent = data.myOwnedWild;
     $("galaxyMaxOwned").textContent = data.maxOwnedWild == null ? "무제한" : data.maxOwnedWild;
+    $("galaxyEmpireBonus").textContent = "+" + (state && state.empireBonusPct ? state.empireBonusPct.toFixed(0) : 0) + "%";
     galaxyNextRerollAt = data.nextRerollAt;
     // 예전엔 "p.isHome || p.mine"이라 남의 홈 행성까지 전부 내 제국 칸에 끼어 보이는 버그가
     // 있었다(isHome은 "그 행성이 누군가의 홈"이라는 뜻이지 "내 홈"이라는 뜻이 아님) — 내

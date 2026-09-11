@@ -786,6 +786,11 @@ const PLANET_COUNT = 48;
 // 48개 중 1/6(8개)로 잡아서, 아무리 강한 유저라도 맵 대부분은 다른 유저들 몫으로 남는다.
 const PLANET_MAX_OWNED_WILD = 8;
 const PLANET_ATTACK_STAMINA_COST = 2;
+// ── 제국 보너스 — 소유한 야생 행성 1개당 ATK/DEF 영구 +2%(최대 PLANET_MAX_OWNED_WILD개,
+// +16%에서 상한). 예전엔 행성을 손에 넣어도 시간당 수익 말고는 아무 의미가 없었는데(그마저도
+// Property 대비 터무니없이 낮았음), "행성을 얻는다" 자체에 실질적인 힘을 부여해서 정복이
+// 진짜 보람 있게 느껴지게 한다(totalCombatStats에서 rebirthMult와 같은 방식으로 곱연산). ──
+const EMPIRE_BONUS_PER_PLANET = 0.02;
 // ── 홈 행성 특수 규칙 ──
 // (1) 레벨 20 미만이면 무적 — 막 시작한 유저의 홈 행성이 접속하자마자 털리는 걸 막는다.
 // (2) 그 이후엔 공격 가능하지만, 방어력이 실전 전투력의 2배로 뻥튀기된 "최후의 요새"라 뚫기
@@ -804,14 +809,18 @@ const HOME_PLANET_BREACH_CONFISCATE_RATE = 0.20;
 // 기대값이 악몽은 회당 ~0.7기(뜨는 리롤 절반 정도), 극한은 ~0.24기(리롤 5번 중 1번꼴)라
 // "뜨면 특별한" 수준까지 희소해졌다. 각 리롤은 이전 결과와 완전히 무관한 새 추첨이라(seed가
 // 슬롯+시간구간으로만 정해짐) 낮은 확률에 걸리지 않으면 그 즉시 사라지고 다시 안 뜬다.
-// coinsPerHour도 Property와 같은 이유로 x15 — 전투력/등장 확률은 그대로.
+// coinsPerHour를 x25 더 올렸다(요청 반영: "행성이 Property 대비 너무 초라하다") — 정복에는
+// 전투 리스크(패배·역습·뺏김)와 경비병 기회비용(배치한 봇은 개인 전투력에서 빠짐)이 실제로
+// 드는 반면, Property는 위험 없는 순수 자본 투자라 그만큼 행성 쪽 시간당 수익이 더 세도
+// 정당하다는 판단. 이제 흔한 등급(약함/보통)도 Property 중상위 기기와 맞먹고, 정예 이상은
+// Property 최상위권과 경쟁한다. 전투력/등장 확률은 그대로.
 const PLANET_BOT_TIERS = {
-  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 225,   weight: 0.40 },
-  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 750,   weight: 0.30 },
-  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 2400,  weight: 0.20 },
-  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 6000,  weight: 0.08 },
-  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 15000, weight: 0.015 },
-  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 42000, weight: 0.005 },
+  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 5625,    weight: 0.40 },
+  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 18750,   weight: 0.30 },
+  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 60000,   weight: 0.20 },
+  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 150000,  weight: 0.08 },
+  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 375000,  weight: 0.015 },
+  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 1050000, weight: 0.005 },
 };
 // ── 경비병(행성 배치 봇) — 완전히 새로운 로스터를 또 만드는 대신, 이미 있는 "봇" 자원을 그대로
 // 쓴다. 봇 하나는 항상 둘 중 하나 상태다: "나와 함께"(stationed_planet_id NULL — 지금까지처럼
@@ -1473,9 +1482,17 @@ async function totalCombatStats(env, row) {
   // 환생 상점의 "환생 코어 오버클럭"(1회 구매, 중복 불가) — 위 환생 등급 보너스와는 별개로
   // 딱 +3%만 추가 곱연산. 중복 구매가 안 되니 인플레 걱정 없이 고정값으로 둔다.
   const statBoostMult = rebirthShopOwnedSet(row).has("rebirth_core_overclock") ? 1.03 : 1;
-  atk = Math.round(atk * rebirthMult * statBoostMult);
-  def = Math.round(def * rebirthMult * statBoostMult);
-  return { atk: atk, def: def, crit: crit, botCount: bots.length };
+  // 제국 보너스 — 소유 야생 행성 개수에 비례(1개당 +2%, 최대 8개=+16%). "행성을 얻는 것" 자체가
+  // 실전 전투력에도 기여하게 만든다(예전엔 시간당 수익뿐이었음).
+  const ownedWildRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_planets WHERE owner_user_id = ? AND is_home = 0").bind(row.user_id).first();
+  const ownedWildCount = (ownedWildRow && ownedWildRow.cnt) || 0;
+  const empireMult = 1 + Math.min(ownedWildCount, PLANET_MAX_OWNED_WILD) * EMPIRE_BONUS_PER_PLANET;
+  atk = Math.round(atk * rebirthMult * statBoostMult * empireMult);
+  def = Math.round(def * rebirthMult * statBoostMult * empireMult);
+  return {
+    atk: atk, def: def, crit: crit, botCount: bots.length,
+    ownedWildCount: ownedWildCount, empireBonusPct: Math.round((empireMult - 1) * 1000) / 10,
+  };
 }
 
 // 특정 행성 하나에 배치된 경비병 봇들의 장비 스탯 합 — resolvePlanetCombat(전투 1회 판정)처럼
@@ -1574,6 +1591,7 @@ function publicState(row, combat) {
     statPoints: row.stat_points,
     pocketCoins: row.pocket_coins, bankCoins: row.bank_coins, diamonds: row.diamonds,
     atk: combat.atk, def: combat.def, crit: combat.crit, botCount: combat.botCount,
+    ownedWildPlanets: combat.ownedWildCount || 0, empireBonusPct: combat.empireBonusPct || 0,
     equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core,
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
     plunderWins: row.plunder_wins,
