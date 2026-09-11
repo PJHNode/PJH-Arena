@@ -1112,7 +1112,10 @@
       botsTabLoadedOnce = true;
 
       function slotRow(target, slotType, label, equippedId) {
-        const options = data.availableItems.filter((it) => it.type === slotType);
+        // data.availableItems는 서버 sortedShopEntries가 등급 오름차순(약한 것부터)으로 내려주는데,
+        // 봇 장착 드롭다운에서는 제일 좋은 장비를 훑어보기 편하게 반대로(강한 것부터) 보여준다
+        // — 다른 탭(상점/인챈트)에서 쓰는 공용 정렬 함수 자체는 안 건드리고 여기서만 뒤집는다.
+        const options = data.availableItems.filter((it) => it.type === slotType).reverse();
         const currentItem = equippedId ? catalog[equippedId] : null;
         // 장착 중인 아이템 아이콘을 라벨 옆에 보여준다(빈 슬롯이면 자리만 차지하는 빈 칸으로
         // 대체해서 아이콘 유무와 상관없이 라벨/드롭다운 위치가 흔들리지 않게 한다).
