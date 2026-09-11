@@ -465,9 +465,13 @@
           : t.levelGapHigh ? '<span style="color:var(--stamina);"> ⚠️ 레벨차 큼(스태미나 ↑)</span>' : "";
         const attackDisabled = state.stamina < t.staminaCost || !t.attackable;
         const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
+        // 이름 주변 아우라/파티클 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 걸로 서버가
+        // 판정한 auraTier를 그대로 시각화(요청 반영). 평범한 상대는 기존과 완전히 동일.
+        const nameHtml = window.auraNameHtml ? auraNameHtml(escapeHtml(t.realName), t.auraColor, t.auraTier) : escapeHtml(t.realName);
+        const rebirthNote = t.rebirthCount > 0 ? ' <span class="dim">🔄' + t.rebirthCount + "</span>" : "";
         return (
         '<div class="pvp-row">' +
-        '<div class="pvp-name">' + escapeHtml(t.realName) + '<span class="dim"> Lv.' + t.level + "</span> " +
+        '<div class="pvp-name">' + nameHtml + rebirthNote + '<span class="dim"> Lv.' + t.level + "</span> " +
         (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + statusNote + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
@@ -491,8 +495,9 @@
     try {
       const r = await api("/arena/scan", { method: "POST", body: { targetUserId } });
       state = r.state; renderHeader(); // 정찰도 이제 스태미나 1을 쓴다 — 헤더 수치 바로 반영
+      const scanNameHtml = window.auraNameHtml ? auraNameHtml(escapeHtml(r.realName), r.auraColor, r.auraTier) : escapeHtml(r.realName);
       $("scanModalBody").innerHTML =
-        "<h3>🔎 PRACTICE SCAN — " + escapeHtml(r.realName) + " (Lv." + r.level + ")</h3>" +
+        "<h3>🔎 PRACTICE SCAN — " + scanNameHtml + " (Lv." + r.level + ")" + (r.rebirthCount > 0 ? ' <span class="dim">🔄 환생 ' + r.rebirthCount + "회</span>" : "") + "</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
         (r.online ? "" : '<div class="scan-row">대기 중인 Property 수익 <b style="color:var(--stamina);">+' + fmt(r.offlinePendingCoins) + "</b></div>") +
         '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +

@@ -96,6 +96,27 @@ function rebirthTier(count) {
   if (c >= 1) return 1; // 브론즈
   return 0;
 }
+
+// ── Arena P2P(PvP) 대상의 "아우라" 등급 — 레벨/환생 횟수/장착 무기 등급 중 가장 눈에 띄는
+// 요소 하나를 legendary~abyssal 5단계(아이템 파티클/아우라 이펙트와 완전히 같은 체계, 프론트
+// item-icons.js의 RARITY_FX_TIERS)로 환산한다(요청 반영: "level이나 환생횟수 또는 무기
+// 티어와 공격력에 따라 아우라가 풍기게"). 무기의 "공격력"은 이 게임에서 등급이 곧 값을
+// 결정하므로(SHOP_ITEMS 값 곡선) 별도 절대치 기준 없이 무기 등급 하나로 대표한다. 셋 중
+// 가장 높은 단계로만 판정하고(합산하지 않음) — "작고 상한 있게" 원칙과 같은 이유로, 여러
+// 요소가 겹쳐도 무한정 화려해지지 않고 abyssal(최상위)에서 막힌다.
+const PVP_AURA_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal"];
+function pvpAuraTierFor(row) {
+  const weaponItem = row.equipped_weapon ? SHOP_ITEMS[row.equipped_weapon] : null;
+  const weaponIdx = weaponItem ? PVP_AURA_TIERS.indexOf(weaponItem.rarity) : -1;
+  const rebirthIdx = rebirthTier(row.rebirth_count) - 1; // 0(무환생)이면 -1이 되어 미반영
+  let levelIdx = -1;
+  if (row.level >= 100) levelIdx = 3;
+  else if (row.level >= 80) levelIdx = 2;
+  else if (row.level >= 60) levelIdx = 1;
+  else if (row.level >= 40) levelIdx = 0;
+  const idx = Math.max(weaponIdx, rebirthIdx, levelIdx);
+  return idx < 0 ? null : PVP_AURA_TIERS[idx];
+}
 // 환생 등급별 전투/QoL 특권 — "작고 상한 있게" 원칙을 그대로 이어받아 인챈트 최대 레벨
 // +2/티어(최대 +8), 봇 모집 한도 +1/티어(최대 +4), 공격 쿨다운 -4초/티어(최소 14초)만 준다.
 function enchantMaxLevelFor(row) { return ENCHANT_MAX_LEVEL + rebirthTier(row.rebirth_count) * 2; }
@@ -2092,8 +2113,12 @@ export default {
           // 레벨 차이는 더 이상 공격을 막지 않는다 — 정보 표시용으로만 남겨둔다(스태미나가
           // 더 드는 구간에 들어왔는지 보여주기 위함, computeAttackStaminaCost와 같은 ±10 기준).
           const levelGapHigh = Math.abs(me.level - t.level) > 10;
+          // 아우라 등급 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 하나로 정해진다(요청 반영).
+          const auraTier = pvpAuraTierFor(t);
           targets.push({
-            userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, online: online,
+            userId: t.user_id, realName: t.real_name, level: t.level, def: tCombat.def, atk: tCombat.atk, online: online,
+            rebirthCount: t.rebirth_count || 0,
+            auraTier: auraTier, auraColor: auraTier ? RARITY_META[auraTier].color : null,
             offlinePendingCoins: bonusPocket,
             lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
@@ -2134,8 +2159,11 @@ export default {
         const attacksUsed = await countRecentAttacks(env, user.userId, target.user_id);
         const combat = await totalCombatStats(env, me);
 
+        const scanAuraTier = pvpAuraTierFor(target);
         return json({
-          targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, online: online, offlinePendingCoins: offlinePendingCoins,
+          targetUserId: targetUserId, realName: target.real_name, level: target.level, def: tCombat.def, atk: tCombat.atk, online: online, offlinePendingCoins: offlinePendingCoins,
+          rebirthCount: target.rebirth_count || 0,
+          auraTier: scanAuraTier, auraColor: scanAuraTier ? RARITY_META[scanAuraTier].color : null,
           lastStance: target.last_stance || null, lastStanceLabel: target.last_stance ? STANCES[target.last_stance].label : null,
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: computeAttackStaminaCost(me.level, target.level, online),

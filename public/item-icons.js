@@ -103,12 +103,12 @@ window.propertyIconHtml = function propertyIconHtml(deviceId, color, sizePx) {
 //  목록에 없으면(=legendary 미만이거나 아예 없으면) 이펙트 없이 기존과 동일한 아이콘만 낸다.
 // ══════════════════════════════════════════════════════════
 const RARITY_FX_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal"];
-// 아이콘(SVG) 본체를 등급 이펙트 래퍼(아우라 + 궤도 파티클)로 감싼다 — 이펙트가 없을 때는
-// 기존과 완전히 같은 마크업을 내서(레이아웃 영향 없음) 호출부를 안 건드려도 되게 했다.
-function wrapWithRarityFx(innerHtml, color, size, rarity) {
+// 아우라/파티클/링 레이어를 만드는 공용 코어 — 아이콘(고정 크기 정사각형)과 플레이어 이름
+// 배지(가변 폭 텍스트) 둘 다 이 레이어들을 재사용한다. rarity가 5단계에 없으면(=legendary
+// 미만) null을 반환해서 호출부가 이펙트 없이 그대로 내보내게 한다.
+function rarityFxLayers(color, rarity) {
   const tierIdx = RARITY_FX_TIERS.indexOf(rarity);
-  const plain = '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + innerHtml + "</span>";
-  if (tierIdx === -1) return plain;
+  if (tierIdx === -1) return null;
   // mythic(tierIdx>=1)부터는 한 단계 더 화려하게(요청 반영: "조금만 더 화려하게, mythic부터는")
   // — 파티클 개수를 legendary(3개)에서 한 번에 확 늘리고(mythic 7 → abyssal 13), 회전하는
   // 그라디언트 링을 추가로 두른다. legendary는 기존처럼 은은한 아우라 + 파티클 3개만 유지.
@@ -125,14 +125,44 @@ function wrapWithRarityFx(innerHtml, color, size, rarity) {
     particles += '<span class="item-fx-particle" style="--angle:' + angle + 'deg;--fx-delay:' + delay + ';"></span>';
   }
   const ring = flashy ? '<span class="item-fx-ring" style="--fx-ring-dur:' + ringDur + ';"></span>' : "";
+  return {
+    flashy: flashy, auraDur: auraDur, particleDur: particleDur,
+    layersHtml: '<span class="item-fx-aura"></span>' + ring + particles,
+    tierClass: "rarity-fx-" + rarity + (flashy ? " rarity-fx-flashy" : ""),
+    colorVar: color || "currentColor",
+  };
+}
+// 아이콘(SVG) 본체를 등급 이펙트 래퍼(아우라 + 궤도 파티클)로 감싼다 — 이펙트가 없을 때는
+// 기존과 완전히 같은 마크업을 내서(레이아웃 영향 없음) 호출부를 안 건드려도 되게 했다.
+function wrapWithRarityFx(innerHtml, color, size, rarity) {
+  const fx = rarityFxLayers(color, rarity);
+  if (!fx) return '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + innerHtml + "</span>";
   return (
-    '<span class="item-icon-fx rarity-fx-' + rarity + (flashy ? " rarity-fx-flashy" : "") + '" style="--fx-color:' + (color || "currentColor") +
-    ";--fx-aura-dur:" + auraDur + ";--fx-particle-dur:" + particleDur + ";width:" + size + "px;height:" + size + 'px;">' +
-    '<span class="item-fx-aura"></span>' + ring + particles +
+    '<span class="item-icon-fx ' + fx.tierClass + '" style="--fx-color:' + fx.colorVar +
+    ";--fx-aura-dur:" + fx.auraDur + ";--fx-particle-dur:" + fx.particleDur + ";width:" + size + "px;height:" + size + 'px;">' +
+    fx.layersHtml +
     '<span class="item-icon" style="color:' + (color || "currentColor") + ';width:100%;height:100%;">' + innerHtml + "</span>" +
     "</span>"
   );
 }
+// ══════════════════════════════════════════════════════════
+//  Arena P2P(PvP) 대상 목록 전용 — "레벨/환생 횟수/장착 무기 등급·공격력에 따라 주변에
+//  아우라 파티클이 풍기게" 요청 반영. 위 아이콘용 레이어를 그대로 재사용하되, 아이콘처럼
+//  정사각형 고정 크기가 아니라 이름 텍스트(가변 폭)를 감싸는 배지 형태로 낸다. 실제 등급
+//  판정(레벨/환생/무기 등급을 합쳐 legendary~abyssal 중 하나로 매핑)은 서버(auraTier
+//  필드)가 하고, 여기는 그 결과를 그대로 시각화만 한다.
+// ══════════════════════════════════════════════════════════
+window.auraNameHtml = function auraNameHtml(nameHtml, color, tier) {
+  const fx = rarityFxLayers(color, tier);
+  if (!fx) return nameHtml;
+  return (
+    '<span class="item-icon-fx name-fx ' + fx.tierClass + '" style="--fx-color:' + fx.colorVar +
+    ";--fx-aura-dur:" + fx.auraDur + ";--fx-particle-dur:" + fx.particleDur + ';">' +
+    fx.layersHtml +
+    '<span class="name-fx-inner" style="color:' + fx.colorVar + ';">' + nameHtml + "</span>" +
+    "</span>"
+  );
+};
 
 // itemId + 색상을 받아 인라인 스타일이 적용된 아이콘 래퍼 HTML을 만든다(공용 헬퍼). rarity를
 // 같이 넘기면(legendary 이상일 때만) 주변에 아우라 + 궤도 파티클이 붙는다.
