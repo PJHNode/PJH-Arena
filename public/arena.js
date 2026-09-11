@@ -1268,13 +1268,25 @@
   }
 
   // ── Research — 다이아로 상점 행운/원정(오프라인 자동 전투) 연구를 진행한다. ──
+  // $(id)가 null이어도 조용히 무시한다 — 이 탭의 여러 버튼이 "한 번 해금/맥스가 되면
+  // 그 안의 <span>을 통째로 textContent로 갈아치우는" 패턴을 쓰는데(예: "이미 해금됨"),
+  // 그러면 그 <span>이 영구히 사라지므로 이후 렌더에서 그 span을 다시 찾으려 하면 null이라
+  // "Cannot set properties of null" 에러가 났었다(실제 버그였음 — /research/expedition-cost
+  // span이 원정 연구를 이미 해금한 계정에서 매번 렌더할 때마다 이 오류를 냈다). 이제 그런
+  // 조건부 텍스트는 항상 "그 상태일 때만" 건드리도록 순서를 맞췄고, 혹시 모를 케이스를
+  // 대비해 조회 자체도 이 헬퍼로 감쌌다.
+  function setText(id, text) {
+    const el = $(id);
+    if (el) el.textContent = text;
+  }
+
   async function renderResearchTab() {
     const panel = $("panel-research");
     try {
       const r = await api("/research");
-      $("researchDiamonds").textContent = "💎 " + fmt(r.diamonds);
-      $("researchShopLevelTag").textContent = "Lv." + r.shopLevel;
-      $("researchShopCost").textContent = fmt(r.shopUpgradeCost);
+      setText("researchDiamonds", "💎 " + fmt(r.diamonds));
+      setText("researchShopLevelTag", "Lv." + r.shopLevel);
+      setText("researchShopCost", fmt(r.shopUpgradeCost));
       const upBtn = $("researchShopUpgradeBtn");
       upBtn.disabled = r.diamonds < r.shopUpgradeCost;
       $("researchRarityTable").innerHTML = RARITY_ORDER_CLIENT.map((rarity) => (
@@ -1282,39 +1294,41 @@
         "<b>" + Math.round(r.rarityChances[rarity] * 1000) / 10 + "%</b></div>"
       )).join("");
 
-      $("researchSlotsLevelTag").textContent = "Lv." + r.slotsLevel;
-      $("researchSlotsCurrent").textContent = r.slotsCurrentMin;
+      setText("researchSlotsLevelTag", "Lv." + r.slotsLevel);
+      setText("researchSlotsCurrent", r.slotsCurrentMin);
       const slotsBtn = $("researchSlotsUpgradeBtn");
       if (r.slotsUpgradeCost == null) {
         slotsBtn.disabled = true;
         slotsBtn.textContent = "최대 레벨 (진열 " + r.slotsCurrentMin + "개)";
       } else {
-        $("researchSlotsCost").textContent = fmt(r.slotsUpgradeCost);
         slotsBtn.innerHTML = "연구하기 (💎 <span id=\"researchSlotsCost\">" + fmt(r.slotsUpgradeCost) + "</span>)";
         slotsBtn.disabled = r.diamonds < r.slotsUpgradeCost;
       }
 
-      $("researchExpeditionCost").textContent = fmt(r.expeditionUnlockCost);
+      // 버그 수정: 예전엔 researchExpeditionCost의 textContent를 분기 밖에서 무조건 먼저
+      // 건드렸는데, "이미 해금됨" 분기가 그 안의 <span>을 완전히 지워버리므로(expBtn.textContent
+      // 로 통째로 교체) 원정 연구를 이미 해금한 계정은 이 탭을 열 때마다(버튼을 뭘 눌러도 다시
+      // 그리는 매 순간) 그 span을 못 찾아 에러가 났다. 이제 분기 안에서만 건드린다.
       const expBtn = $("researchExpeditionUnlockBtn");
       if (r.expeditionUnlocked) {
-        $("researchExpeditionTag").textContent = "해금됨";
+        setText("researchExpeditionTag", "해금됨");
         expBtn.disabled = true;
         expBtn.textContent = "이미 해금됨";
       } else {
-        $("researchExpeditionTag").textContent = "미해금";
+        setText("researchExpeditionTag", "미해금");
         expBtn.disabled = r.diamonds < r.expeditionUnlockCost;
         expBtn.innerHTML = "해금하기 (💎 <span id=\"researchExpeditionCost\">" + fmt(r.expeditionUnlockCost) + "</span>)";
       }
 
       // 환생 가속 연구 — 환생을 한 번도 안 했으면 통째로 잠금(버튼도 비활성 + "환생 후 해금").
-      $("researchRebirthMinutes").textContent = r.rebirthBoostTotalMinutes;
+      setText("researchRebirthMinutes", r.rebirthBoostTotalMinutes);
       const rebirthBtn = $("researchRebirthUpgradeBtn");
       if (!r.rebirthResearchUnlocked) {
-        $("researchRebirthLevelTag").textContent = "잠김";
+        setText("researchRebirthLevelTag", "잠김");
         rebirthBtn.disabled = true;
         rebirthBtn.textContent = "환생 후 해금";
       } else {
-        $("researchRebirthLevelTag").textContent = "Lv." + r.rebirthLevel;
+        setText("researchRebirthLevelTag", "Lv." + r.rebirthLevel);
         if (r.rebirthUpgradeCost == null) {
           rebirthBtn.disabled = true;
           rebirthBtn.textContent = "최대 레벨 (" + r.rebirthBoostTotalMinutes + "분)";
