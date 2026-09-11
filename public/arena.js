@@ -394,25 +394,21 @@
         t.disabled = true;
         try {
           const r = await api("/daily/attendance", { method: "POST" });
-          toast("출석 완료! +" + fmt(r.reward) + " 코인 (연속 " + r.streak + "일)");
-          state.pocketCoins = r.pocketCoins;
+          toast("출석 완료! +" + fmt(r.reward) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + " (연속 " + r.streak + "일)");
           if (r.dailyBoostGranted) {
-            state.dailyBoostActive = true; state.dailyBoostUntil = r.dailyBoostUntil;
             toast("🔥 출석 + 오늘의 미션 전부 완료! 20분간 코인·XP 2배!");
           }
-          renderHeader(); renderDailyWidget();
+          await refreshState(); renderDailyWidget();
         } catch (err) { toast(err.message, true); t.disabled = false; }
       } else if (t.dataset.questClaim) {
         t.disabled = true;
         try {
           const r = await api("/daily/quest-claim", { method: "POST", body: { quest: t.dataset.questClaim } });
-          toast("미션 완료! +" + fmt(r.reward) + " 코인");
-          state.pocketCoins = r.pocketCoins;
+          toast("미션 완료! +" + fmt(r.reward) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
           if (r.dailyBoostGranted) {
-            state.dailyBoostActive = true; state.dailyBoostUntil = r.dailyBoostUntil;
             toast("🔥 출석 + 오늘의 미션 전부 완료! 20분간 코인·XP 2배!");
           }
-          renderHeader(); renderDailyWidget();
+          await refreshState(); renderDailyWidget();
         } catch (err) { toast(err.message, true); t.disabled = false; }
       }
     });
@@ -640,7 +636,8 @@
     btn.disabled = true;
     try {
       const r = await api("/planets/expedition", { method: "POST", body: { planetId } });
-      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 정복" + (r.captured ? "" : "(한도 초과, 약탈만)") + " +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName), !r.attackerWins);
+      const xpNote = " (EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + ")";
+      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 정복" + (r.captured ? "" : "(한도 초과, 약탈만)") + " +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName) + xpNote, !r.attackerWins);
       state = r.state; renderHeader();
       galaxyCache = null; renderGalaxyTab();
     } catch (e) { toast(e.message, true); btn.disabled = false; }
@@ -854,6 +851,9 @@
         const bonusNote = r.offlineBonusCollected > 0 ? "Property 대기수익 " + fmt(r.offlineBonusCollected) + " 포함 정산됨" : "";
         resultDetail = (r.attackerWins ? "약탈 +" + fmt(r.coinsDelta) + " 코인" : "약탈 실패") + (bonusNote ? "<br>" + bonusNote : "");
       }
+      // 이겨도 져도 소량이나마 경험치가 붙는다(요청: "경험치 얻을 수단이 너무 적다") — 결과
+      // 상세 아래에 항상 한 줄 더 붙인다.
+      resultDetail += '<br><span class="dim">EXP +' + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + "</span>";
       body.innerHTML =
         '<div class="round-dots">' + r.rounds.map((rd) => '<div class="round-dot ' + (rd.win ? "win" : "lose") + '">' + (rd.win ? "✓" : "✗") + "</div>").join("") + "</div>" +
         '<div class="attack-stat-line">내 ATK ' + fmt(r.myAtk) + " (" + escapeHtml(r.stanceLabel) + ")" + rpsNote + " · 상대 DEF " + fmt(r.theirDef) + "</div>" +
@@ -1922,8 +1922,8 @@
           btn.disabled = true;
           try {
             const r = await api("/achievements/claim", { method: "POST", body: { id: btn.dataset.claim } });
-            toast("🏆 업적 달성! +" + fmt(r.reward) + " 코인, 칭호 [" + r.title + "] 획득");
-            state.pocketCoins = r.pocketCoins; renderHeader(); renderAchievementsTab();
+            toast("🏆 업적 달성! +" + fmt(r.reward) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + ", 칭호 [" + r.title + "] 획득");
+            await refreshState(); renderAchievementsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });

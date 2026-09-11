@@ -1170,6 +1170,20 @@ function applyXpAndLevel(row, xpGain) {
   return leveledUp;
 }
 
+// ── XP 획득 수단 확장 — 예전엔 사실상 Hacking Jobs가 유일한 경험치원이라 "얻을 방법이
+// 너무 적다"는 피드백. 전부 nextExpFor(레벨)의 %로 계산해서 레벨이 오를수록 자동으로
+// 같이 커지게 한다(job_tiers처럼 고정 표를 쓰면 고레벨에서 상대적으로 하찮아짐). 지는
+// 것도 소량이나마 경험치를 줘서 "져도 완전히 헛수고는 아니다"는 최소한의 보상을 둔다.
+// activityBoostMult(환생/일일완료 2배 부스트)는 각 호출부에서 곱해서 적용한다(Hacking
+// Jobs와 동일한 방식).
+function xpPct(level, pct) { return Math.max(1, Math.round(nextExpFor(level) * pct)); }
+const PVP_WIN_XP_PCT = 0.06, PVP_LOSE_XP_PCT = 0.015;
+const PLANET_WIN_XP_PCT = 0.06, PLANET_LOSE_XP_PCT = 0.015;
+const EXPEDITION_WIN_XP_PCT = 0.04, EXPEDITION_LOSE_XP_PCT = 0.01; // 오프라인 자동 원정이라 살짝 낮게
+const ACHIEVEMENT_CLAIM_XP_PCT = 0.15; // 1회성 업적 청구 — 큰 보상
+const DAILY_QUEST_CLAIM_XP_PCT = 0.05; // 오늘의 미션 3종, 각각
+const ATTENDANCE_XP_PCT = 0.04;
+
 // ── 장비 강화(인챈트) — 아이템은 개별 인스턴스가 없으므로(재고 수량만 존재) "이 유저가 이
 // 아이템 종류를 얼마나 마스터했는지"를 (user_id, item_id)당 레벨 하나로 관리한다. 레벨당
 // value에 +2%, 최대 10레벨(+20%)에서 상한(환생과 같은 "작고 상한 있게" 철학). enchantMap을
@@ -1962,11 +1976,18 @@ export default {
           attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
         }
 
+        // 경험치 — 이겨도 져도 준다(져도 완전히 헛수고는 아니게). 레벨업이 일어나면
+        // applyXpAndLevel이 hp/energy/stamina를 전부 최대치로 되돌리므로(위 전투 피해를
+        // 오히려 덮어씀) 반드시 hp/energy/stamina 피해 반영 "이후"에 호출한다.
+        const xpGain = Math.round(xpPct(attacker.level, attackerWins ? PVP_WIN_XP_PCT : PVP_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const leveledUp = applyXpAndLevel(attacker, xpGain);
+
         attacker.last_attack_at = Date.now();
         await env.DB.batch([
           env.DB.prepare(
-            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
-          ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, attacker.plunder_wins, stanceId,
+            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
+            "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
+          ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, attacker.plunder_wins, stanceId, attacker.xp, attacker.level, attacker.stat_points,
                  attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id),
           env.DB.prepare(
             "UPDATE arena_users SET hp=?, pocket_coins=?, shield_until=? WHERE user_id=?"
@@ -1982,6 +2003,7 @@ export default {
         const combat = await totalCombatStats(env, attacker);
         return json({
           ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: attackerGain,
+          xpGained: xpGain, leveledUp: leveledUp,
           rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
           myAtk: attackerCombat.atk, theirDef: defenderCombat.def, stanceLabel: stance.label,
           offlineBonusCollected: offlineBonus, state: publicState(attacker, combat),
@@ -2936,11 +2958,18 @@ export default {
         if (!achievement.check(ctx)) return json({ error: "아직 달성 조건을 채우지 못했습니다." }, 400);
 
         row.pocket_coins += achievement.reward;
+        // 업적은 1회성 큰 보상이라 경험치도 그만큼 후하게(ACHIEVEMENT_CLAIM_XP_PCT) 준다 —
+        // activityBoostMult는 여기선 안 곱한다(부스트는 "반복 활동"을 더 신나게 하려는
+        // 취지라 1회성 업적까지 배로 주면 부스트 타이밍에 몰아 청구하는 꼼수가 생김).
+        const xpGain = xpPct(row.level, ACHIEVEMENT_CLAIM_XP_PCT);
+        const leveledUp = applyXpAndLevel(row, xpGain);
         await env.DB.batch([
-          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare(
+            "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
           env.DB.prepare("INSERT INTO arena_achievement_claims (user_id, achievement_id, claimed_at) VALUES (?, ?, ?)").bind(user.userId, id, Date.now()),
         ]);
-        return json({ ok: true, reward: achievement.reward, pocketCoins: row.pocket_coins, title: achievement.title });
+        return json({ ok: true, reward: achievement.reward, pocketCoins: row.pocket_coins, title: achievement.title, xpGained: xpGain, leveledUp: leveledUp });
       }
 
       // ── POST /achievements/set-title { id|null } — 업적 칭호 또는 환생 상점에서 산 칭호로
@@ -3132,6 +3161,8 @@ export default {
         row.pocket_coins += reward;
         row.last_attendance_date = today;
         row.attendance_streak = streak;
+        const xpGain = xpPct(row.level, ATTENDANCE_XP_PCT);
+        const leveledUp = applyXpAndLevel(row, xpGain);
         // 미션 3종을 이미(출석보다 먼저) 다 수령해 둔 상태에서 지금 막 출석까지 마쳤다면 —
         // "출석 + 미션 전부 완료" 조건이 방금 완성된 것이므로 여기서 부스트를 켠다(순서 무관하게
         // 어느 쪽이 마지막이든 그 시점에 켜지도록 두 엔드포인트에 똑같이 체크를 넣었다).
@@ -3140,9 +3171,11 @@ export default {
           row.daily_boost_until = Date.now() + DAILY_BOOST_MS;
           dailyBoostGranted = true;
         }
-        await env.DB.prepare("UPDATE arena_users SET pocket_coins=?, last_attendance_date=?, attendance_streak=?, daily_boost_until=? WHERE user_id=?")
-          .bind(row.pocket_coins, row.last_attendance_date, row.attendance_streak, row.daily_boost_until || 0, row.user_id).run();
-        return json({ ok: true, reward: reward, streak: streak, pocketCoins: row.pocket_coins, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
+        await env.DB.prepare(
+          "UPDATE arena_users SET pocket_coins=?, last_attendance_date=?, attendance_streak=?, daily_boost_until=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+        ).bind(row.pocket_coins, row.last_attendance_date, row.attendance_streak, row.daily_boost_until || 0,
+               row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id).run();
+        return json({ ok: true, reward: reward, streak: streak, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
       }
 
       // ── POST /daily/quest-claim { quest } — 목표치를 채운 미션 하나를 수령. ──
@@ -3157,9 +3190,13 @@ export default {
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         row.pocket_coins += q.reward;
+        const xpGain = xpPct(row.level, DAILY_QUEST_CLAIM_XP_PCT);
+        const leveledUp = applyXpAndLevel(row, xpGain);
         const today = kstDateString();
         await env.DB.batch([
-          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare(
+            "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
           env.DB.prepare("UPDATE arena_daily_progress SET " + questKey + "_claimed = 1 WHERE user_id=? AND date=?").bind(user.userId, today),
         ]);
 
@@ -3172,7 +3209,7 @@ export default {
           await env.DB.prepare("UPDATE arena_users SET daily_boost_until=? WHERE user_id=?").bind(row.daily_boost_until, row.user_id).run();
           dailyBoostGranted = true;
         }
-        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
+        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
       }
 
       if (request.method === "GET" && path === "/property") {
@@ -3405,11 +3442,18 @@ export default {
         const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
         if (result.error) return json({ error: result.error }, 400);
 
+        // 경험치 — PvP 직접 공격과 동일한 원칙(이겨도 져도 지급, 레벨업 시 hp/energy/stamina
+        // 전액 회복이 전투 피해 반영 이후에 적용되도록 반드시 마지막에 호출).
+        const xpGain = Math.round(xpPct(attacker.level, result.attackerWins ? PLANET_WIN_XP_PCT : PLANET_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const leveledUp = applyXpAndLevel(attacker, xpGain);
+
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
         attacker.last_attack_at = Date.now();
         await env.DB.prepare(
-          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
-        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
+          "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
+          "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
+        ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, stanceId, attacker.xp, attacker.level, attacker.stat_points,
+               attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
 
         await insertLog(env, attacker.user_id, "planet_attack", result.isBotPlanet ? null : planet.owner_user_id, result.isBotPlanet ? planet.name : planet.owner_name,
           result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
@@ -3421,6 +3465,7 @@ export default {
         const combat = await totalCombatStats(env, attacker);
         return json({
           ok: true, attackerWins: result.attackerWins, sweep: result.sweep, captured: result.captured, lootCoins: result.lootCoins,
+          xpGained: xpGain, leveledUp: leveledUp,
           capCapped: result.attackerWins && !result.captured, planetName: planet.name, isHome: !!planet.is_home,
           rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
           myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
@@ -3458,11 +3503,18 @@ export default {
         const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
         if (result.error) return json({ error: result.error }, 400);
 
+        // 원정은 사람이 직접 안 하는 자동 전투라 같은 승패라도 일반 공격보다 경험치를
+        // 살짝 낮게 준다(EXPEDITION_*_XP_PCT). 나머지 원칙은 위 /planets/attack과 동일.
+        const xpGain = Math.round(xpPct(attacker.level, result.attackerWins ? EXPEDITION_WIN_XP_PCT : EXPEDITION_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const leveledUp = applyXpAndLevel(attacker, xpGain);
+
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
         attacker.last_attack_at = Date.now();
         await env.DB.prepare(
-          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
-        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
+          "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
+          "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
+        ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, stanceId, attacker.xp, attacker.level, attacker.stat_points,
+               attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
 
         await insertLog(env, attacker.user_id, "planet_expedition", null, planet.name,
           result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
@@ -3470,6 +3522,7 @@ export default {
         const combat = await totalCombatStats(env, attacker);
         return json({
           ok: true, attackerWins: result.attackerWins, sweep: result.sweep, captured: result.captured, lootCoins: result.lootCoins,
+          xpGained: xpGain, leveledUp: leveledUp,
           planetName: planet.name, tierLabel: PLANET_BOT_TIERS[tierKey].label,
           state: publicState(attacker, combat),
         });
