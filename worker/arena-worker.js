@@ -1033,8 +1033,11 @@ const TITLE_RARITY = {
   plunder_10: "uncommon", level_25: "uncommon", rebirth_title_wanderer: "uncommon",
   club_leader: "rare", bots_full: "rare", level_50: "rare",
   lucky_researcher: "epic", planet_baron: "epic", rebirth_title_witness: "epic",
-  rebirth_1: "legendary", plunder_100: "legendary",
-  level_100: "mythic", planet_emperor: "mythic",
+  // planet_emperor(은하 정복자)는 원래 mythic이었으나 "그렇게 어려운 칭호가 아닌데 왜
+  // 화려한지 모르겠다"는 피드백 반영 — 봇 구역 침투는 planet_baron(50회, epic)의 연장선일
+  // 뿐 PvP 100승(plunder_100)만큼의 실력/리스크가 필요하진 않다고 판단, 한 단계 낮춘다.
+  rebirth_1: "legendary", plunder_100: "legendary", planet_emperor: "legendary",
+  level_100: "mythic",
   abyssal_owner: "secret",
   level_200: "forbidden",
   rebirth_max: "abyssal", // 환생 10회(최대)
