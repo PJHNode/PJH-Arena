@@ -885,6 +885,7 @@
     if (it.type === "weapon") return "ATK +" + it.value;
     if (it.type === "armor") return "DEF +" + it.value;
     if (it.type === "core") return "치명타 +" + it.value + "%";
+    if (it.type === "box") return "개봉 시 무기/방어/코어 중 하나 획득 (75%/20%/5% 확률로 등급 결정)";
     if (it.effect === "stamina") return "Stamina +" + it.value;
     if (it.effect === "energy") return "Energy +" + it.value;
     if (it.effect === "heal_flat") return "HP +" + it.value;
@@ -1050,19 +1051,27 @@
     list.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
       const inv = await api("/inventory");
-      const consumables = inv.items.filter((it) => it.type === "consumable");
-      if (!consumables.length) { list.innerHTML = '<p class="dim">보유한 소비재가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
-      list.innerHTML = consumables.map((it) => (
+      const usableItems = inv.items.filter((it) => it.type === "consumable" || it.type === "box");
+      if (!usableItems.length) { list.innerHTML = '<p class="dim">보유한 소비재/상자가 없습니다. Hardware Shop에서 구매하세요.</p>'; return; }
+      list.innerHTML = usableItems.map((it) => (
         '<div class="inv-row" style="border-left-color:' + it.rarityColor + '">' +
         '<div class="inv-name">' + itemIconHtml(it.id, it.rarityColor, 18) + " " + escapeHtml(it.name) + (it.qty > 1 ? " ×" + it.qty : "") + '<span class="rarity-badge" style="color:' + it.rarityColor + ';margin-left:6px;">' + it.rarityLabel + "</span></div>" +
         '<div class="dim">' + itemStatLabel(it) + "</div>" +
-        '<button class="btn-ghost" data-use="' + it.id + '">사용</button>' +
+        '<button class="btn-ghost" data-use="' + it.id + '">' + (it.type === "box" ? "개봉" : "사용") + "</button>" +
         "</div>"
       )).join("");
       list.querySelectorAll("button[data-use]").forEach((btn) => {
         btn.addEventListener("click", async () => {
-          try { const r = await api("/inventory/use", { method: "POST", body: { itemId: btn.dataset.use } }); toast("사용 완료"); state = r.state; renderHeader(); renderInventoryTab(); }
-          catch (e) { toast(e.message, true); }
+          try {
+            const r = await api("/inventory/use", { method: "POST", body: { itemId: btn.dataset.use } });
+            if (r.boxOpened) {
+              toast("🎁 상자 개봉! [" + r.wonRarityLabel + "] " + r.wonItemName + " 획득!");
+              refreshState();
+            } else {
+              toast("사용 완료"); state = r.state; renderHeader();
+            }
+            renderInventoryTab();
+          } catch (e) { toast(e.message, true); }
         });
       });
     } catch (e) { list.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
@@ -1707,6 +1716,46 @@
   // 교체가 아니라). 버튼도 매번 새로 그려지므로 이벤트는 컨테이너에 위임해서 한 번만 건다. ──
   const RELATION_LABEL = { hostile: "⚔️ 적대", allied: "🤝 동맹", neutral: "· 중립", friendly: "🤝 우호 선언" };
 
+  // 레이드 보스 초상화 — 이미지 생성 도구가 없는 환경이라 대신 SVG로 직접 그린 "컴퓨터
+  // 그래픽" 일러스트. 보스 이름별로 색 테마만 다르게 입혀서(같은 형태, 다른 색) 최소한의
+  // 구분감을 준다. HP가 깎일수록 흰색 균열 오버레이가 진해져서 데미지가 시각적으로도 쌓이는
+  // 걸 보여준다.
+  const RAID_BOSS_THEMES = {
+    "제로데이 리바이어던": { c1: "#00e0ff", c2: "#0a4a5c" },
+    "블랙아이스 콜로서스": { c1: "#8fd9ff", c2: "#1a2733" },
+    "고스트 프로토콜 AI": { c1: "#c46bff", c2: "#2a0e4a" },
+    "옵시디언 방화벽 수호자": { c1: "#ff8a3d", c2: "#4a2408" },
+    "심연의 루트킷": { c1: "#ff3d68", c2: "#3a0a1a" },
+  };
+  function raidBossSvgHtml(bossName, hpPct) {
+    const theme = RAID_BOSS_THEMES[bossName] || { c1: "#ff3d68", c2: "#3a0a1a" };
+    const crackOpacity = (Math.max(0, Math.min(1, 1 - hpPct)) * 0.85).toFixed(2);
+    return (
+      '<svg viewBox="0 0 200 200" width="140" height="140" style="display:block;margin:0 auto 10px;">' +
+      '<defs><radialGradient id="bossGlow" cx="50%" cy="45%" r="60%">' +
+      '<stop offset="0%" stop-color="' + theme.c1 + '" stop-opacity="0.9"/>' +
+      '<stop offset="60%" stop-color="' + theme.c2 + '" stop-opacity="0.6"/>' +
+      '<stop offset="100%" stop-color="#05070a" stop-opacity="0"/>' +
+      "</radialGradient></defs>" +
+      '<circle cx="100" cy="100" r="95" fill="url(#bossGlow)"/>' +
+      '<polygon points="100,20 165,55 165,145 100,180 35,145 35,55" fill="none" stroke="' + theme.c1 + '" stroke-width="3" opacity="0.7"/>' +
+      '<polygon points="100,45 145,68 145,132 100,155 55,132 55,68" fill="#0d1117" stroke="' + theme.c1 + '" stroke-width="2"/>' +
+      '<path d="M35,55 L10,40 M35,145 L10,160 M165,55 L190,40 M165,145 L190,160" stroke="#00ff9d" stroke-width="2" opacity="0.5"/>' +
+      '<circle cx="10" cy="40" r="4" fill="#00ff9d"/><circle cx="10" cy="160" r="4" fill="#00ff9d"/>' +
+      '<circle cx="190" cy="40" r="4" fill="#00ff9d"/><circle cx="190" cy="160" r="4" fill="#00ff9d"/>' +
+      '<ellipse cx="80" cy="95" rx="12" ry="18" fill="' + theme.c1 + '"/>' +
+      '<ellipse cx="120" cy="95" rx="12" ry="18" fill="' + theme.c1 + '"/>' +
+      '<ellipse cx="80" cy="95" rx="5" ry="8" fill="#fff"/>' +
+      '<ellipse cx="120" cy="95" rx="5" ry="8" fill="#fff"/>' +
+      '<path d="M70,125 L80,145 L90,125 M110,125 L120,145 L130,125" stroke="' + theme.c1 + '" stroke-width="3" fill="none"/>' +
+      '<path d="M60,70 L140,70" stroke="' + theme.c1 + '" stroke-width="2" opacity="0.5"/>' +
+      '<g stroke="#ffffff" stroke-width="1.5" fill="none" opacity="' + crackOpacity + '">' +
+      '<path d="M70,50 L85,80 L65,90"/><path d="M130,55 L118,85 L138,95"/><path d="M100,150 L95,170 M100,150 L108,168"/>' +
+      "</g>" +
+      "</svg>"
+    );
+  }
+
   // 클럽 레이드 섹션 — 진행 중이면 보스 HP바 + 공격 버튼 + 상위 기여자, 아니면 재도전
   // 대기시간 또는 소환 버튼. fmtLongCountdown을 쓰는 이유는 대기시간이 최대 20시간이라
   // "1200분"처럼 안 읽히는 표기를 피하기 위해서(현상금 게시판 카운트다운과 동일 이유).
@@ -1720,6 +1769,7 @@
         : '<p class="dim">아직 공격한 사람이 없습니다.</p>';
       return (
         '<div class="club-section-title">👹 클럽 레이드 — ' + escapeHtml(raid.bossName) + "</div>" +
+        raidBossSvgHtml(raid.bossName, raid.hp / raid.maxHp) +
         '<div class="exp-track" style="height:16px;"><div class="exp-fill" style="width:' + pct + '%;background:var(--danger);"></div></div>' +
         '<p class="dim" style="margin:6px 0 10px;">HP ' + fmt(raid.hp) + " / " + fmt(raid.maxHp) + "</p>" +
         '<button class="btn-danger" id="clubRaidAttackBtn" style="width:100%;margin-bottom:10px;">⚔️ 공격(스태미나 2)</button>' +

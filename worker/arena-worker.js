@@ -220,7 +220,7 @@ const SHOP_ITEMS = {
   voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 320 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
-  energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20, maxOwned: 2 },
+  energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20 },
   vaccine:          { name: "급속 치료 백신",           type: "consumable", rarity: "uncommon",  price: 300,  effect: "heal_flat", value: 90 },
   ddos:             { name: "DDoS Booster",           type: "consumable", rarity: "uncommon",  price: 800,  effect: "stamina", value: 3 },
   mega_energy_cell: { name: "메가 에너지 셀",           type: "consumable", rarity: "rare",      price: 500,  effect: "energy", value: 100 },
@@ -229,6 +229,42 @@ const SHOP_ITEMS = {
   nano_cloud:       { name: "메가 회복 나노클라우드",     type: "consumable", rarity: "legendary", price: 3000, effect: "heal_and_energy", value: 150, value2: 80 },
   dimension_veil:   { name: "차원 은신 프로토콜",        type: "consumable", rarity: "mythic",    price: 8000, effect: "self_shield", value: 21600000 },
 };
+
+// ── 상자(Box) — 상점에 "가끔" 뜨는 특수 아이템(요청 반영). 등급별로 셋 중 하나가 나온다:
+// 자기 등급 75% / 한 단계 위 20% / 두 단계 위 5%. 두 단계 위 등급까지 존재해야 하므로
+// secret(다음 forbidden, 다다음 abyssal)까지만 만든다 — forbidden/abyssal 상자는 그 위
+// 등급이 모자라 같은 확률표를 못 쓴다. 상자 자체는 상점 로테이션에서 그 등급 아이템과
+// 똑같은 확률로 뜨므로("가끔"), 등급이 높을수록 자연히 더 드물게 보인다.
+// 가격은 세 결과의 기대값에 30% 프리미엄을 얹어 자동 계산한다 — 무기 가격을 그 등급의
+// 대표가로 쓴다(무기/방어는 동일가, 코어만 3배 비싸서 대표값에서 제외).
+const BOX_ODDS = [0.75, 0.20, 0.05];
+const BOX_RARITIES = ["uncommon", "rare", "epic", "legendary", "mythic", "secret"];
+function rarityWeaponPrice(rarity) {
+  const found = Object.values(SHOP_ITEMS).find(function (it) { return it.type === "weapon" && it.rarity === rarity; });
+  return found ? found.price : 0;
+}
+const BOX_ITEMS = {};
+BOX_RARITIES.forEach(function (rarity) {
+  const idx = RARITY_ORDER.indexOf(rarity);
+  const ev = BOX_ODDS[0] * rarityWeaponPrice(RARITY_ORDER[idx]) + BOX_ODDS[1] * rarityWeaponPrice(RARITY_ORDER[idx + 1]) + BOX_ODDS[2] * rarityWeaponPrice(RARITY_ORDER[idx + 2]);
+  const price = Math.max(50, Math.round(ev * 1.3 / 10) * 10);
+  BOX_ITEMS["box_" + rarity] = {
+    name: RARITY_META[rarity].label + " 상자", type: "box", rarity: rarity, price: price,
+    boxTiers: [rarity, RARITY_ORDER[idx + 1], RARITY_ORDER[idx + 2]],
+  };
+});
+Object.assign(SHOP_ITEMS, BOX_ITEMS);
+// 상자를 열었을 때 실제로 무엇을 주는지 결정 — boxTiers([자기,다음,다다음])에서 BOX_ODDS
+// 가중치로 등급 하나를 뽑고, 그 등급의 weapon/armor/core 중 하나를 균등하게 고른다.
+function openBoxRoll(box) {
+  const roll = Math.random();
+  const tierRarity = roll < BOX_ODDS[0] ? box.boxTiers[0] : roll < BOX_ODDS[0] + BOX_ODDS[1] ? box.boxTiers[1] : box.boxTiers[2];
+  const candidates = Object.keys(SHOP_ITEMS).filter(function (id) {
+    const it = SHOP_ITEMS[id];
+    return it.rarity === tierRarity && (it.type === "weapon" || it.type === "armor" || it.type === "core");
+  });
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
 
 // 예전엔 공격당하면 자동으로 12시간 보호막이 붙어서 그 사람이 전체 유저의 타겟 목록에서
 // 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 한 주기 안에 몇 번까지 노릴 수 있는지"만
@@ -390,20 +426,33 @@ async function clubCoinBonusMult(env, userId) {
 // 나눠 받고, 클럽 자체에도 소량의 클럽 경험치가 들어간다. "작고 상한 있게" 원칙과 달리 이건
 // 협동 콘텐츠 특성상 상한을 안 두는 대신, 클럽당 재도전 대기시간(RAID_COOLDOWN_MS)으로
 // 무한 반복을 막는다. ──
-const RAID_BASE_HP = 200000;
-const RAID_HP_PER_MEMBER = 100000;
-const RAID_HP_PER_CLUB_LEVEL = 30000;
+const RAID_HP_MULT_MIN = 10, RAID_HP_MULT_MAX = 12; // HP = 클럽 전체 ATK 합 * 10~12배(랜덤)
 const RAID_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 처치 후 클럽당 20시간 대기
-const RAID_ATTACK_COOLDOWN_MS = 10 * 1000; // 매크로 방지용 최소 간격(PvP 쿨다운과는 별개)
 const RAID_STAMINA_COST = 2;
 const RAID_ATTACK_POWER_MULT = 10; // 데미지 = ATK * 이 배수 * randMult()
-const RAID_COIN_PER_HP = 3; // 총 보상 코인 풀 = maxHp * 이 값, 기여 데미지 비율대로 분배
+const RAID_COIN_PER_HP = 3; // 총 보상 코인 풀 = maxHp * 이 값, 기여 데미지 비율대로 분배 — HP가
+// 클럽 전체 ATK에 비례하므로 보상도 자연히 그 클럽의 실제 전투력 수준에 맞춰 스케일된다.
 const RAID_XP_PCT_AT_FULL_CONTRIBUTION = 0.30; // 기여도 100%(=혼자 다 깼음) 기준 nextExpFor의 30%
 const RAID_CLUB_XP_PER_HP = 0.01; // 처치 시 클럽 경험치 = maxHp * 이 값
 const RAID_BOSS_NAMES = ["제로데이 리바이어던", "블랙아이스 콜로서스", "고스트 프로토콜 AI", "옵시디언 방화벽 수호자", "심연의 루트킷"];
 
-function raidMaxHpFor(memberCount, clubLevel) {
-  return RAID_BASE_HP + memberCount * RAID_HP_PER_MEMBER + clubLevel * RAID_HP_PER_CLUB_LEVEL;
+// 보스 HP = 지금 이 클럽 멤버 전원의 ATK(totalCombatStats, 장비·봇·환생 다 반영)를 합산한 값의
+// 10~12배(요청 반영, 매번 랜덤) — 클럽이 강해질수록 보스도 그만큼 세져서 "다 같이 몇 대씩만
+// 때리면 끝나는" 허무함 없이 항상 여러 명이 힘을 합쳐야 하는 수준을 유지한다.
+async function clubTotalAtk(env, clubId) {
+  const membersRes = await env.DB.prepare("SELECT user_id FROM arena_club_members WHERE club_id = ?").bind(clubId).all();
+  let total = 0;
+  for (const m of membersRes.results) {
+    const memberRow = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(m.user_id).first();
+    if (!memberRow) continue;
+    const combat = await totalCombatStats(env, memberRow);
+    total += combat.atk;
+  }
+  return total;
+}
+function raidMaxHpFor(totalAtk) {
+  const mult = RAID_HP_MULT_MIN + Math.random() * (RAID_HP_MULT_MAX - RAID_HP_MULT_MIN);
+  return Math.max(1000, Math.round(totalAtk * mult));
 }
 
 // 보스 처치 시점에 호출 — 참여자별 기여 데미지 비율대로 코인 풀을 나누고, 각자 자기 레벨
@@ -1733,7 +1782,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
 
 function fmtNum(n) { return Number(n || 0).toLocaleString("en-US"); }
 
-const SHOP_TYPE_ORDER = { weapon: 0, armor: 1, core: 2, consumable: 3 };
+const SHOP_TYPE_ORDER = { weapon: 0, armor: 1, core: 2, consumable: 3, box: 4 };
 const SHOP_RARITY_ORDER = {};
 RARITY_ORDER.forEach(function (r, i) { SHOP_RARITY_ORDER[r] = i; });
 function sortedShopEntries(entries) {
@@ -2419,9 +2468,8 @@ export default {
         if (existing) return json({ error: "이미 진행 중인 레이드가 있습니다." }, 400);
         const cooldownLeft = club.last_raid_ended_at ? Math.max(0, RAID_COOLDOWN_MS - (Date.now() - club.last_raid_ended_at)) : 0;
         if (cooldownLeft > 0) return json({ error: "다음 레이드까지 " + Math.ceil(cooldownLeft / 3600000) + "시간 남았습니다." }, 400);
-        const memberCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_club_members WHERE club_id = ?").bind(clubId).first();
-        const memberCount = (memberCountRow && memberCountRow.cnt) || 1;
-        const maxHp = raidMaxHpFor(memberCount, clubLevelForXp(club.xp));
+        const totalAtk = await clubTotalAtk(env, clubId);
+        const maxHp = raidMaxHpFor(totalAtk);
         const bossName = RAID_BOSS_NAMES[Math.floor(Math.random() * RAID_BOSS_NAMES.length)];
         await env.DB.prepare(
           "INSERT INTO arena_club_raids (club_id, boss_name, max_hp, hp, status, started_at) VALUES (?, ?, ?, ?, 'active', ?)"
@@ -2429,8 +2477,9 @@ export default {
         return json({ ok: true, bossName: bossName, maxHp: maxHp });
       }
 
-      // ── POST /club/raid/attack — 내 클럽의 진행 중인 레이드에 데미지를 넣는다. PvP 공격
-      //    쿨다운과는 별개의 짧은 매크로 방지 쿨다운(RAID_ATTACK_COOLDOWN_MS)만 있다. ──
+      // ── POST /club/raid/attack — 내 클럽의 진행 중인 레이드에 데미지를 넣는다. 공격 간
+      //    쿨다운은 없다(요청 반영) — 스태미나 소모(RAID_STAMINA_COST)만이 자연스러운 속도
+      //    제한이다. ──
       if (request.method === "POST" && path === "/club/raid/attack") {
         const clubId = await clubIdOf(env, user.userId);
         if (!clubId) return json({ error: "클럽에 소속되어 있지 않습니다." }, 400);
@@ -2438,8 +2487,6 @@ export default {
         if (!raid) return json({ error: "진행 중인 레이드가 없습니다." }, 400);
 
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
-        const cooldownLeft = attacker.last_raid_attack_at ? Math.max(0, RAID_ATTACK_COOLDOWN_MS - (Date.now() - attacker.last_raid_attack_at)) : 0;
-        if (cooldownLeft > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
         if (attacker.stamina < RAID_STAMINA_COST) return json({ error: "스태미나가 부족합니다. (필요 " + RAID_STAMINA_COST + ")" }, 400);
 
         const combat = await totalCombatStats(env, attacker);
@@ -2447,9 +2494,8 @@ export default {
         const newHp = Math.max(0, raid.hp - damage);
 
         attacker.stamina -= RAID_STAMINA_COST;
-        attacker.last_raid_attack_at = Date.now();
         await env.DB.batch([
-          env.DB.prepare("UPDATE arena_users SET stamina=?, last_raid_attack_at=? WHERE user_id=?").bind(attacker.stamina, attacker.last_raid_attack_at, attacker.user_id),
+          env.DB.prepare("UPDATE arena_users SET stamina=? WHERE user_id=?").bind(attacker.stamina, attacker.user_id),
           env.DB.prepare("UPDATE arena_club_raids SET hp=? WHERE id=?").bind(newHp, raid.id),
           env.DB.prepare(
             "INSERT INTO arena_club_raid_damage (raid_id, user_id, user_name, damage, hits) VALUES (?, ?, ?, ?, 1) " +
@@ -2866,9 +2912,28 @@ export default {
         const body = await request.json().catch(function () { return {}; });
         const itemId = body.itemId;
         const item = SHOP_ITEMS[itemId];
-        if (!item || item.type !== "consumable") return json({ error: "사용할 수 없는 아이템입니다." }, 400);
+        if (!item || (item.type !== "consumable" && item.type !== "box")) return json({ error: "사용할 수 없는 아이템입니다." }, 400);
         const owned = await env.DB.prepare("SELECT qty FROM arena_inventory WHERE user_id=? AND item_id=?").bind(user.userId, itemId).first();
         if (!owned || owned.qty <= 0) return json({ error: "보유하지 않은 아이템입니다." }, 400);
+
+        // ── 상자 개봉 — 소비재(hp/energy/stamina)와 달리 무기/방어/코어 하나를 새로 지급한다.
+        //    openBoxRoll이 이 상자의 boxTiers(자기/다음/다다음 등급) 중 하나를 75/20/5%로
+        //    뽑고, 그 등급의 장비 하나를 균등하게 골라준다. ──
+        if (item.type === "box") {
+          const wonItemId = openBoxRoll(item);
+          const wonItem = wonItemId ? SHOP_ITEMS[wonItemId] : null;
+          if (!wonItem) return json({ error: "상자 결과를 생성하지 못했습니다. 다시 시도해주세요." }, 500);
+          await env.DB.batch([
+            owned.qty <= 1
+              ? env.DB.prepare("DELETE FROM arena_inventory WHERE user_id=? AND item_id=?").bind(user.userId, itemId)
+              : env.DB.prepare("UPDATE arena_inventory SET qty = qty - 1 WHERE user_id=? AND item_id=?").bind(user.userId, itemId),
+            env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, wonItemId),
+          ]);
+          return json({
+            ok: true, boxOpened: true, wonItemId: wonItemId, wonItemName: wonItem.name,
+            wonRarity: wonItem.rarity, wonRarityLabel: RARITY_META[wonItem.rarity].label, wonRarityColor: RARITY_META[wonItem.rarity].color,
+          });
+        }
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         // 전부 고정 수치 회복이다 — "100% 채움" 류 소비재는 없다(가격을 내면 낼수록 더 많은 양이
