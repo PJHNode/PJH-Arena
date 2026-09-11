@@ -441,12 +441,23 @@ function activityBoostMult(row) {
 // 연구 가능한 특수 연구" 요청 반영). 레벨당 환생 직후 부스트 창(REBIRTH_BOOST_MS)을 5분씩
 // 늘려준다 — 그 창 안에서 직접 버는 소득만 2배가 되는 기존 룰은 그대로고, 그냥 그 기간이
 // 길어질 뿐이라 사기성 없이(작고 상한 있게) 환생을 더 자주 하는 유저에게 자연스러운 보상이 된다.
-const RESEARCH_REBIRTH_BASE_COST = 200;
-const RESEARCH_REBIRTH_GROWTH = 1.8;
+// 이 연구는 Research 탭에서 "영구 EXP 부스터" 연구로 대체되어(아래 EXP_BOOSTER_* 참고)
+// 더 이상 새로 레벨을 올릴 수 없다(업그레이드 엔드포인트 자체를 없앴다) — 하지만 이미
+// research_rebirth_level을 올려둔 유저의 투자는 그대로 존중한다: 이 상수/함수들은 남겨두고
+// POST /rebirth에서 여전히 읽어서 환생 직후 부스트 창 길이를 계산한다(그때 그 값 그대로 고정).
 const RESEARCH_REBIRTH_MAX_LEVEL = 10;
 const RESEARCH_REBIRTH_BOOST_MS_PER_LEVEL = 5 * 60 * 1000; // 레벨당 +5분, 최대 +50분(총 80분)
-function researchRebirthUpgradeCost(level) { return Math.round(RESEARCH_REBIRTH_BASE_COST * Math.pow(RESEARCH_REBIRTH_GROWTH, level)); }
 function rebirthBoostTotalMs(level) { return REBIRTH_BOOST_MS + Math.min(level || 0, RESEARCH_REBIRTH_MAX_LEVEL) * RESEARCH_REBIRTH_BOOST_MS_PER_LEVEL; }
+
+// ── 영구 EXP 부스터 연구 — "환생 가속 연구" 슬롯을 대체(요청 반영). 환생과 무관하게 처음부터
+// 연구 가능하고, 딱 3단계뿐이라 지수 성장식 대신 고정 비용표를 쓴다. 레벨 1/2/3 = 모든 경험치
+// 획득에 영구 x1.2/x1.5/x2 — 활동 부스트(환생 직후/일일완료 2배, 시간제한 있음)와는 곱연산으로
+// 함께 적용된다(xpPct를 쓰는 모든 호출부에서 두 배율을 다 곱함).
+const EXP_BOOSTER_MAX_LEVEL = 3;
+const EXP_BOOSTER_COSTS = [500, 750, 1000]; // 인덱스 = 현재 레벨(0→1, 1→2, 2→3 비용)
+const EXP_BOOSTER_MULTS = [1, 1.2, 1.5, 2]; // 인덱스 = 레벨(0 = 아직 연구 안 함)
+function expBoosterMult(row) { return EXP_BOOSTER_MULTS[Math.min(row.research_exp_booster_level || 0, EXP_BOOSTER_MAX_LEVEL)]; }
+function expBoosterUpgradeCost(level) { return level >= EXP_BOOSTER_MAX_LEVEL ? null : EXP_BOOSTER_COSTS[level]; }
 
 // KST(UTC+9) 기준 날짜 문자열 — 일일 출석/퀘스트 리셋 경계로 쓴다(PJH-Hub board-worker.js의
 // kstDateString과 동일한 방식).
@@ -1028,6 +1039,9 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_stones INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_shop_owned TEXT NOT NULL DEFAULT '[]'"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN max_theme_enabled INTEGER NOT NULL DEFAULT 1"); } catch (e) {}
+  // 영구 EXP 부스터 연구 레벨(0~3) — "환생 가속 연구" 대체. research_rebirth_level은 그대로
+  // 남겨두되(이미 투자한 유저 보호) 더 이상 이 컬럼을 새로 올릴 방법은 없다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_exp_booster_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
   // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
@@ -1190,7 +1204,10 @@ function applyXpAndLevel(row, xpGain) {
 // 것도 소량이나마 경험치를 줘서 "져도 완전히 헛수고는 아니다"는 최소한의 보상을 둔다.
 // activityBoostMult(환생/일일완료 2배 부스트)는 각 호출부에서 곱해서 적용한다(Hacking
 // Jobs와 동일한 방식).
-function xpPct(level, pct) { return Math.max(1, Math.round(nextExpFor(level) * pct)); }
+// row를 받는 이유는 nextExpFor(레벨) 계산뿐 아니라 영구 EXP 부스터(expBoosterMult, 연구로
+// 산 x1.2/x1.5/x2)까지 여기서 한 번에 곱해서, 이 함수를 쓰는 모든 XP 획득 경로가 새 연구
+// 배율을 자동으로 반영하게 하기 위해서다(호출부마다 따로 곱하는 걸 깜빡할 걱정이 없음).
+function xpPct(row, pct) { return Math.max(1, Math.round(nextExpFor(row.level) * pct * expBoosterMult(row))); }
 const PVP_WIN_XP_PCT = 0.06, PVP_LOSE_XP_PCT = 0.015;
 const PLANET_WIN_XP_PCT = 0.06, PLANET_LOSE_XP_PCT = 0.015;
 const EXPEDITION_WIN_XP_PCT = 0.04, EXPEDITION_LOSE_XP_PCT = 0.01; // 오프라인 자동 원정이라 살짝 낮게
@@ -1383,6 +1400,8 @@ function publicState(row, combat) {
     auroraFrameOwned: rebirthShopOwnedSet(row).has("rebirth_frame_aurora"),
     maxThemeUnlocked: (row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT,
     maxThemeEnabled: row.max_theme_enabled === undefined ? true : !!row.max_theme_enabled,
+    // 영구 EXP 부스터(연구, 다이아 500/750/1000 → x1.2/x1.5/x2) — 헤더에 항상 보이는 표시용.
+    expBoosterMult: expBoosterMult(row),
   };
 }
 
@@ -1800,7 +1819,7 @@ export default {
         const boostMult = activityBoostMult(row);
         const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
         row.pocket_coins += coinsGained;
-        const xpGained = tier.xp * boostMult;
+        const xpGained = Math.round(tier.xp * boostMult * expBoosterMult(row));
         const leveledUp = applyXpAndLevel(row, xpGained);
 
         await env.DB.prepare(
@@ -1997,7 +2016,7 @@ export default {
         // 경험치 — 이겨도 져도 준다(져도 완전히 헛수고는 아니게). 레벨업이 일어나면
         // applyXpAndLevel이 hp/energy/stamina를 전부 최대치로 되돌리므로(위 전투 피해를
         // 오히려 덮어씀) 반드시 hp/energy/stamina 피해 반영 "이후"에 호출한다.
-        const xpGain = Math.round(xpPct(attacker.level, attackerWins ? PVP_WIN_XP_PCT : PVP_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const xpGain = Math.round(xpPct(attacker, attackerWins ? PVP_WIN_XP_PCT : PVP_LOSE_XP_PCT) * activityBoostMult(attacker));
         const leveledUp = applyXpAndLevel(attacker, xpGain);
 
         attacker.last_attack_at = Date.now();
@@ -2979,7 +2998,7 @@ export default {
         // 업적은 1회성 큰 보상이라 경험치도 그만큼 후하게(ACHIEVEMENT_CLAIM_XP_PCT) 준다 —
         // activityBoostMult는 여기선 안 곱한다(부스트는 "반복 활동"을 더 신나게 하려는
         // 취지라 1회성 업적까지 배로 주면 부스트 타이밍에 몰아 청구하는 꼼수가 생김).
-        const xpGain = xpPct(row.level, ACHIEVEMENT_CLAIM_XP_PCT);
+        const xpGain = xpPct(row, ACHIEVEMENT_CLAIM_XP_PCT);
         const leveledUp = applyXpAndLevel(row, xpGain);
         await env.DB.batch([
           env.DB.prepare(
@@ -3074,12 +3093,12 @@ export default {
           slotsMaxLevel: RESEARCH_SLOTS_MAX_LEVEL,
           slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
           slotsUpgradeCost: (row.research_shop_slots_level || 0) >= RESEARCH_SLOTS_MAX_LEVEL ? null : researchSlotsUpgradeCost(row.research_shop_slots_level || 0),
-          // 환생 가속 연구 — 환생을 한 번도 안 했으면 아예 잠겨 있다("리버스를 해야만 연구 가능").
-          rebirthResearchUnlocked: (row.rebirth_count || 0) >= 1,
-          rebirthLevel: row.research_rebirth_level || 0,
-          rebirthMaxLevel: RESEARCH_REBIRTH_MAX_LEVEL,
-          rebirthBoostTotalMinutes: rebirthBoostTotalMs(row.research_rebirth_level) / 60000,
-          rebirthUpgradeCost: (row.research_rebirth_level || 0) >= RESEARCH_REBIRTH_MAX_LEVEL ? null : researchRebirthUpgradeCost(row.research_rebirth_level || 0),
+          // 영구 EXP 부스터 — 환생 여부와 무관하게 처음부터 연구 가능(옛 환생 가속 연구 자리 대체).
+          expBoosterLevel: row.research_exp_booster_level || 0,
+          expBoosterMaxLevel: EXP_BOOSTER_MAX_LEVEL,
+          expBoosterMult: expBoosterMult(row),
+          expBoosterNextMult: EXP_BOOSTER_MULTS[Math.min((row.research_exp_booster_level || 0) + 1, EXP_BOOSTER_MAX_LEVEL)],
+          expBoosterUpgradeCost: expBoosterUpgradeCost(row.research_exp_booster_level || 0),
         });
       }
 
@@ -3127,23 +3146,21 @@ export default {
         });
       }
 
-      // ── POST /research/rebirth-upgrade — 환생 가속 연구. 환생을 한 번도 안 했으면 잠겨서
-      //    아예 시작도 못 한다("리버스를 해야만 연구 가능한 특수 연구" 요청). 레벨당 환생 직후
-      //    부스트 창을 5분씩 늘린다. ──
-      if (request.method === "POST" && path === "/research/rebirth-upgrade") {
+      // ── POST /research/exp-booster-upgrade — 영구 EXP 부스터 연구(딱 3단계, 다이아
+      //    500/750/1000). 레벨 1/2/3 = 모든 경험치 획득에 영구 x1.2/x1.5/x2. ──
+      if (request.method === "POST" && path === "/research/exp-booster-upgrade") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        if ((row.rebirth_count || 0) < 1) return json({ error: "환생을 최소 1회 해야 연구할 수 있는 특수 연구입니다." }, 400);
-        const level = row.research_rebirth_level || 0;
-        if (level >= RESEARCH_REBIRTH_MAX_LEVEL) return json({ error: "이미 최대 레벨입니다." }, 400);
-        const cost = researchRebirthUpgradeCost(level);
+        const level = row.research_exp_booster_level || 0;
+        if (level >= EXP_BOOSTER_MAX_LEVEL) return json({ error: "이미 최대 레벨입니다." }, 400);
+        const cost = expBoosterUpgradeCost(level);
         if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
         row.diamonds -= cost;
-        row.research_rebirth_level = level + 1;
-        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_rebirth_level=? WHERE user_id=?").bind(row.diamonds, row.research_rebirth_level, row.user_id).run();
+        row.research_exp_booster_level = level + 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_exp_booster_level=? WHERE user_id=?").bind(row.diamonds, row.research_exp_booster_level, row.user_id).run();
         return json({
-          ok: true, diamonds: row.diamonds, rebirthLevel: row.research_rebirth_level,
-          rebirthBoostTotalMinutes: rebirthBoostTotalMs(row.research_rebirth_level) / 60000,
-          nextCost: row.research_rebirth_level >= RESEARCH_REBIRTH_MAX_LEVEL ? null : researchRebirthUpgradeCost(row.research_rebirth_level),
+          ok: true, diamonds: row.diamonds, expBoosterLevel: row.research_exp_booster_level,
+          expBoosterMult: expBoosterMult(row),
+          nextCost: expBoosterUpgradeCost(row.research_exp_booster_level),
         });
       }
 
@@ -3181,7 +3198,7 @@ export default {
         row.pocket_coins += reward;
         row.last_attendance_date = today;
         row.attendance_streak = streak;
-        const xpGain = xpPct(row.level, ATTENDANCE_XP_PCT);
+        const xpGain = xpPct(row, ATTENDANCE_XP_PCT);
         const leveledUp = applyXpAndLevel(row, xpGain);
         // 미션 3종을 이미(출석보다 먼저) 다 수령해 둔 상태에서 지금 막 출석까지 마쳤다면 —
         // "출석 + 미션 전부 완료" 조건이 방금 완성된 것이므로 여기서 부스트를 켠다(순서 무관하게
@@ -3210,7 +3227,7 @@ export default {
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         row.pocket_coins += q.reward;
-        const xpGain = xpPct(row.level, DAILY_QUEST_CLAIM_XP_PCT);
+        const xpGain = xpPct(row, DAILY_QUEST_CLAIM_XP_PCT);
         const leveledUp = applyXpAndLevel(row, xpGain);
         const today = kstDateString();
         await env.DB.batch([
@@ -3464,7 +3481,7 @@ export default {
 
         // 경험치 — PvP 직접 공격과 동일한 원칙(이겨도 져도 지급, 레벨업 시 hp/energy/stamina
         // 전액 회복이 전투 피해 반영 이후에 적용되도록 반드시 마지막에 호출).
-        const xpGain = Math.round(xpPct(attacker.level, result.attackerWins ? PLANET_WIN_XP_PCT : PLANET_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const xpGain = Math.round(xpPct(attacker, result.attackerWins ? PLANET_WIN_XP_PCT : PLANET_LOSE_XP_PCT) * activityBoostMult(attacker));
         const leveledUp = applyXpAndLevel(attacker, xpGain);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
@@ -3525,7 +3542,7 @@ export default {
 
         // 원정은 사람이 직접 안 하는 자동 전투라 같은 승패라도 일반 공격보다 경험치를
         // 살짝 낮게 준다(EXPEDITION_*_XP_PCT). 나머지 원칙은 위 /planets/attack과 동일.
-        const xpGain = Math.round(xpPct(attacker.level, result.attackerWins ? EXPEDITION_WIN_XP_PCT : EXPEDITION_LOSE_XP_PCT) * activityBoostMult(attacker));
+        const xpGain = Math.round(xpPct(attacker, result.attackerWins ? EXPEDITION_WIN_XP_PCT : EXPEDITION_LOSE_XP_PCT) * activityBoostMult(attacker));
         const leveledUp = applyXpAndLevel(attacker, xpGain);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;

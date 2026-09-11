@@ -139,7 +139,7 @@
     else if (state.avatarIcon === null) { $("avatarIcon").style.display = "none"; }
     $("levelBadge").textContent = state.level;
     $("expBar").style.width = Math.min(100, (state.xp / state.nextExp) * 100) + "%";
-    $("expText").textContent = fmt(state.xp) + " / " + fmt(state.nextExp);
+    $("expText").textContent = fmt(state.xp) + " / " + fmt(state.nextExp) + (state.expBoosterMult > 1 ? " (🧪x" + state.expBoosterMult + ")" : "");
     $("pocketCoinsHead").textContent = fmt(state.pocketCoins);
 
     $("hpBar").style.width = (state.hp / state.maxHp) * 100 + "%";
@@ -1341,22 +1341,16 @@
         expBtn.innerHTML = "해금하기 (💎 <span id=\"researchExpeditionCost\">" + fmt(r.expeditionUnlockCost) + "</span>)";
       }
 
-      // 환생 가속 연구 — 환생을 한 번도 안 했으면 통째로 잠금(버튼도 비활성 + "환생 후 해금").
-      setText("researchRebirthMinutes", r.rebirthBoostTotalMinutes);
-      const rebirthBtn = $("researchRebirthUpgradeBtn");
-      if (!r.rebirthResearchUnlocked) {
-        setText("researchRebirthLevelTag", "잠김");
-        rebirthBtn.disabled = true;
-        rebirthBtn.textContent = "환생 후 해금";
+      // 영구 EXP 부스터 — 딱 3레벨, 다이아 500/750/1000으로 x1.2/x1.5/x2(환생과 무관하게 처음부터 가능).
+      setText("researchExpBoosterLevelTag", "Lv." + r.expBoosterLevel);
+      setText("researchExpBoosterCurrent", "x" + r.expBoosterMult);
+      const expBoosterBtn = $("researchExpBoosterUpgradeBtn");
+      if (r.expBoosterUpgradeCost == null) {
+        expBoosterBtn.disabled = true;
+        expBoosterBtn.textContent = "최대 레벨 (x" + r.expBoosterMult + ")";
       } else {
-        setText("researchRebirthLevelTag", "Lv." + r.rebirthLevel);
-        if (r.rebirthUpgradeCost == null) {
-          rebirthBtn.disabled = true;
-          rebirthBtn.textContent = "최대 레벨 (" + r.rebirthBoostTotalMinutes + "분)";
-        } else {
-          rebirthBtn.innerHTML = "연구하기 (💎 <span>" + fmt(r.rebirthUpgradeCost) + "</span>)";
-          rebirthBtn.disabled = r.diamonds < r.rebirthUpgradeCost;
-        }
+        expBoosterBtn.innerHTML = "연구하기 → x" + r.expBoosterNextMult + " (💎 <span>" + fmt(r.expBoosterUpgradeCost) + "</span>)";
+        expBoosterBtn.disabled = r.diamonds < r.expBoosterUpgradeCost;
       }
     } catch (e) { panel.querySelector(".research-node").insertAdjacentHTML("afterend", '<p class="dim">' + escapeHtml(e.message) + "</p>"); }
   }
@@ -1389,14 +1383,14 @@
         renderResearchTab();
       } catch (e) { toast(e.message, true); slotsBtn.disabled = false; }
     });
-    const rebirthResearchBtn = $("researchRebirthUpgradeBtn");
-    if (rebirthResearchBtn) rebirthResearchBtn.addEventListener("click", async () => {
-      rebirthResearchBtn.disabled = true;
+    const expBoosterBtn = $("researchExpBoosterUpgradeBtn");
+    if (expBoosterBtn) expBoosterBtn.addEventListener("click", async () => {
+      expBoosterBtn.disabled = true;
       try {
-        const r = await api("/research/rebirth-upgrade", { method: "POST" });
-        toast("🌀 환생 가속 연구 Lv." + r.rebirthLevel + " 달성! (부스트 " + r.rebirthBoostTotalMinutes + "분)");
+        const r = await api("/research/exp-booster-upgrade", { method: "POST" });
+        toast("🧪 영구 EXP 부스터 Lv." + r.expBoosterLevel + " 달성! (모든 경험치 x" + r.expBoosterMult + ")");
         renderResearchTab();
-      } catch (e) { toast(e.message, true); rebirthResearchBtn.disabled = false; }
+      } catch (e) { toast(e.message, true); expBoosterBtn.disabled = false; }
     });
   }
 
