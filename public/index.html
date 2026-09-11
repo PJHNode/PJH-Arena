@@ -14,20 +14,20 @@
        전체적으로 탁하다는 피드백을 받았다. 배경·카드·테두리는 여전히 어둡고 차분하게 두되,
        "빛나고 튀어야 하는 것"(포인트 컬러, 리소스 바, 주요 버튼 글로우)은 다시 선명하고
        채도 있게 되돌렸다 — 무광 탄광석 브론즈가 아니라 광택 있는 금동색으로. ── */
-    --bg: #0d1117;
-    --surface: #1a212b;
-    --surface-2: #232c39;
-    --border: #454f5f;
-    --text: #eef0f3;
-    --sub: #a8b1c0;
-    --accent: #edc06a;
-    --accent-glow: rgba(237, 192, 106, 0.5);
+    --bg: #060809;
+    --surface: #10151c;
+    --surface-2: #19212b;
+    --border: #2f3946;
+    --text: #eef1f4;
+    --sub: #96a0b0;
+    --accent: #f5c869;
+    --accent-glow: rgba(245, 200, 105, 0.55);
     --accent-contrast: #201404; /* 밝은 금색 배경 위에 올라가는 어두운 웜톤 글자색 */
-    --cyan: #cddce8;
-    --danger: #f0728a;
-    --hp: #6ea8e6;
-    --energy: #6ec98c;
-    --stamina: #f0ad5c;
+    --cyan: #d9e6f0;
+    --danger: #ff7590;
+    --hp: #7ab4f0;
+    --energy: #7ad99c;
+    --stamina: #ffbb66;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
     --font-serif: Georgia, 'Noto Serif KR', serif;
   }
@@ -60,8 +60,8 @@
   }
   /* 기본기는 절제하되(사각·헤어라인), 실제로 누르는 순간엔 확실히 반응하도록 은은한 글로우를 준다. */
   .btn-primary:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 10px var(--accent-glow); }
-  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); box-shadow: 0 0 8px rgba(205,220,232,0.3); }
-  .btn-danger:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 10px rgba(240,114,138,0.45); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); box-shadow: 0 0 9px rgba(217,230,240,0.35); }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 12px rgba(255,117,144,0.5); }
   .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.97); }
 
   .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 3px; }
@@ -76,7 +76,7 @@
   /* 카드 호버는 색 글로우 없이 아주 은은한 중립 그림자로만 살짝 들어올린다(고풍스럽고 담백하게). */
   .job-card:hover, .shop-card:hover, .achievement-card:hover, .enchant-card:hover, .bot-card:hover,
   .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover {
-    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); border-color: #5a6577;
+    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); border-color: #6b7889;
   }
   .pvp-row, .lb-row, .log-row, .inv-row, .club-member-row, .club-relation-row, .daily-quest-row {
     transition: background 0.12s ease;
@@ -99,7 +99,7 @@
   .avatar-icon { font-size: 22px; line-height: 1; }
   .exp-wrap { flex: 1; min-width: 160px; max-width: 260px; }
   .exp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; }
-  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; box-shadow: 0 0 6px var(--accent-glow); }
+  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; box-shadow: 0 0 8px var(--accent-glow); }
   #expText { font-size: 10px; color: var(--sub); }
   .pocket-tag { font-size: 13px; color: var(--stamina); margin-left: auto; }
   .stat-mini { font-size: 11px; color: var(--sub); }
@@ -134,9 +134,9 @@
   .resource-eta { flex-shrink: 0; font-size: 10px; color: var(--cyan); opacity: 0.85; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
-  .resource-fill.hp { background: var(--hp); box-shadow: 0 0 6px rgba(110,168,230,0.6); }
-  .resource-fill.energy { background: var(--energy); box-shadow: 0 0 6px rgba(110,201,140,0.6); }
-  .resource-fill.stamina { background: var(--stamina); box-shadow: 0 0 6px rgba(240,173,92,0.6); }
+  .resource-fill.hp { background: var(--hp); box-shadow: 0 0 7px rgba(122,180,240,0.7); }
+  .resource-fill.energy { background: var(--energy); box-shadow: 0 0 7px rgba(122,217,156,0.7); }
+  .resource-fill.stamina { background: var(--stamina); box-shadow: 0 0 7px rgba(255,187,102,0.7); }
   .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; flex-wrap: wrap; }
   .stat-plus-btn {
     width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: var(--accent-contrast);
