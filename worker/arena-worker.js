@@ -110,7 +110,10 @@ function pvpAuraTierFor(row) {
   const weaponIdx = weaponItem ? PVP_AURA_TIERS.indexOf(weaponItem.rarity) : -1;
   const rebirthIdx = rebirthTier(row.rebirth_count) - 1; // 0(무환생)이면 -1이 되어 미반영
   let levelIdx = -1;
-  if (row.level >= 100) levelIdx = 3;
+  // 레벨 200(신설 "초월적 해커" 업적과 동일 기준)은 최상위 abyssal로 바로 직행 — 환생 없이
+  // 순수 레벨만으로 최고 등급 아우라를 볼 수 있는 유일한 경로다.
+  if (row.level >= 200) levelIdx = 4;
+  else if (row.level >= 100) levelIdx = 3;
   else if (row.level >= 80) levelIdx = 2;
   else if (row.level >= 60) levelIdx = 1;
   else if (row.level >= 40) levelIdx = 0;
@@ -935,6 +938,12 @@ const ACHIEVEMENTS = {
   level_25:      { name: "숙련 해커",     desc: "레벨 25 달성",                    title: "숙련 해커",     reward: 10000,  check: function (ctx) { return ctx.row.level >= 25; } },
   level_50:      { name: "베테랑 해커",   desc: "레벨 50 달성",                    title: "베테랑 해커",   reward: 30000,  check: function (ctx) { return ctx.row.level >= 50; } },
   level_100:     { name: "전설의 해커",   desc: "레벨 100 달성(환생 조건)",          title: "전설의 해커",   reward: 120000, check: function (ctx) { return ctx.row.level >= 100; } },
+  // 레벨엔 상한이 없어서(환생은 선택일 뿐 강제가 아님) 100을 훨씬 넘겨서까지 순수 그라인딩만
+  // 파고드는 유저가 실제로 나왔다("레벨 200 달성한 애가 있는데 뭘 해줄까?" 요청 반영) — 그
+  // 헌신에 맞는 마일스톤. 영구 스탯 보너스는 일부러 안 준다(환생이 이미 "레벨을 다시 밟는
+  // 대가로 영구 +1%"를 주는 구조라, 여기에 스탯까지 얹으면 "환생 안 하고 계속 레벨만 올리는
+  // 게 이득"이 되어 환생 시스템의 존재 의미가 흐려진다) — 순수 명예(코인+칭호)만.
+  level_200:     { name: "초월적 해커",   desc: "레벨 200 달성",                    title: "초월적 해커",   reward: 500000, check: function (ctx) { return ctx.row.level >= 200; } },
   rebirth_1:     { name: "첫 환생",       desc: "환생 1회 달성",                    title: "환생자",       reward: 60000,  check: function (ctx) { return (ctx.row.rebirth_count || 0) >= 1; } },
   rebirth_max:   { name: "윤회의 끝",     desc: "환생 " + REBIRTH_BONUS_MAX_COUNT + "회(최대) 달성", title: "윤회의 지배자", reward: 600000, check: function (ctx) { return (ctx.row.rebirth_count || 0) >= REBIRTH_BONUS_MAX_COUNT; } },
   plunder_10:    { name: "약탈자",       desc: "PvP 약탈 승리 10회",               title: "약탈자",       reward: 6000,   check: function (ctx) { return (ctx.row.plunder_wins || 0) >= 10; } },
