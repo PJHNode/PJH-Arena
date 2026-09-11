@@ -65,6 +65,37 @@ window.ITEM_ICONS = {
 // 못 찾은 아이템(신규 아이템 추가를 깜빡한 경우)에 대한 안전망 — 물음표 아이콘.
 window.ITEM_ICON_FALLBACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 015 .5c0 1.5-2.5 1.8-2.5 3.5"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>';
 
+// ══════════════════════════════════════════════════════════
+//  Property(부동산/방치 수익 기기) 전용 아이콘 — 그동안 이름 텍스트만 있던 걸 무기/방어/코어와
+//  똑같은 방식(손 코딩 SVG, stroke="currentColor")으로 하나씩 그렸다. 등급 필드는 따로 없지만
+//  서버가 가격 순 5단계로 나눠 내려주는 tierColor로 물들여서(무채색 은색 → 청록 → 에메랄드 →
+//  골드 → 앰버), 저가 기기부터 최종 티어까지 점점 화려해지는 감각을 준다.
+// ══════════════════════════════════════════════════════════
+window.PROPERTY_ICONS = {
+  proxy_relay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 21V9"/><circle cx="12" cy="6" r="2"/><path d="M8 9a6 6 0 018 0M6 12a9 9 0 0112 0"/></svg>',
+  botnet_node: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="2"/><circle cx="4" cy="6" r="1.6"/><circle cx="20" cy="6" r="1.6"/><circle cx="12" cy="20" r="1.6"/><path d="M12 12L4 6M12 12L20 6M12 12L12 20"/></svg>',
+  gpu_rig: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="8" width="20" height="9" rx="1.5"/><circle cx="8" cy="12.5" r="2.3"/><circle cx="16" cy="12.5" r="2.3"/><path d="M2 8V6h6M22 8V6h-4"/></svg>',
+  packet_sniffer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 12L18 7"/><circle cx="15" cy="9" r="1" fill="currentColor" stroke="none"/></svg>',
+  darkpool_bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="3" width="10" height="8" rx="2"/><circle cx="10" cy="6.5" r="1" fill="currentColor" stroke="none"/><circle cx="14" cy="6.5" r="1" fill="currentColor" stroke="none"/><path d="M9 11v3M15 11v3M6 14h12v7H6z"/></svg>',
+  asic_farm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>',
+  neural_farm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/><path d="M5 6l7 6M19 6l-7 6M5 18l7-6M19 18l-7-6"/></svg>',
+  cloud_scraper: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 17a4 4 0 01-1-7.9A5 5 0 0116 8a4 4 0 011 7.9z"/><path d="M12 8V3M10 5l2-2 2 2"/></svg>',
+  fusion_reactor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="9" ry="3.5"/><ellipse cx="12" cy="12" rx="9" ry="3.5" transform="rotate(60 12 12)"/></svg>',
+  quantum_miner: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20L14 10"/><path d="M9 3c3 0 8 2 11 6-3 1-8-1-11-4z"/><circle cx="17" cy="7" r="1" fill="currentColor" stroke="none"/></svg>',
+  dyson_node: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4"/></svg>',
+  singularity_farm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3a9 9 0 100 18 6 6 0 100-12 3 3 0 100 6"/></svg>',
+  fusion_array: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></svg>',
+  dyson_sphere: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.5 5.5l13 13M18.5 5.5l-13 13"/></svg>',
+  quantum_nexus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l8 4.5v11L12 22l-8-4.5v-11z"/><path d="M12 2v20M4 6.5l16 11M20 6.5L4 17.5"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg>',
+  galactic_forge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 3l7 7-3 3-7-7z"/><path d="M11 9L4 16v4h4l7-7"/><path d="M3 3l2 2M19 19l2 2M3 21l2-2"/></svg>',
+  stellar_engine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.5 7H21l-5.5 4.5L17.5 21 12 16.5 6.5 21l2-7.5L3 9h6.5z"/></svg>',
+};
+window.propertyIconHtml = function propertyIconHtml(deviceId, color, sizePx) {
+  const svg = window.PROPERTY_ICONS[deviceId] || window.ITEM_ICON_FALLBACK;
+  const size = sizePx || 22;
+  return '<span class="item-icon" style="color:' + (color || "currentColor") + ";width:" + size + "px;height:" + size + 'px;">' + svg + "</span>";
+};
+
 // itemId + 색상을 받아 인라인 스타일이 적용된 아이콘 래퍼 HTML을 만든다(공용 헬퍼).
 window.itemIconHtml = function itemIconHtml(itemId, color, sizePx) {
   const svg = window.ITEM_ICONS[itemId] || window.ITEM_ICON_FALLBACK;

@@ -757,6 +757,17 @@ const PROPERTY_DEVICES = {
   galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
   stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
 };
+// 아이템처럼 별도 rarity 필드는 없지만, 17종을 가격 순으로 5단계(4개씩 묶고 마지막만 1개)로
+// 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
+// 등급감이 있으면 좋겠다는 취지) — 무채색 은색에서 시작해 청록/에메랄드를 거쳐 최종적으로
+// 액센트 골드·앰버로 끝난다.
+const PROPERTY_TIER_COLORS = ["#8a95a6", "#6fa8d1", "#6fae7c", "#d9a848", "#e0973f"];
+const PROPERTY_DEVICE_IDS = Object.keys(PROPERTY_DEVICES);
+function propertyTierColor(deviceId) {
+  const idx = PROPERTY_DEVICE_IDS.indexOf(deviceId);
+  const tier = Math.min(PROPERTY_TIER_COLORS.length - 1, Math.floor(Math.max(0, idx) / 4));
+  return PROPERTY_TIER_COLORS[tier];
+}
 
 // ── 행성 기반 성간 전쟁(Galaxy Map) ── 각 유저는 공격받지 않는 "홈 행성"(is_home=1)을
 // 거점으로 시작한다. 그 외 고정된 개수의 "야생 행성"이 맵에 깔려 있고, 처음엔 전부 PVE 봇이
@@ -3595,7 +3606,7 @@ export default {
         const devices = Object.keys(PROPERTY_DEVICES)
           .map(function (id) { return [id, PROPERTY_DEVICES[id]]; })
           .sort(function (a, b) { return a[1].price - b[1].price; })
-          .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0 }); });
+          .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
         return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: PROPERTY_MAX_DEVICES, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 

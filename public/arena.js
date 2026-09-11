@@ -431,7 +431,7 @@
       const points = logs.slice(0, 12).reverse().map((l) => l.coins_delta);
       if (!points.length) return;
       const max = Math.max(...points, 1);
-      ctx.strokeStyle = "#b08d57"; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.strokeStyle = "#d9a848"; ctx.lineWidth = 2; ctx.beginPath();
       points.forEach((v, i) => {
         const x = (i / Math.max(1, points.length - 1)) * (w - 10) + 5;
         const y = h - 5 - (v / max) * (h - 15);
@@ -441,7 +441,7 @@
       points.forEach((v, i) => {
         const x = (i / Math.max(1, points.length - 1)) * (w - 10) + 5;
         const y = h - 5 - (v / max) * (h - 15);
-        ctx.fillStyle = "#b08d57"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#d9a848"; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
       });
     } catch (e) {}
   }
@@ -1274,7 +1274,8 @@
       grid.innerHTML =
         '<p class="dim" style="grid-column:1/-1;margin-bottom:4px;">보유 기기 ' + data.totalOwned + " / " + data.maxDevices + "</p>" +
         data.devices.map((d) => (
-          '<div class="property-card">' +
+          '<div class="property-card" style="border-left-color:' + d.tierColor + ';">' +
+          '<div>' + propertyIconHtml(d.id, d.tierColor, 28) + "</div>" +
           '<div class="property-card-name">' + escapeHtml(d.name) + "</div>" +
           '<div class="property-card-rate">💾 ' + fmt(d.coinsPerHour) + " 코인/시간</div>" +
           '<div class="property-card-owned">보유 ' + d.owned + "대</div>" +

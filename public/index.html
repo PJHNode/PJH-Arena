@@ -10,25 +10,24 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* ── 절제된 사이버펑크 — 예전엔 네온 초록 글로우가 여기저기 번쩍여서 "아케이드 오락실"
-       느낌이 강했다. 해커/터미널이라는 정체성은 그대로 두되, 톤을 확 낮춰 차분하고 정갈한
-       느낌으로 다시 짰다 — 네온 초록 대신 무광 브론즈(--accent), 밝은 시안 대신 차분한
-       은회색(--cyan), 배경은 거의 검정에 가까운 차콜/네이비. 글로우 대신 헤어라인 테두리를
-       기본기로 삼는다(글로우 자체를 없애진 않고 훨씬 옅게만 남김 — 완전히 밋밋해지지 않게). ── */
+    /* ── 절제된 사이버펑크 v2 — 1차 시도가 배경/테두리뿐 아니라 포인트 컬러까지 다 죽여서
+       전체적으로 탁하다는 피드백을 받았다. 배경·카드·테두리는 여전히 어둡고 차분하게 두되,
+       "빛나고 튀어야 하는 것"(포인트 컬러, 리소스 바, 주요 버튼 글로우)은 다시 선명하고
+       채도 있게 되돌렸다 — 무광 탄광석 브론즈가 아니라 광택 있는 금동색으로. ── */
     --bg: #0a0d12;
     --surface: #12161d;
     --surface-2: #181d26;
     --border: #2a2f38;
     --text: #dadde2;
     --sub: #7c8492;
-    --accent: #b08d57;
-    --accent-glow: rgba(176, 141, 87, 0.22);
-    --accent-contrast: #17130d; /* 브론즈 배경 위에 올라가는 글자색(어두운 웜톤 — 예전 초록 배경용 #052014 대체) */
-    --cyan: #8a95a6;
-    --danger: #b5495f;
-    --hp: #6b84a8;
-    --energy: #6f9678;
-    --stamina: #c67c3e;
+    --accent: #d9a848;
+    --accent-glow: rgba(217, 168, 72, 0.4);
+    --accent-contrast: #201404; /* 밝은 금색 배경 위에 올라가는 어두운 웜톤 글자색 */
+    --cyan: #9fb3c9;
+    --danger: #e05770;
+    --hp: #4f8fd6;
+    --energy: #4fae72;
+    --stamina: #e0973f;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
     --font-serif: Georgia, 'Noto Serif KR', serif;
   }
@@ -57,12 +56,12 @@
      가깝게 만든다(라운드 코너 + 은은한 발광 + 눌림/호버 피드백). 색상 팔레트나 레이아웃은
      그대로 두고 마감만 다듬은 것이라 위험 없이 전체 화면에 일괄 적용된다. ── */
   .btn-primary, .btn-ghost, .btn-danger {
-    border-radius: 3px; transition: filter 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+    border-radius: 3px; transition: filter 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
   }
-  /* 글로우 대신 밝기 변화 + 테두리 색만으로 호버 피드백을 준다(절제된 톤 원칙). */
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
-  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); }
-  .btn-danger:hover:not(:disabled) { filter: brightness(1.12); }
+  /* 기본기는 절제하되(사각·헤어라인), 실제로 누르는 순간엔 확실히 반응하도록 은은한 글로우를 준다. */
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 10px var(--accent-glow); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); box-shadow: 0 0 8px rgba(159,179,201,0.25); }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 10px rgba(224,87,112,0.4); }
   .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.97); }
 
   .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 3px; }
@@ -100,7 +99,7 @@
   .avatar-icon { font-size: 22px; line-height: 1; }
   .exp-wrap { flex: 1; min-width: 160px; max-width: 260px; }
   .exp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; }
-  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; }
+  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; box-shadow: 0 0 6px var(--accent-glow); }
   #expText { font-size: 10px; color: var(--sub); }
   .pocket-tag { font-size: 13px; color: var(--stamina); margin-left: auto; }
   .stat-mini { font-size: 11px; color: var(--sub); }
@@ -135,9 +134,9 @@
   .resource-eta { flex-shrink: 0; font-size: 10px; color: var(--cyan); opacity: 0.85; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
-  .resource-fill.hp { background: var(--hp); }
-  .resource-fill.energy { background: var(--energy); }
-  .resource-fill.stamina { background: var(--stamina); }
+  .resource-fill.hp { background: var(--hp); box-shadow: 0 0 6px rgba(79,143,214,0.55); }
+  .resource-fill.energy { background: var(--energy); box-shadow: 0 0 6px rgba(79,174,114,0.55); }
+  .resource-fill.stamina { background: var(--stamina); box-shadow: 0 0 6px rgba(224,151,63,0.55); }
   .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; flex-wrap: wrap; }
   .stat-plus-btn {
     width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: var(--accent-contrast);
@@ -169,7 +168,7 @@
     background: none; border: none; color: var(--sub); text-align: left; padding: 10px 18px; font-size: 12px;
     border-left: 3px solid transparent; transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
   }
-  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); }
+  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 12px var(--accent-glow); }
   .side-tab:hover { color: var(--text); background: var(--surface-2); }
   .side-section-label {
     font-size: 9px; color: var(--sub); opacity: 0.6; text-transform: uppercase; letter-spacing: 0.1em;
@@ -397,7 +396,7 @@
 
   /* Property */
   .property-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
-  .property-card { background: var(--surface); border: 1px solid var(--border); padding: 14px; text-align: center; }
+  .property-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
   .property-card-name { font-weight: bold; font-size: 12px; margin-bottom: 4px; }
   .property-card-rate { font-size: 11px; color: var(--energy); margin-bottom: 4px; }
   .property-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
@@ -468,7 +467,7 @@
   #authCloseBtn { position: absolute; top: 10px; right: 14px; background: none; border: none; color: var(--sub); font-size: 16px; }
 
   #loggedOutHint { text-align: center; padding: 80px 20px; color: var(--sub); }
-  #loggedOutHint h1 { color: var(--accent); font-size: 32px; font-family: var(--font-serif); letter-spacing: 0.03em; }
+  #loggedOutHint h1 { color: var(--accent); font-size: 32px; font-family: var(--font-serif); letter-spacing: 0.03em; text-shadow: 0 0 20px var(--accent-glow); }
   #loggedOutHint p { font-size: 13px; }
   #loggedOutCta {
     margin-top: 22px; background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold;
