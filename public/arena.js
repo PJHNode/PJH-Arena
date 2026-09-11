@@ -179,8 +179,10 @@
     // 관리자 테스트 계정에게만 Admin 탭을 보여준다.
     $("adminTabBtn").style.display = state.isAdmin ? "" : "none";
 
-    // 환생 직후 30분 부스트(XP/코인 2배) — 남은 시간은 renderResourceEtas의 1초 타이머가 갱신.
-    rebirthBoostUntilAt = state.rebirthBoostActive ? state.rebirthBoostUntil : 0;
+    // 코인/XP 2배 부스트 — 환생 직후 30분, 출석+오늘의 미션 전부 완료 20분. 둘 다 같은
+    // 배지 하나를 공유하고(둘 중 더 늦게 끝나는 시각 기준), 남은 시간은 renderResourceEtas의
+    // 1초 타이머가 갱신한다.
+    boostUntilAt = Math.max(state.rebirthBoostActive ? state.rebirthBoostUntil : 0, state.dailyBoostActive ? state.dailyBoostUntil : 0);
     renderResourceEtas();
 
     $("statPointsText").textContent = state.statPoints;
@@ -384,14 +386,24 @@
         try {
           const r = await api("/daily/attendance", { method: "POST" });
           toast("출석 완료! +" + fmt(r.reward) + " 코인 (연속 " + r.streak + "일)");
-          state.pocketCoins = r.pocketCoins; renderHeader(); renderDailyWidget();
+          state.pocketCoins = r.pocketCoins;
+          if (r.dailyBoostGranted) {
+            state.dailyBoostActive = true; state.dailyBoostUntil = r.dailyBoostUntil;
+            toast("🔥 출석 + 오늘의 미션 전부 완료! 20분간 코인·XP 2배!");
+          }
+          renderHeader(); renderDailyWidget();
         } catch (err) { toast(err.message, true); t.disabled = false; }
       } else if (t.dataset.questClaim) {
         t.disabled = true;
         try {
           const r = await api("/daily/quest-claim", { method: "POST", body: { quest: t.dataset.questClaim } });
           toast("미션 완료! +" + fmt(r.reward) + " 코인");
-          state.pocketCoins = r.pocketCoins; renderHeader(); renderDailyWidget();
+          state.pocketCoins = r.pocketCoins;
+          if (r.dailyBoostGranted) {
+            state.dailyBoostActive = true; state.dailyBoostUntil = r.dailyBoostUntil;
+            toast("🔥 출석 + 오늘의 미션 전부 완료! 20분간 코인·XP 2배!");
+          }
+          renderHeader(); renderDailyWidget();
         } catch (err) { toast(err.message, true); t.disabled = false; }
       }
     });
@@ -874,7 +886,7 @@
 
   // ── HP/Energy/Stamina 완전 회복까지 남은 시간 표시 — renderHeader가 절대 시각을 세팅해두면
   // 1초마다 그 시각까지 남은 시간만 다시 계산해서 보여준다(다음 /state 폴링을 기다릴 필요 없음). ──
-  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, rebirthBoostUntilAt = 0;
+  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, boostUntilAt = 0;
   function renderResourceEtas() {
     const now = Date.now();
     const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
@@ -882,10 +894,10 @@
     if (energyEl) energyEl.textContent = energyFullAt > now ? "완충 " + fmtCountdown(energyFullAt - now) : "";
     if (staminaEl) staminaEl.textContent = staminaFullAt > now ? "완충 " + fmtCountdown(staminaFullAt - now) : "";
 
-    // 환생 직후 30분 부스트(해킹 작업/PvP/행성 XP·코인 2배) 남은 시간.
+    // 코인/XP 2배 부스트(환생 직후 30분 또는 출석+오늘의 미션 전부 완료 20분) 남은 시간.
     const boostTag = $("boostTag");
     if (boostTag) {
-      if (rebirthBoostUntilAt > now) { boostTag.textContent = "🔥 부스트 2배 " + fmtCountdown(rebirthBoostUntilAt - now); boostTag.style.display = ""; }
+      if (boostUntilAt > now) { boostTag.textContent = "🔥 부스트 2배 " + fmtCountdown(boostUntilAt - now); boostTag.style.display = ""; }
       else boostTag.style.display = "none";
     }
   }

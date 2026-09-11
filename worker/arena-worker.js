@@ -397,6 +397,23 @@ function rebirthBoostMult(row) {
   return (row.rebirth_boost_until && Date.now() < row.rebirth_boost_until) ? REBIRTH_BOOST_MULT : 1;
 }
 
+// ── 출석 + 오늘의 미션 3종을 전부(수령까지) 끝내면 20분간 코인/XP 2배 — 환생 부스트와 같은
+// 컬럼 패턴(만료 시각 하나만 저장)이고, 적용 범위도 똑같이 "직접 플레이해서 버는 소득"으로
+// 한정한다(Property 제외 이유도 동일 — 몰아서 수거만 하는 구멍 방지). 두 부스트가 우연히
+// 겹치면(환생 직후 30분 안에 일일 완료) 곱해져서 최대 4배까지 갈 수 있는데, 둘 다 그 시점에
+// 실제로 노력해서 얻은 조건이라 일부러 막지 않았다(클럽 보너스도 이미 곱연산으로 쌓이는 것과
+// 같은 방식). 활성 여부/남은 시간 확인은 rebirthBoostMult와 완전히 대칭이다. ──
+const DAILY_BOOST_MS = 20 * 60 * 1000;
+const DAILY_BOOST_MULT = 2;
+function dailyBoostMult(row) {
+  return (row.daily_boost_until && Date.now() < row.daily_boost_until) ? DAILY_BOOST_MULT : 1;
+}
+// 환생 부스트 + 일일 완료 부스트를 곱해서 쓰는 곳(해킹 작업/PvP 약탈/행성 약탈)에서 공통으로
+// 쓰는 합산 배율.
+function activityBoostMult(row) {
+  return rebirthBoostMult(row) * dailyBoostMult(row);
+}
+
 // ── 특수 연구: 환생 가속 연구 — 환생을 최소 1번은 해본 유저만 연구할 수 있다("리버스를 해야만
 // 연구 가능한 특수 연구" 요청 반영). 레벨당 환생 직후 부스트 창(REBIRTH_BOOST_MS)을 5분씩
 // 늘려준다 — 그 창 안에서 직접 버는 소득만 2배가 되는 기존 룰은 그대로고, 그냥 그 기간이
@@ -935,6 +952,8 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_activity_summary_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 공격 쿨다운(30초) — 마지막으로 공격(PvP/행성/원정 무엇이든)한 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 출석 + 오늘의 미션 3종을 전부 끝내면 20분간 켜지는 코인/XP 2배 부스트의 만료 시각.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN daily_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
   // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
@@ -967,6 +986,11 @@ async function ensureDailyProgress(env, userId) {
     row = await env.DB.prepare("SELECT * FROM arena_daily_progress WHERE user_id = ? AND date = ?").bind(userId, date).first();
   }
   return row;
+}
+// 오늘의 미션 3종을 전부 수령했는지 — "출석 + 미션 전부 완료 시 20분 부스트" 조건의 절반.
+async function allDailyQuestsClaimed(env, userId) {
+  const progress = await ensureDailyProgress(env, userId);
+  return Object.keys(DAILY_QUESTS).every(function (key) { return !!progress[key + "_claimed"]; });
 }
 // 미션 카운터 +1 — 실패해도(테이블이 아직 없다거나) 본 기능(전투/작업/구매)을 막으면 안 되므로
 // 에러는 그냥 삼킨다.
@@ -1237,6 +1261,8 @@ function publicState(row, combat) {
     isAdmin: row.user_id === ADMIN_USER_ID,
     rebirthBoostActive: rebirthBoostMult(row) > 1,
     rebirthBoostUntil: row.rebirth_boost_until || 0,
+    dailyBoostActive: dailyBoostMult(row) > 1,
+    dailyBoostUntil: row.daily_boost_until || 0,
     // 칭호 텍스트는 저장하지 않고 매번 ACHIEVEMENTS 정의에서 새로 읽는다 — 장착한 뒤 이름이
     // 바뀌어도 안 꼬이고, 업적 자체가 삭제되면 자연히 칭호도 조용히 사라진다.
     equippedTitle: (row.equipped_title_id && ACHIEVEMENTS[row.equipped_title_id]) ? ACHIEVEMENTS[row.equipped_title_id].title : null,
@@ -1394,7 +1420,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
       const elapsedMs = Math.min(now - planet.last_collect, PROPERTY_MAX_ACCRUAL_MS);
       lootCoins = Math.floor(planet.coins_per_hour * (elapsedMs / 3600000));
     }
-    lootCoins = Math.round(lootCoins * rebirthBoostMult(attacker)); // 환생 직후 30분 약탈 2배
+    lootCoins = Math.round(lootCoins * activityBoostMult(attacker)); // 환생 직후 30분/일일 완료 20분 약탈 2배
     attacker.pocket_coins += lootCoins;
 
     if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
@@ -1652,7 +1678,7 @@ export default {
 
         row.energy -= tier.energyCost;
         const clubBonus = await clubCoinBonusMult(env, user.userId);
-        const boostMult = rebirthBoostMult(row);
+        const boostMult = activityBoostMult(row);
         const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
         row.pocket_coins += coinsGained;
         const xpGained = tier.xp * boostMult;
@@ -1834,10 +1860,10 @@ export default {
           coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * plunderMult);
           coinsDelta = Math.min(coinsDelta, defender.pocket_coins);
           defender.pocket_coins -= coinsDelta;
-          // 클럽 보너스/환생 부스트 둘 다 방어자가 더 잃게 만드는 게 아니라 공격자가
+          // 클럽 보너스/부스트(환생·일일완료) 둘 다 방어자가 더 잃게 만드는 게 아니라 공격자가
           // "더 받는" 쪽으로만 적용한다(방어자는 공격자 사정과 아무 상관이 없으므로).
           const clubBonus = await clubCoinBonusMult(env, attacker.user_id);
-          attackerGain = Math.round(coinsDelta * clubBonus * rebirthBoostMult(attacker));
+          attackerGain = Math.round(coinsDelta * clubBonus * activityBoostMult(attacker));
           attacker.pocket_coins += attackerGain;
           defender.hp = clamp(defender.hp - PVP_WIN_DEF_HP_LOSS, 0, defender.max_hp);
           // 완전 승리(3판 전승)면 공격자 HP 손실 없음 — 방어자 쪽 피해는 그대로(패배 페널티라
@@ -2961,9 +2987,19 @@ export default {
         const streak = row.last_attendance_date === yesterday ? row.attendance_streak + 1 : 1;
         const reward = ATTENDANCE_BASE_REWARD + Math.min(streak, ATTENDANCE_STREAK_BONUS_CAP_DAYS) * ATTENDANCE_STREAK_BONUS;
         row.pocket_coins += reward;
-        await env.DB.prepare("UPDATE arena_users SET pocket_coins=?, last_attendance_date=?, attendance_streak=? WHERE user_id=?")
-          .bind(row.pocket_coins, today, streak, row.user_id).run();
-        return json({ ok: true, reward: reward, streak: streak, pocketCoins: row.pocket_coins });
+        row.last_attendance_date = today;
+        row.attendance_streak = streak;
+        // 미션 3종을 이미(출석보다 먼저) 다 수령해 둔 상태에서 지금 막 출석까지 마쳤다면 —
+        // "출석 + 미션 전부 완료" 조건이 방금 완성된 것이므로 여기서 부스트를 켠다(순서 무관하게
+        // 어느 쪽이 마지막이든 그 시점에 켜지도록 두 엔드포인트에 똑같이 체크를 넣었다).
+        let dailyBoostGranted = false;
+        if (await allDailyQuestsClaimed(env, user.userId)) {
+          row.daily_boost_until = Date.now() + DAILY_BOOST_MS;
+          dailyBoostGranted = true;
+        }
+        await env.DB.prepare("UPDATE arena_users SET pocket_coins=?, last_attendance_date=?, attendance_streak=?, daily_boost_until=? WHERE user_id=?")
+          .bind(row.pocket_coins, row.last_attendance_date, row.attendance_streak, row.daily_boost_until || 0, row.user_id).run();
+        return json({ ok: true, reward: reward, streak: streak, pocketCoins: row.pocket_coins, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
       }
 
       // ── POST /daily/quest-claim { quest } — 목표치를 채운 미션 하나를 수령. ──
@@ -2978,11 +3014,22 @@ export default {
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         row.pocket_coins += q.reward;
+        const today = kstDateString();
         await env.DB.batch([
           env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
-          env.DB.prepare("UPDATE arena_daily_progress SET " + questKey + "_claimed = 1 WHERE user_id=? AND date=?").bind(user.userId, kstDateString()),
+          env.DB.prepare("UPDATE arena_daily_progress SET " + questKey + "_claimed = 1 WHERE user_id=? AND date=?").bind(user.userId, today),
         ]);
-        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins });
+
+        // 이 미션이 오늘의 마지막 미완료 미션이었고, 출석도 이미 했다면 — "출석 + 미션 전부
+        // 완료" 조건 완성. 다른 두 미션이 이미 claimed였는지는 방금 UPDATE 반영 후 다시
+        // 조회해서 확인한다(이 요청으로 막 claimed된 것까지 포함해서 정확히 셈).
+        let dailyBoostGranted = false;
+        if (row.last_attendance_date === today && await allDailyQuestsClaimed(env, user.userId)) {
+          row.daily_boost_until = Date.now() + DAILY_BOOST_MS;
+          await env.DB.prepare("UPDATE arena_users SET daily_boost_until=? WHERE user_id=?").bind(row.daily_boost_until, row.user_id).run();
+          dailyBoostGranted = true;
+        }
+        return json({ ok: true, reward: q.reward, pocketCoins: row.pocket_coins, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
       }
 
       if (request.method === "GET" && path === "/property") {
