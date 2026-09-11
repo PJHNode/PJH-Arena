@@ -4,22 +4,33 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PJH Arena</title>
+<!-- 절제된 사이버펑크 리뉴얼 — 제목류에 쓰는 세리프(--font-serif)가 한글도 정갈하게 나오도록
+     Noto Serif KR을 불러온다(시스템에 없으면 Georgia/기본 serif로 자연히 대체됨). -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #05070a;
-    --surface: #0d1117;
-    --surface-2: #151b23;
-    --border: #23303d;
-    --text: #dcefe8;
-    --sub: #6d8590;
-    --accent: #00ff9d;
-    --accent-glow: rgba(0, 255, 157, 0.35);
-    --cyan: #00d4ff;
-    --danger: #ff3d68;
-    --hp: #2b7fff;
-    --energy: #00e07a;
-    --stamina: #ffb020;
+    /* ── 절제된 사이버펑크 — 예전엔 네온 초록 글로우가 여기저기 번쩍여서 "아케이드 오락실"
+       느낌이 강했다. 해커/터미널이라는 정체성은 그대로 두되, 톤을 확 낮춰 차분하고 정갈한
+       느낌으로 다시 짰다 — 네온 초록 대신 무광 브론즈(--accent), 밝은 시안 대신 차분한
+       은회색(--cyan), 배경은 거의 검정에 가까운 차콜/네이비. 글로우 대신 헤어라인 테두리를
+       기본기로 삼는다(글로우 자체를 없애진 않고 훨씬 옅게만 남김 — 완전히 밋밋해지지 않게). ── */
+    --bg: #0a0d12;
+    --surface: #12161d;
+    --surface-2: #181d26;
+    --border: #2a2f38;
+    --text: #dadde2;
+    --sub: #7c8492;
+    --accent: #b08d57;
+    --accent-glow: rgba(176, 141, 87, 0.22);
+    --accent-contrast: #17130d; /* 브론즈 배경 위에 올라가는 글자색(어두운 웜톤 — 예전 초록 배경용 #052014 대체) */
+    --cyan: #8a95a6;
+    --danger: #b5495f;
+    --hp: #6b84a8;
+    --energy: #6f9678;
+    --stamina: #c67c3e;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
+    --font-serif: Georgia, 'Noto Serif KR', serif;
   }
   /* ── 환생 마스터(10회, 최고 등급) 전용 사이트 테마 — body.theme-ascended가 붙으면 초록
      사이버펑크 팔레트 대신 자수정/마젠타 팔레트로 전체가 바뀐다. 레이아웃은 그대로 두고
@@ -33,7 +44,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono);
     min-height: 100vh; display: flex; flex-direction: column; line-height: 1.5;
-    background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(0,255,157,0.05), transparent 60%);
+    background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(176,141,87,0.04), transparent 60%);
     background-attachment: fixed;
   }
   body.theme-ascended { background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(255,46,196,0.09), transparent 60%); }
@@ -46,29 +57,27 @@
      가깝게 만든다(라운드 코너 + 은은한 발광 + 눌림/호버 피드백). 색상 팔레트나 레이아웃은
      그대로 두고 마감만 다듬은 것이라 위험 없이 전체 화면에 일괄 적용된다. ── */
   .btn-primary, .btn-ghost, .btn-danger {
-    border-radius: 4px; transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
+    border-radius: 3px; transition: filter 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
   }
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px var(--accent-glow); }
-  .btn-ghost:hover:not(:disabled) { background: rgba(0,212,255,0.12); box-shadow: 0 0 8px rgba(0,212,255,0.25); }
-  .btn-danger:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px rgba(255,61,104,0.4); }
-  .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.96); }
+  /* 글로우 대신 밝기 변화 + 테두리 색만으로 호버 피드백을 준다(절제된 톤 원칙). */
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.12); }
+  .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.97); }
 
-  .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 5px; }
-  .exp-fill, .resource-fill, .club-xp-fill, .enchant-level-fill { border-radius: 5px; }
-  .exp-fill { box-shadow: 0 0 6px var(--accent-glow); }
-  .resource-fill.hp { box-shadow: 0 0 6px rgba(43,127,255,0.6); }
-  .resource-fill.energy { box-shadow: 0 0 6px rgba(0,224,122,0.6); }
-  .resource-fill.stamina { box-shadow: 0 0 6px rgba(255,176,32,0.6); }
+  .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 3px; }
+  .exp-fill, .resource-fill, .club-xp-fill, .enchant-level-fill { border-radius: 3px; }
 
   .job-card, .shop-card, .achievement-card, .enchant-card, .diamond-exchange-card, .research-node,
   .trade-composer, .trade-row, .club-header, .club-browse-card, .club-create-card, .daily-widget,
   .admin-card, .profile-card, .profile-slot, .profile-edit, .bot-card, .bot-recruit-card,
   .property-card, .galaxy-empire, .planet-card, .bank-card, .club-chat-box {
-    border-radius: 6px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    border-radius: 4px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
   }
+  /* 카드 호버는 색 글로우 없이 아주 은은한 중립 그림자로만 살짝 들어올린다(고풍스럽고 담백하게). */
   .job-card:hover, .shop-card:hover, .achievement-card:hover, .enchant-card:hover, .bot-card:hover,
   .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover {
-    transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); border-color: #3a4150;
   }
   .pvp-row, .lb-row, .log-row, .inv-row, .club-member-row, .club-relation-row, .daily-quest-row {
     transition: background 0.12s ease;
@@ -99,7 +108,7 @@
   .rebirth-tag { font-size: 11px; color: #ffd700; border: 1px solid #ffd700; padding: 2px 8px; }
   .title-tag { font-size: 11px; color: var(--cyan); border: 1px solid var(--cyan); padding: 2px 8px; }
   .title-badge { color: var(--cyan); font-weight: bold; }
-  .rebirth-btn { font-size: 11px; background: linear-gradient(135deg, #ffd700, #ff8a3d); border: none; color: #052014; font-weight: bold; padding: 6px 12px; }
+  .rebirth-btn { font-size: 11px; background: linear-gradient(135deg, #ffd700, #ff8a3d); border: none; color: var(--accent-contrast); font-weight: bold; padding: 6px 12px; }
   .rebirth-btn:disabled { opacity: 0.5; }
   .boost-tag { font-size: 11px; color: var(--danger); border: 1px solid var(--danger); padding: 2px 8px; font-weight: bold; animation: boostPulse 1.5s ease-in-out infinite; }
   @keyframes boostPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -107,7 +116,7 @@
   .nav-auth button {
     background: transparent; border: 1px solid var(--accent); color: var(--accent); font-size: 12px; padding: 6px 14px; font-weight: bold;
   }
-  .nav-auth button:hover { background: var(--accent); color: #052014; }
+  .nav-auth button:hover { background: var(--accent); color: var(--accent-contrast); }
   #userLabel { font-size: 12px; color: var(--sub); display: none; }
 
   /* ── 통합 위젯 바 ── */
@@ -131,7 +140,7 @@
   .resource-fill.stamina { background: var(--stamina); }
   .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; flex-wrap: wrap; }
   .stat-plus-btn {
-    width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: #052014;
+    width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: var(--accent-contrast);
     border: none; font-weight: bold; font-size: 12px; flex-shrink: 0;
   }
   .stat-plus-btn:disabled { opacity: 0.25; }
@@ -145,7 +154,7 @@
      서버 전체에 켜져 있는 동안 로그인/로그아웃 여부와 무관하게 항상 눈에 띄게 알린다. ── */
   #globalEventBanner {
     display: none; text-align: center; font-size: 13px; font-weight: bold; padding: 8px;
-    background: linear-gradient(90deg, var(--accent), var(--cyan)); color: #052014;
+    background: linear-gradient(90deg, var(--accent), var(--cyan)); color: var(--accent-contrast);
     background-size: 200% 100%; animation: eventBannerShift 4s ease-in-out infinite;
   }
   @keyframes eventBannerShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
@@ -160,7 +169,7 @@
     background: none; border: none; color: var(--sub); text-align: left; padding: 10px 18px; font-size: 12px;
     border-left: 3px solid transparent; transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
   }
-  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 14px rgba(0,255,157,0.08); }
+  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); }
   .side-tab:hover { color: var(--text); background: var(--surface-2); }
   .side-section-label {
     font-size: 9px; color: var(--sub); opacity: 0.6; text-transform: uppercase; letter-spacing: 0.1em;
@@ -170,7 +179,7 @@
 
   .content { flex: 1; padding: 20px; overflow-y: auto; }
   .tab-panel { display: none; }
-  .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
+  .panel-title { font-size: 15px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.03em; font-family: var(--font-serif); font-weight: bold; }
   .panel-subtitle { font-size: 12px; color: var(--sub); margin: 22px 0 8px; font-weight: bold; }
 
   .accent-text { color: var(--accent); }
@@ -257,7 +266,7 @@
 
   /* Club */
   .club-header { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); padding: 16px; margin-bottom: 16px; }
-  .club-header-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
+  .club-header-title { font-size: 17px; font-weight: bold; margin-bottom: 4px; font-family: var(--font-serif); }
   .club-header-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
   .club-header-actions { display: flex; gap: 8px; }
   .club-section-title { font-size: 12px; color: var(--sub); font-weight: bold; margin: 18px 0 8px; }
@@ -305,7 +314,7 @@
   .profile-card { background: var(--surface); border: 2px solid var(--border); padding: 20px; margin-bottom: 18px; position: relative; }
   .profile-card.rebirth-glow { animation: profileGlow 2s ease-in-out infinite; }
   @keyframes profileGlow { 0%, 100% { box-shadow: 0 0 8px rgba(255,215,0,0.4); } 50% { box-shadow: 0 0 22px rgba(255,215,0,0.8); } }
-  .profile-card-name { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
+  .profile-card-name { font-size: 19px; font-weight: bold; margin-bottom: 6px; font-family: var(--font-serif); }
   .profile-card-name .rebirth-badge { color: #ffd700; font-size: 12px; border: 1px solid #ffd700; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
   .rebirth-name-badge { color: #ffd700; font-size: 10px; font-weight: bold; border: 1px solid #ffd700; padding: 1px 6px; white-space: nowrap; }
 
@@ -443,7 +452,7 @@
   .log-row .neg { color: var(--danger); }
 
   /* 버튼 공통 */
-  .btn-primary { background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 8px 14px; font-size: 11px; }
+  .btn-primary { background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold; padding: 8px 14px; font-size: 11px; }
   .btn-ghost { background: transparent; border: 1px solid var(--cyan); color: var(--cyan); padding: 7px 12px; font-size: 11px; }
   .btn-danger { background: var(--danger); border: none; color: #fff; padding: 7px 12px; font-size: 11px; }
 
@@ -455,14 +464,14 @@
   .auth-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
   .auth-box input { width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; padding: 9px 10px; margin-bottom: 8px; }
   .auth-box .err { font-size: 11px; color: var(--danger); min-height: 14px; margin: 0 0 8px; }
-  .auth-box .submit-btn { width: 100%; background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 10px; }
+  .auth-box .submit-btn { width: 100%; background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold; padding: 10px; }
   #authCloseBtn { position: absolute; top: 10px; right: 14px; background: none; border: none; color: var(--sub); font-size: 16px; }
 
   #loggedOutHint { text-align: center; padding: 80px 20px; color: var(--sub); }
-  #loggedOutHint h1 { color: var(--accent); font-size: 30px; text-shadow: 0 0 18px var(--accent-glow); letter-spacing: 0.06em; }
+  #loggedOutHint h1 { color: var(--accent); font-size: 32px; font-family: var(--font-serif); letter-spacing: 0.03em; }
   #loggedOutHint p { font-size: 13px; }
   #loggedOutCta {
-    margin-top: 22px; background: var(--accent); color: #052014; border: none; font-weight: bold;
+    margin-top: 22px; background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold;
     font-size: 13px; padding: 12px 28px; letter-spacing: 0.03em;
   }
   #loggedOutCta:hover { box-shadow: 0 0 16px var(--accent-glow); }
@@ -496,7 +505,7 @@
   .timing-wrap { text-align: center; }
   .timing-round-label { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
   .timing-track { position: relative; height: 30px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 14px; overflow: hidden; }
-  .timing-sweetspot { position: absolute; top: 0; bottom: 0; background: rgba(0,255,157,0.25); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+  .timing-sweetspot { position: absolute; top: 0; bottom: 0; background: var(--accent-glow); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
   .timing-marker { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--danger); }
   .timing-stop-btn { width: 100%; background: var(--danger); color: #fff; border: none; font-weight: bold; padding: 12px; font-size: 13px; letter-spacing: 0.05em; }
   .round-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; }
@@ -519,7 +528,7 @@
   .attack-result-title.win { color: var(--energy); }
   .attack-result-title.lose { color: var(--danger); }
   .attack-result-detail { font-size: 11px; color: var(--sub); text-align: center; margin-bottom: 14px; }
-  .attack-close-btn { width: 100%; background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 10px; }
+  .attack-close-btn { width: 100%; background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold; padding: 10px; }
 
   /* Stat upgrade modal */
   #statModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; z-index: 1100; }
@@ -532,7 +541,7 @@
   .stat-upgrade-value { color: var(--sub); }
   .stat-upgrade-value b { color: var(--accent); }
   .stat-upgrade-cost { color: var(--stamina); font-weight: bold; white-space: nowrap; }
-  .stat-upgrade-row button { background: var(--accent); color: #052014; border: none; font-weight: bold; padding: 6px 10px; font-size: 10px; }
+  .stat-upgrade-row button { background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold; padding: 6px 10px; font-size: 10px; }
 
   /* Toast */
   #toastLayer { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
