@@ -63,7 +63,19 @@ const HP_REGEN_PER_TICK = 10, HP_TICK_MS = 5 * 60 * 1000; // 5분당 +10(최대�
 function baseAtkFor(level) { return 10 + level * 2; }
 function baseDefFor(level) { return 10 + level * 2; }
 
-function nextExpFor(level) { return level * 100; }
+// 80레벨까지는 기존 그대로(level*100, 선형)라 초중반 성장감은 안 바뀐다. 81~100 구간만
+// 3제곱으로 요구량이 급격히 불어나 100레벨에서 기존 대비 10배(10,000 → 100,000)까지
+// 커진다 — Hacking Jobs 무한 반복 악용(레벨업 시 자원 전액 회복 → 즉시 재실행) 건 이후
+// "특히 90~100은 jobs로도 쉽게 얻지 못하게" 요청 반영. nextExpFor는 jobs뿐 아니라
+// PvP/행성/업적 등 모든 XP 획득의 공통 기준이라, 여기 하나만 바꾸면 어떤 수단으로도
+// 90~100 구간을 순식간에 뚫을 수 없게 된다.
+function nextExpFor(level) {
+  const base = level * 100;
+  if (level <= 80) return base;
+  const t = Math.min(1, (level - 80) / 20); // 레벨 80→0, 100→1로 정규화
+  const mult = 1 + Math.pow(t, 3) * 9; // 80→1배, 90→약 2.1배, 100→10배
+  return Math.round(base * mult);
+}
 
 // ── 환생(Rebirth) — 레벨 100에서 레벨/XP/스탯 포인트(HP·에너지·스태미나 최대치 포함)를
 // 전부 기본값으로 되돌리는 대신, 회당 ATK/DEF에 영구 +1%가 붙는다(최대 10회, +10%에서 상한).
