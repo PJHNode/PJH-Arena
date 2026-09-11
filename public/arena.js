@@ -23,6 +23,10 @@
     secret:    { label: "SECRET",    icon: "🗝️" },
     forbidden: { label: "FORBIDDEN", icon: "☠️" },
     abyssal:   { label: "ABYSSAL",   icon: "🕳️" },
+    voidwalker:  { label: "VOIDWALKER",  icon: "🌌" },
+    singularity: { label: "SINGULARITY", icon: "🌀" },
+    omega:       { label: "OMEGA",       icon: "🌑" },
+    genesis:     { label: "GENESIS",     icon: "🌠" },
   };
   // 서버 상수와 동일한 값(표시용) — 실제 검증/보상 롤은 항상 서버에서 다시 계산한다.
   const JOB_TIERS = {
@@ -34,12 +38,16 @@
     high:      { minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
     fortress:  { minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
     master:    { minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
-    apex:      { minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
-    legendary: { minLevel: 35, energyCost: 50, coinMin: 37500,  coinMax: 51000,  xp: 260 },
-    mythic:    { minLevel: 45,  energyCost: 50, coinMin: 60000,  coinMax: 82500,  xp: 380 },
-    secret:    { minLevel: 60,  energyCost: 50, coinMin: 97500,  coinMax: 135000, xp: 550 },
-    forbidden: { minLevel: 75,  energyCost: 50, coinMin: 157500, coinMax: 217500, xp: 800 },
-    abyssal:   { minLevel: 100, energyCost: 50, coinMin: 255000, coinMax: 352500, xp: 1200 },
+    apex:      { minLevel: 28, energyCost: 58, coinMin: 22500, coinMax: 30000, xp: 180 },
+    legendary: { minLevel: 35, energyCost: 66, coinMin: 37500,  coinMax: 51000,  xp: 260 },
+    mythic:    { minLevel: 45,  energyCost: 74, coinMin: 60000,  coinMax: 82500,  xp: 380 },
+    secret:    { minLevel: 60,  energyCost: 82, coinMin: 97500,  coinMax: 135000, xp: 550 },
+    forbidden: { minLevel: 75,  energyCost: 90, coinMin: 157500, coinMax: 217500, xp: 800 },
+    abyssal:   { minLevel: 100, energyCost: 98, coinMin: 255000, coinMax: 352500, xp: 1200 },
+    voidwalker:  { minLevel: 150, energyCost: 110, coinMin: 400000,  coinMax: 560000,  xp: 1900 },
+    singularity: { minLevel: 200, energyCost: 124, coinMin: 650000,  coinMax: 900000,  xp: 3050 },
+    omega:       { minLevel: 250, energyCost: 140, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
+    genesis:     { minLevel: 300, energyCost: 160, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -238,21 +246,28 @@
         const current = d.current(state);
         const cost = statUpgradeCostPreview(d.base, current);
         const canAfford = state.statPoints >= cost;
+        // 일괄 강화 — "+50 이렇게 일괄로도 할 수 있게" 요청 반영. +1/+10/+50/MAX 버튼을
+        // 나란히 두고, 실제 몇 회가 적용됐는지는 서버가 돌려주는 applied로 정확히 알려준다
+        // (포인트가 중간에 떨어지면 그만큼만 적용되고 나머지는 자동으로 무시됨).
+        const qtyButtons = [1, 10, 50].map((n) =>
+          '<button data-upgrade-stat="' + d.key + '" data-qty="' + n + '"' + (canAfford ? "" : " disabled") + ">+" + n + "</button>"
+        ).join("") + '<button data-upgrade-stat="' + d.key + '" data-qty="max"' + (canAfford ? "" : " disabled") + ">MAX</button>";
         return (
           '<div class="stat-upgrade-row">' +
           '<span class="stat-upgrade-label">' + d.label + "</span>" +
           '<span class="stat-upgrade-value">' + current + " → <b>" + (current + d.increment) + "</b> (+" + d.increment + ")</span>" +
           '<span class="stat-upgrade-cost">' + cost + "P</span>" +
-          '<button data-upgrade-stat="' + d.key + '"' + (canAfford ? "" : " disabled") + ">강화</button>" +
+          '<div class="stat-upgrade-qty-row">' + qtyButtons + "</div>" +
           "</div>"
         );
       }).join("");
     body.querySelectorAll("button[data-upgrade-stat]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         btn.disabled = true;
+        const qty = btn.dataset.qty === "max" ? 1000 : parseInt(btn.dataset.qty, 10);
         try {
-          const r = await api("/stats/upgrade", { method: "POST", body: { stat: btn.dataset.upgradeStat } });
-          toast("스탯 강화 완료! (-" + r.cost + " 포인트)");
+          const r = await api("/stats/upgrade", { method: "POST", body: { stat: btn.dataset.upgradeStat, qty: qty } });
+          toast("스탯 강화 완료! (" + r.applied + "회, -" + r.cost + " 포인트)");
           state = r.state; renderHeader(); renderStatModal();
         } catch (e) { toast(e.message, true); btn.disabled = false; }
       });

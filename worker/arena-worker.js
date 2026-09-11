@@ -159,16 +159,25 @@ const JOB_TIERS = {
   high:      { label: "High",      minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
   fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
   master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
-  apex:      { label: "Apex",      minLevel: 28, energyCost: 50, coinMin: 22500, coinMax: 30000, xp: 180 },
-  legendary: { label: "Legendary", minLevel: 35, energyCost: 50, coinMin: 37500,  coinMax: 51000,  xp: 260 },
   // 레벨 35(legendary) 이후로 갈 곳이 없었다 — 아이템 등급 이름을 그대로 가져와서(장비가 mythic
   // ~abyssal까지 있는데 작업은 legendary에서 끝나는 게 안 맞았음) 레벨 100(환생 조건과 동일)까지
   // 이어지도록 4단계를 더 얹었다. 성장률은 legendary까지의 패턴(단계마다 최대 보상 ~1.5~1.7배)을
-  // 그대로 이어간다 — energyCost는 master부터 이미 상한(50)이라 더 안 올린다.
-  mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 50, coinMin: 60000,  coinMax: 82500,  xp: 380 },
-  secret:    { label: "Secret",    minLevel: 60,  energyCost: 50, coinMin: 97500,  coinMax: 135000, xp: 550 },
-  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 50, coinMin: 157500, coinMax: 217500, xp: 800 },
-  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 50, coinMin: 255000, coinMax: 352500, xp: 1200 },
+  // 그대로 이어간다. energyCost는 원래 master(50)부터 쭉 상한이었는데 "뒤로 갈수록 에너지가
+  // 더 들어야지 왜 다 50이냐"는 피드백 반영 — apex부터 다시 계속 오르도록 고쳤다.
+  apex:      { label: "Apex",      minLevel: 28, energyCost: 58, coinMin: 22500, coinMax: 30000, xp: 180 },
+  legendary: { label: "Legendary", minLevel: 35, energyCost: 66, coinMin: 37500,  coinMax: 51000,  xp: 260 },
+  mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 74, coinMin: 60000,  coinMax: 82500,  xp: 380 },
+  secret:    { label: "Secret",    minLevel: 60,  energyCost: 82, coinMin: 97500,  coinMax: 135000, xp: 550 },
+  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 90, coinMin: 157500, coinMax: 217500, xp: 800 },
+  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 98, coinMin: 255000, coinMax: 352500, xp: 1200 },
+  // 레벨 상한이 없어져서(100 넘어서도 계속 성장, 300부터는 제곱적으로 폭증 — nextExpFor 참고)
+  // abyssal(레벨100) 이후로 200레벨어치나 되는 구간 내내 똑같은 작업만 반복하는 게 심심하다는
+  // 피드백 반영 — 새 마일스톤 레벨(150/200/250/300, 후자 둘은 각각 초월적/궁극의 해커 업적과
+  // 겹침)에 맞춰 4단계를 더 얹었다. energyCost/coin/xp 모두 같은 ~1.5~1.6배 성장률로 계속 이어감.
+  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 110, coinMin: 400000,  coinMax: 560000,  xp: 1900 },
+  singularity: { label: "Singularity", minLevel: 200, energyCost: 124, coinMin: 650000,  coinMax: 900000,  xp: 3050 },
+  omega:       { label: "Omega",       minLevel: 250, energyCost: 140, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
+  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 160, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -1960,20 +1969,30 @@ export default {
         if (!cfg) return json({ error: "알 수 없는 스탯입니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const currentMax = row[cfg.column];
-        const cost = statUpgradeCost(stat, currentMax);
-        if (row.stat_points < cost) return json({ error: "스탯 포인트가 부족합니다. (필요 " + cost + ")" }, 400);
-
-        row.stat_points -= cost;
-        row[cfg.column] = currentMax + cfg.increment;
-        row[stat] = Math.min(row[cfg.column], row[stat] + cfg.increment);
+        // qty — "+50 이렇게 일괄로도 할 수 있게" 요청 반영. 강화할수록(3배/4배/5배 넘을 때마다)
+        // 비용이 오르므로 매 회차마다 다시 계산해야 한다 — 포인트가 중간에 떨어지면 그 자리에서
+        // 멈추고 그때까지 적용된 만큼만 반영한다(1개도 못 사면 에러). 1000회 상한은 실수/오작동
+        // 방지용 안전장치일 뿐 실제로 그만큼 살 수 있는 유저는 없다.
+        const qty = Math.max(1, Math.min(1000, parseInt(body.qty, 10) || 1));
+        let applied = 0, totalCost = 0;
+        for (let i = 0; i < qty; i++) {
+          const currentMax = row[cfg.column];
+          const cost = statUpgradeCost(stat, currentMax);
+          if (row.stat_points < cost) break;
+          row.stat_points -= cost;
+          row[cfg.column] = currentMax + cfg.increment;
+          row[stat] = Math.min(row[cfg.column], row[stat] + cfg.increment);
+          totalCost += cost;
+          applied++;
+        }
+        if (applied === 0) return json({ error: "스탯 포인트가 부족합니다. (필요 " + statUpgradeCost(stat, row[cfg.column]) + ")" }, 400);
 
         await env.DB.prepare(
           "UPDATE arena_users SET stat_points=?, " + cfg.column + "=?, " + stat + "=? WHERE user_id=?"
         ).bind(row.stat_points, row[cfg.column], row[stat], row.user_id).run();
 
         const combat = await totalCombatStats(env, row);
-        return json({ ok: true, cost: cost, state: publicState(row, combat) });
+        return json({ ok: true, applied: applied, cost: totalCost, state: publicState(row, combat) });
       }
 
       // ── POST /rebirth — 레벨 100 이상이어야 가능. 레벨/XP/스탯 포인트(HP·에너지·스태미나

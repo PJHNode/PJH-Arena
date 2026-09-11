@@ -603,6 +603,10 @@
   .stat-upgrade-value b { color: var(--accent); }
   .stat-upgrade-cost { color: var(--stamina); font-weight: bold; white-space: nowrap; }
   .stat-upgrade-row button { background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold; padding: 6px 10px; font-size: 10px; }
+  /* 스탯 일괄 강화 — "+50 이렇게 일괄로 할 수도 있게" 요청 반영. 기존 버튼 하나 자리에
+     +1/+10/+50/MAX 네 개를 작게 나눠 담는다(좁은 화면에선 줄바꿈되도록 flex-wrap). */
+  .stat-upgrade-qty-row { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .stat-upgrade-qty-row button { padding: 6px 8px; }
 
   /* Toast */
   #toastLayer { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
