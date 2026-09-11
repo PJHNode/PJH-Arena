@@ -383,6 +383,59 @@ async function clubCoinBonusMult(env, userId) {
   return 1 + Math.min(clubLevelForXp(club.xp), CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL;
 }
 
+// ── 클럽 레이드(Co-op Boss) — 클럽원 전원이 힘을 합쳐 거대 HP를 가진 보스 하나를 같이
+// 깎는 협동 콘텐츠. 클럽당 한 번에 하나만 진행되고(arena_club_raids.status='active'),
+// 각자 totalCombatStats의 ATK로 데미지를 넣는다(장비/봇/환생 등 기존 전투력 시스템을 그대로
+// 재사용 — 새 전투 스탯 체계를 안 만들어도 됨). 보스가 죽으면 기여 데미지 비율대로 코인·EXP를
+// 나눠 받고, 클럽 자체에도 소량의 클럽 경험치가 들어간다. "작고 상한 있게" 원칙과 달리 이건
+// 협동 콘텐츠 특성상 상한을 안 두는 대신, 클럽당 재도전 대기시간(RAID_COOLDOWN_MS)으로
+// 무한 반복을 막는다. ──
+const RAID_BASE_HP = 200000;
+const RAID_HP_PER_MEMBER = 100000;
+const RAID_HP_PER_CLUB_LEVEL = 30000;
+const RAID_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 처치 후 클럽당 20시간 대기
+const RAID_ATTACK_COOLDOWN_MS = 10 * 1000; // 매크로 방지용 최소 간격(PvP 쿨다운과는 별개)
+const RAID_STAMINA_COST = 2;
+const RAID_ATTACK_POWER_MULT = 10; // 데미지 = ATK * 이 배수 * randMult()
+const RAID_COIN_PER_HP = 3; // 총 보상 코인 풀 = maxHp * 이 값, 기여 데미지 비율대로 분배
+const RAID_XP_PCT_AT_FULL_CONTRIBUTION = 0.30; // 기여도 100%(=혼자 다 깼음) 기준 nextExpFor의 30%
+const RAID_CLUB_XP_PER_HP = 0.01; // 처치 시 클럽 경험치 = maxHp * 이 값
+const RAID_BOSS_NAMES = ["제로데이 리바이어던", "블랙아이스 콜로서스", "고스트 프로토콜 AI", "옵시디언 방화벽 수호자", "심연의 루트킷"];
+
+function raidMaxHpFor(memberCount, clubLevel) {
+  return RAID_BASE_HP + memberCount * RAID_HP_PER_MEMBER + clubLevel * RAID_HP_PER_CLUB_LEVEL;
+}
+
+// 보스 처치 시점에 호출 — 참여자별 기여 데미지 비율대로 코인 풀을 나누고, 각자 자기 레벨
+// 기준 XP도 지분만큼 받는다(레벨이 제각각이라도 공평하게 "내 다음 레벨의 몇 %"로 계산).
+async function settleRaid(env, raidId, clubId, maxHp) {
+  const damageRes = await env.DB.prepare("SELECT user_id, user_name, damage, hits FROM arena_club_raid_damage WHERE raid_id = ?").bind(raidId).all();
+  const participants = damageRes.results;
+  const totalDamage = participants.reduce(function (sum, p) { return sum + p.damage; }, 0) || 1;
+  const eventMult = globalEventMult(); // 전역 이벤트(코인·EXP 2배) 기간이면 레이드 보상도 함께 2배
+  const coinPool = Math.round(maxHp * RAID_COIN_PER_HP * eventMult);
+  const writes = [];
+  const summary = [];
+  for (const p of participants) {
+    const share = p.damage / totalDamage;
+    const coinShare = Math.round(coinPool * share);
+    const row = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.user_id).first();
+    if (!row) continue;
+    row.pocket_coins += coinShare;
+    const xpGain = Math.round(xpPct(row, RAID_XP_PCT_AT_FULL_CONTRIBUTION * share) * eventMult);
+    const leveledUp = applyXpAndLevel(row, xpGain);
+    writes.push(env.DB.prepare(
+      "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+    ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id));
+    summary.push({ userId: p.user_id, userName: p.user_name, damage: p.damage, sharePct: Math.round(share * 1000) / 10, coinReward: coinShare, xpGained: xpGain, leveledUp: leveledUp });
+  }
+  const clubXpGain = Math.round(maxHp * RAID_CLUB_XP_PER_HP);
+  writes.push(env.DB.prepare("UPDATE arena_clubs SET xp = xp + ? WHERE id = ?").bind(clubXpGain, clubId));
+  await env.DB.batch(writes);
+  summary.sort(function (a, b) { return b.damage - a.damage; });
+  return { participants: summary, coinPool: coinPool, clubXpGained: clubXpGain };
+}
+
 // ── 클럽 전쟁 시즌 — 기존 war_score(전체 누적)와 별개로 "이번 시즌 점수"만 따로 쌓는다.
 // 시즌 경계는 상점 로테이션과 같은 방식으로 시간을 나눈 결정론적 버킷이라 크론이 필요 없다
 // — 지금이 몇 번째 시즌인지는 그냥 Date.now()로 계산하면 되고, "방금 끝난 시즌"의 순위/보상은
@@ -482,6 +535,52 @@ const DAILY_QUESTS = {
   jobs:      { label: "해킹 작업 3회",             goal: 3, reward: 250 },
   purchases: { label: "상점에서 구매 1회",          goal: 1, reward: 200 },
 };
+
+// ══════════════════════════════════════════════════════════
+//  현상금 게시판(Bounty Board) — 오늘의 미션(3종 고정)보다 훨씬 다채로운 목표가 8시간마다
+//  통째로 새로 뽑혀서 5개씩 뜬다. 진행도는 새 카운터 테이블 없이 이미 있는 arena_logs를
+//  그대로 세서 계산한다(모든 카운트 대상 행동이 insertLog로 이미 기록되고 있으므로) —
+//  "청구했는지"만 별도 테이블(arena_bounty_claims)에 남긴다. 유저마다 다른 5개가 뜨도록
+//  (userId + 게시판 회차)를 섞어 시드로 쓴다(상점 로테이션과 같은 발상).
+// ══════════════════════════════════════════════════════════
+const BOUNTY_PERIOD_MS = 8 * 60 * 60 * 1000; // 하루 3번 갱신
+const BOUNTY_BOARD_SIZE = 5;
+// counterKey는 GET /bounties에서 arena_logs 한 번 조회로 만드는 counts 객체의 키와 맞춘다.
+const BOUNTY_TEMPLATES = [
+  { id: "b_job_3",        label: "해킹 작업 3회 완료",        counterKey: "job",           goal: 3, coin: 900,   xpPct: 0.03 },
+  { id: "b_job_6",        label: "해킹 작업 6회 완료",        counterKey: "job",           goal: 6, coin: 2200,  xpPct: 0.06 },
+  { id: "b_job_10",       label: "해킹 작업 10회 완료",       counterKey: "job",           goal: 10, coin: 4000, xpPct: 0.10 },
+  { id: "b_pvp_2",        label: "PvP 침투 성공 2회",         counterKey: "pvp_win",       goal: 2, coin: 1800,  xpPct: 0.06 },
+  { id: "b_pvp_4",        label: "PvP 침투 성공 4회",         counterKey: "pvp_win",       goal: 4, coin: 4200,  xpPct: 0.12 },
+  { id: "b_planet_2",     label: "행성 공격 성공 2회",         counterKey: "planet_win",    goal: 2, coin: 1800,  xpPct: 0.06 },
+  { id: "b_planet_3",     label: "행성 공격 성공 3회",         counterKey: "planet_win",    goal: 3, coin: 3200,  xpPct: 0.10 },
+  { id: "b_expedition_3", label: "원정 성공 3회",             counterKey: "expedition_win", goal: 3, coin: 1500,  xpPct: 0.05 },
+  { id: "b_expedition_6", label: "원정 성공 6회",             counterKey: "expedition_win", goal: 6, coin: 3000,  xpPct: 0.09 },
+  { id: "b_trade_1",      label: "거래 완료 1회",             counterKey: "trade",         goal: 1, coin: 700,   xpPct: 0.02 },
+];
+function bountyBoardFor(userId, bucket) {
+  const rng = mulberry32(hashStr(userId + ":bounty:" + bucket) >>> 0);
+  const pool = BOUNTY_TEMPLATES.slice();
+  for (let i = pool.length - 1; i > 0; i--) { // Fisher-Yates
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  return pool.slice(0, BOUNTY_BOARD_SIZE);
+}
+async function bountyProgressCounts(env, userId, bucketStart) {
+  const res = await env.DB.prepare(
+    "SELECT kind, result FROM arena_logs WHERE user_id = ? AND created_at >= ? AND kind IN ('job','pvp_attack','planet_attack','planet_expedition','trade')"
+  ).bind(userId, bucketStart).all();
+  const counts = { job: 0, pvp_win: 0, planet_win: 0, expedition_win: 0, trade: 0 };
+  res.results.forEach(function (r) {
+    if (r.kind === "job") counts.job++;
+    else if (r.kind === "pvp_attack" && (r.result === "win" || r.result === "crit")) counts.pvp_win++;
+    else if (r.kind === "planet_attack" && r.result === "win") counts.planet_win++;
+    else if (r.kind === "planet_expedition" && r.result === "win") counts.expedition_win++;
+    else if (r.kind === "trade") counts.trade++;
+  });
+  return counts;
+}
 
 async function clubIdOf(env, userId) {
   const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
@@ -1052,6 +1151,29 @@ async function ensureSchema(env) {
   // 영구 EXP 부스터 연구 레벨(0~3) — "환생 가속 연구" 대체. research_rebirth_level은 그대로
   // 남겨두되(이미 투자한 유저 보호) 더 이상 이 컬럼을 새로 올릴 방법은 없다.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_exp_booster_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 현상금 게시판 — 진행도는 arena_logs를 그대로 세서 계산하므로(카운터 테이블 불필요),
+  // "이 회차(bucket)에 이 현상금을 이미 청구했는지"만 여기 남긴다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_bounty_claims (user_id TEXT NOT NULL, bucket INTEGER NOT NULL, bounty_id TEXT NOT NULL, " +
+    "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, bucket, bounty_id))"
+  );
+  // 클럽 레이드 — 클럽당 한 번에 하나만 진행 가능(status='active'). 보스를 처치하면
+  // status='completed'로 바뀌고, 참여자별 기여 데미지(arena_club_raid_damage)에 비례해
+  // 보상을 나눠준다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_raids (id INTEGER PRIMARY KEY AUTOINCREMENT, club_id INTEGER NOT NULL, " +
+    "boss_name TEXT NOT NULL, max_hp INTEGER NOT NULL, hp INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', " +
+    "started_at INTEGER NOT NULL, ended_at INTEGER)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_club_raids_club ON arena_club_raids(club_id, status)"); } catch (e) {}
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_club_raid_damage (raid_id INTEGER NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL, " +
+    "damage INTEGER NOT NULL DEFAULT 0, hits INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (raid_id, user_id))"
+  );
+  // 레이드 공격 전용 쿨다운(PvP의 30초 쿨다운과는 별개 — 협동 콘텐츠라 매크로 방지 정도로만
+  // 짧게 둔다) + 클럽이 마지막 레이드를 끝낸 시각(재도전 대기시간 계산용, arena_clubs에 저장).
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_raid_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_clubs ADD COLUMN last_raid_ended_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
   // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
@@ -2256,6 +2378,19 @@ export default {
             effective: await effectiveClubRelation(env, club.id, otherId),
           });
         }
+        // ── 클럽 레이드 현황 — 진행 중인 레이드가 있으면 보스 HP/상위 기여자 톱10, 없으면
+        //    재도전까지 남은 대기시간을 같이 내려준다. ──
+        const activeRaid = await env.DB.prepare("SELECT * FROM arena_club_raids WHERE club_id = ? AND status = 'active'").bind(club.id).first();
+        let raidInfo = null, raidCooldownLeftMs = 0;
+        if (activeRaid) {
+          const topRes = await env.DB.prepare("SELECT user_id, user_name, damage, hits FROM arena_club_raid_damage WHERE raid_id = ? ORDER BY damage DESC LIMIT 10").bind(activeRaid.id).all();
+          raidInfo = {
+            id: activeRaid.id, bossName: activeRaid.boss_name, hp: activeRaid.hp, maxHp: activeRaid.max_hp, startedAt: activeRaid.started_at,
+            topContributors: topRes.results.map(function (r) { return { userId: r.user_id, userName: r.user_name, damage: r.damage, hits: r.hits }; }),
+          };
+        } else {
+          raidCooldownLeftMs = club.last_raid_ended_at ? Math.max(0, RAID_COOLDOWN_MS - (Date.now() - club.last_raid_ended_at)) : 0;
+        }
         return json({
           myClub: {
             id: club.id, name: club.name, description: club.description, leaderUserId: club.leader_user_id, leaderName: club.leader_name, warScore: club.war_score,
@@ -2265,12 +2400,74 @@ export default {
             coinBonusPct: Math.min(clubXpProgress(club.xp).level, CLUB_BONUS_MAX_LEVEL) * CLUB_BONUS_PER_LEVEL * 100,
             members: membersRes.results.map(function (m) { return { userId: m.user_id, userName: m.user_name, role: m.role, joinedAt: m.joined_at }; }),
             relations: relations,
+            raid: raidInfo, raidCooldownLeftMs: raidCooldownLeftMs,
           },
           // 리더가 관계를 걸 상대 클럽의 ID를 찾을 수 있도록, 내 클럽 소속이어도 다른 클럽
           // 목록(ID 포함)은 계속 내려준다.
           otherClubs: (await env.DB.prepare("SELECT id, name FROM arena_clubs WHERE id != ? ORDER BY war_score DESC LIMIT 50").bind(club.id).all()).results,
           createCost: CLUB_CREATE_COST, maxMembers: CLUB_MAX_MEMBERS,
         });
+      }
+
+      // ── POST /club/raid/start — 진행 중인 레이드가 없고 재도전 대기시간(RAID_COOLDOWN_MS)이
+      //    지났으면 클럽원 누구나 새 보스를 소환할 수 있다. HP는 클럽원 수 + 클럽 레벨에 비례. ──
+      if (request.method === "POST" && path === "/club/raid/start") {
+        const clubId = await clubIdOf(env, user.userId);
+        if (!clubId) return json({ error: "클럽에 소속되어 있지 않습니다." }, 400);
+        const club = await env.DB.prepare("SELECT * FROM arena_clubs WHERE id = ?").bind(clubId).first();
+        const existing = await env.DB.prepare("SELECT id FROM arena_club_raids WHERE club_id = ? AND status = 'active'").bind(clubId).first();
+        if (existing) return json({ error: "이미 진행 중인 레이드가 있습니다." }, 400);
+        const cooldownLeft = club.last_raid_ended_at ? Math.max(0, RAID_COOLDOWN_MS - (Date.now() - club.last_raid_ended_at)) : 0;
+        if (cooldownLeft > 0) return json({ error: "다음 레이드까지 " + Math.ceil(cooldownLeft / 3600000) + "시간 남았습니다." }, 400);
+        const memberCountRow = await env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_club_members WHERE club_id = ?").bind(clubId).first();
+        const memberCount = (memberCountRow && memberCountRow.cnt) || 1;
+        const maxHp = raidMaxHpFor(memberCount, clubLevelForXp(club.xp));
+        const bossName = RAID_BOSS_NAMES[Math.floor(Math.random() * RAID_BOSS_NAMES.length)];
+        await env.DB.prepare(
+          "INSERT INTO arena_club_raids (club_id, boss_name, max_hp, hp, status, started_at) VALUES (?, ?, ?, ?, 'active', ?)"
+        ).bind(clubId, bossName, maxHp, maxHp, Date.now()).run();
+        return json({ ok: true, bossName: bossName, maxHp: maxHp });
+      }
+
+      // ── POST /club/raid/attack — 내 클럽의 진행 중인 레이드에 데미지를 넣는다. PvP 공격
+      //    쿨다운과는 별개의 짧은 매크로 방지 쿨다운(RAID_ATTACK_COOLDOWN_MS)만 있다. ──
+      if (request.method === "POST" && path === "/club/raid/attack") {
+        const clubId = await clubIdOf(env, user.userId);
+        if (!clubId) return json({ error: "클럽에 소속되어 있지 않습니다." }, 400);
+        const raid = await env.DB.prepare("SELECT * FROM arena_club_raids WHERE club_id = ? AND status = 'active'").bind(clubId).first();
+        if (!raid) return json({ error: "진행 중인 레이드가 없습니다." }, 400);
+
+        const attacker = await loadOrCreateUser(env, user.userId, user.realName);
+        const cooldownLeft = attacker.last_raid_attack_at ? Math.max(0, RAID_ATTACK_COOLDOWN_MS - (Date.now() - attacker.last_raid_attack_at)) : 0;
+        if (cooldownLeft > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
+        if (attacker.stamina < RAID_STAMINA_COST) return json({ error: "스태미나가 부족합니다. (필요 " + RAID_STAMINA_COST + ")" }, 400);
+
+        const combat = await totalCombatStats(env, attacker);
+        const damage = Math.max(1, Math.round(combat.atk * RAID_ATTACK_POWER_MULT * randMult()));
+        const newHp = Math.max(0, raid.hp - damage);
+
+        attacker.stamina -= RAID_STAMINA_COST;
+        attacker.last_raid_attack_at = Date.now();
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET stamina=?, last_raid_attack_at=? WHERE user_id=?").bind(attacker.stamina, attacker.last_raid_attack_at, attacker.user_id),
+          env.DB.prepare("UPDATE arena_club_raids SET hp=? WHERE id=?").bind(newHp, raid.id),
+          env.DB.prepare(
+            "INSERT INTO arena_club_raid_damage (raid_id, user_id, user_name, damage, hits) VALUES (?, ?, ?, ?, 1) " +
+            "ON CONFLICT(raid_id, user_id) DO UPDATE SET damage = damage + ?, hits = hits + 1"
+          ).bind(raid.id, user.userId, user.realName, damage, damage),
+        ]);
+
+        let defeated = false, rewards = null;
+        if (newHp <= 0) {
+          defeated = true;
+          rewards = await settleRaid(env, raid.id, clubId, raid.max_hp);
+          await env.DB.batch([
+            env.DB.prepare("UPDATE arena_club_raids SET status='completed', ended_at=? WHERE id=?").bind(Date.now(), raid.id),
+            env.DB.prepare("UPDATE arena_clubs SET last_raid_ended_at=? WHERE id=?").bind(Date.now(), clubId),
+          ]);
+        }
+
+        return json({ ok: true, damage: damage, raidHp: newHp, raidMaxHp: raid.max_hp, bossName: raid.boss_name, defeated: defeated, rewards: rewards, stamina: attacker.stamina });
       }
 
       // ── POST /club/create { name, description } ──
@@ -3268,6 +3465,65 @@ export default {
           dailyBoostGranted = true;
         }
         return json({ ok: true, reward: questReward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp, dailyBoostGranted: dailyBoostGranted, dailyBoostUntil: row.daily_boost_until || 0 });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  Bounty Board — 8시간마다 통째로 새로 뽑히는 개인별 현상금 5개. 오늘의 미션(하루 고정
+      //  3종)보다 다채로운 목표/더 큰 보상으로 "경험치·코인 얻을 수단이 더 많으면 좋겠다"는
+      //  요청에 대응한다.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /bounties — 지금 회차의 내 게시판 5개 + 각각의 진행도/청구 여부. ──
+      if (request.method === "GET" && path === "/bounties") {
+        const bucket = Math.floor(Date.now() / BOUNTY_PERIOD_MS);
+        const bucketStart = bucket * BOUNTY_PERIOD_MS;
+        const board = bountyBoardFor(user.userId, bucket);
+        const [counts, claimsRes] = await Promise.all([
+          bountyProgressCounts(env, user.userId, bucketStart),
+          env.DB.prepare("SELECT bounty_id FROM arena_bounty_claims WHERE user_id = ? AND bucket = ?").bind(user.userId, bucket).all(),
+        ]);
+        const claimed = new Set(claimsRes.results.map(function (r) { return r.bounty_id; }));
+        const items = board.map(function (b) {
+          const progress = Math.min(counts[b.counterKey] || 0, b.goal);
+          return {
+            id: b.id, label: b.label, goal: b.goal, coin: b.coin, progress: progress,
+            claimed: claimed.has(b.id), ready: progress >= b.goal && !claimed.has(b.id),
+          };
+        });
+        return json({ items: items, refreshAt: bucketStart + BOUNTY_PERIOD_MS });
+      }
+
+      // ── POST /bounties/claim { id } — 현상금 하나를 청구한다. 서버가 그 유저의 그 회차
+      //    게시판을 똑같이 재계산해서 id가 실제로 그 안에 있는지부터 확인한다(클라이언트가
+      //    지어낸 id로 청구 못 하게). ──
+      if (request.method === "POST" && path === "/bounties/claim") {
+        const body = await request.json().catch(function () { return {}; });
+        const id = String(body.id || "");
+        const bucket = Math.floor(Date.now() / BOUNTY_PERIOD_MS);
+        const bucketStart = bucket * BOUNTY_PERIOD_MS;
+        const board = bountyBoardFor(user.userId, bucket);
+        const bounty = board.find(function (b) { return b.id === id; });
+        if (!bounty) return json({ error: "지금 게시판에 없는 현상금입니다." }, 400);
+
+        const already = await env.DB.prepare("SELECT 1 FROM arena_bounty_claims WHERE user_id=? AND bucket=? AND bounty_id=?").bind(user.userId, bucket, id).first();
+        if (already) return json({ error: "이미 청구한 현상금입니다." }, 400);
+
+        const counts = await bountyProgressCounts(env, user.userId, bucketStart);
+        if ((counts[bounty.counterKey] || 0) < bounty.goal) return json({ error: "아직 목표를 채우지 못했습니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const eventMult = globalEventMult(); // 전역 이벤트(코인·EXP 2배)만 적용, 개인 activityBoostMult는 제외(일회성 청구 몰아받기 방지)
+        const coinReward = Math.round(bounty.coin * eventMult);
+        row.pocket_coins += coinReward;
+        const xpGain = Math.round(xpPct(row, bounty.xpPct) * eventMult);
+        const leveledUp = applyXpAndLevel(row, xpGain);
+        await env.DB.batch([
+          env.DB.prepare(
+            "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
+          env.DB.prepare("INSERT INTO arena_bounty_claims (user_id, bucket, bounty_id, claimed_at) VALUES (?, ?, ?, ?)").bind(user.userId, bucket, id, Date.now()),
+        ]);
+        return json({ ok: true, reward: coinReward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp });
       }
 
       if (request.method === "GET" && path === "/property") {

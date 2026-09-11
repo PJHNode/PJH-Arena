@@ -611,6 +611,7 @@
       <button class="side-tab active" data-tab="jobs">💻 Hacking Jobs</button>
       <button class="side-tab" data-tab="galaxy">🌌 Galaxy Map</button>
       <button class="side-tab" data-tab="pvp">🎯 Arena P2P</button>
+      <button class="side-tab" data-tab="bounty">📋 Bounty Board</button>
       <div class="side-section-label">경제</div>
       <button class="side-tab" data-tab="shop">🛒 Hardware Shop</button>
       <button class="side-tab" data-tab="bots">🤖 Bots</button>
@@ -685,6 +686,12 @@
       <div class="tab-panel" id="panel-pvp">
         <p class="panel-title">🎯 ARENA P2P — TARGETS</p>
         <div class="pvp-list"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-bounty">
+        <p class="panel-title">📋 BOUNTY BOARD</p>
+        <p class="dim" style="margin-bottom:14px;">8시간마다 새로운 현상금 5개 등장 · 다음 갱신까지 <b id="bountyRefreshCountdown">-</b></p>
+        <div class="achievement-grid" id="bountyGrid"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-shop">

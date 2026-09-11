@@ -299,6 +299,7 @@
     research: renderResearchTab,
     enchant: renderEnchantTab,
     rebirthshop: renderRebirthShopTab,
+    bounty: renderBountyTab,
     trade: renderTradeTab,
     club: renderClubTab,
     profile: renderProfileTab,
@@ -932,6 +933,12 @@
     if (eventCountdownEl) {
       eventCountdownEl.textContent = globalEventEndAt > now ? fmtLongCountdown(globalEventEndAt - now) : "종료";
     }
+
+    // 현상금 게시판 다음 갱신까지 남은 시간(8시간마다) — Bounty 탭이 열려있을 때만 있는 요소.
+    const bountyCountdownEl = $("bountyRefreshCountdown");
+    if (bountyCountdownEl) {
+      bountyCountdownEl.textContent = bountyRefreshAt > now ? fmtLongCountdown(bountyRefreshAt - now) : "갱신 중...";
+    }
   }
   setInterval(renderResourceEtas, 1000);
 
@@ -1513,6 +1520,44 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // ── 현상금 게시판(Bounty Board) — 8시간마다 통째로 새로 뽑히는 개인별 현상금 5개.
+  //    진행도/목표는 서버가 계산해서 내려주고, 프론트는 그대로 표시만 한다(enchant/rebirth
+  //    shop 탭과 동일 패턴 — achievement-card 그리드 재사용). ──
+  let bountyRefreshAt = 0;
+  async function renderBountyTab() {
+    const grid = $("bountyGrid");
+    try {
+      const { items, refreshAt } = await api("/bounties");
+      bountyRefreshAt = refreshAt;
+      grid.innerHTML = items.map((b) => {
+        const pct = Math.min(100, (b.progress / b.goal) * 100);
+        let btnHtml;
+        if (b.claimed) btnHtml = '<button class="btn-ghost" disabled>청구 완료</button>';
+        else if (b.ready) btnHtml = '<button class="btn-primary" data-claim-bounty="' + b.id + '">청구하기</button>';
+        else btnHtml = '<button class="btn-ghost" disabled>진행 중 (' + b.progress + "/" + b.goal + ")</button>";
+        return (
+          '<div class="achievement-card" style="border-left-color:' + (b.claimed ? "var(--accent)" : b.ready ? "var(--stamina)" : "var(--border)") + '">' +
+          '<div style="font-weight:bold;margin-bottom:4px;">' + escapeHtml(b.label) + "</div>" +
+          '<div class="enchant-level-track" style="margin-bottom:6px;"><div class="enchant-level-fill" style="width:' + pct + '%;"></div></div>' +
+          '<div class="dim" style="margin-bottom:10px;">진행 ' + b.progress + " / " + b.goal + " · 보상 💰" + fmt(b.coin) + "</div>" +
+          btnHtml +
+          "</div>"
+        );
+      }).join("") || '<p class="dim">지금 뜬 현상금이 없습니다.</p>';
+      grid.querySelectorAll("button[data-claim-bounty]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/bounties/claim", { method: "POST", body: { id: btn.dataset.claimBounty } });
+            toast("📋 현상금 완료! +" + fmt(r.reward) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
+            renderBountyTab();
+            refreshState();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
+  }
+
   // ── Trade — 유저 간 코인+아이템 거래. "내가 줄 것"은 내 인벤토리(장착 중인 건 빼고 남는
   //    수량)에서 고르고, "내가 받을 것"은 상대 인벤토리를 볼 수 없으니 전체 카탈로그에서
   //    고른다(상대가 실제로 갖고 있는지는 승낙 시점에 서버가 검증). ──
@@ -1662,6 +1707,35 @@
   // 교체가 아니라). 버튼도 매번 새로 그려지므로 이벤트는 컨테이너에 위임해서 한 번만 건다. ──
   const RELATION_LABEL = { hostile: "⚔️ 적대", allied: "🤝 동맹", neutral: "· 중립", friendly: "🤝 우호 선언" };
 
+  // 클럽 레이드 섹션 — 진행 중이면 보스 HP바 + 공격 버튼 + 상위 기여자, 아니면 재도전
+  // 대기시간 또는 소환 버튼. fmtLongCountdown을 쓰는 이유는 대기시간이 최대 20시간이라
+  // "1200분"처럼 안 읽히는 표기를 피하기 위해서(현상금 게시판 카운트다운과 동일 이유).
+  function raidSectionHtml(raid, raidCooldownLeftMs, myUserId) {
+    if (raid) {
+      const pct = Math.max(0, Math.min(100, (raid.hp / raid.maxHp) * 100));
+      const topHtml = raid.topContributors.length
+        ? raid.topContributors.map((c, i) => (
+            '<div class="club-member-row"><span>' + (i + 1) + "위 " + escapeHtml(c.userName) + (c.userId === myUserId ? " (나)" : "") + "</span><span>" + fmt(c.damage) + " 데미지 (" + c.hits + "회)</span></div>"
+          )).join("")
+        : '<p class="dim">아직 공격한 사람이 없습니다.</p>';
+      return (
+        '<div class="club-section-title">👹 클럽 레이드 — ' + escapeHtml(raid.bossName) + "</div>" +
+        '<div class="exp-track" style="height:16px;"><div class="exp-fill" style="width:' + pct + '%;background:var(--danger);"></div></div>' +
+        '<p class="dim" style="margin:6px 0 10px;">HP ' + fmt(raid.hp) + " / " + fmt(raid.maxHp) + "</p>" +
+        '<button class="btn-danger" id="clubRaidAttackBtn" style="width:100%;margin-bottom:10px;">⚔️ 공격(스태미나 2)</button>' +
+        topHtml
+      );
+    }
+    if (raidCooldownLeftMs > 0) {
+      return '<div class="club-section-title">👹 클럽 레이드</div><p class="dim">다음 레이드까지 ' + fmtLongCountdown(raidCooldownLeftMs) + " 남았습니다.</p>";
+    }
+    return (
+      '<div class="club-section-title">👹 클럽 레이드</div>' +
+      '<p class="dim">클럽원 전체가 힘을 합쳐 보스를 같이 공격하세요 — 처치하면 기여 데미지 비율만큼 코인·EXP를 나눠 받고, 클럽 경험치도 오릅니다.</p>' +
+      '<button class="btn-primary" id="clubRaidStartBtn" style="width:100%;">보스 소환하기</button>'
+    );
+  }
+
   // 클럽 전쟁 시즌 섹션 — war-season 조회가 실패해도(클럽 API 자체 문제 등) 클럽 탭 전체가
   // 죽으면 안 되므로 조용히 빈 문자열로 넘어간다.
   function warSeasonSectionHtml(ws) {
@@ -1721,6 +1795,8 @@
         '<div class="club-header-actions" style="margin-top:10px;">' +
         (club.isLeader ? '<button class="btn-ghost" id="clubDisbandBtn">클럽 해체</button>' : '<button class="btn-ghost" id="clubLeaveBtn">클럽 탈퇴</button>') +
         "</div></div>" +
+
+        raidSectionHtml(club.raid, club.raidCooldownLeftMs, state.userId) +
 
         '<div class="club-section-title">💬 클럽 채팅</div>' +
         '<div class="club-chat-box"><div class="club-chat-messages" id="clubChatMessages"><p class="dim">불러오는 중...</p></div>' +
@@ -1806,6 +1882,26 @@
         t.disabled = true;
         try { await api("/club/kick", { method: "POST", body: { userId: t.dataset.kick } }); toast("추방했습니다."); renderClubTab(); }
         catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubRaidStartBtn") {
+        t.disabled = true;
+        try {
+          const r = await api("/club/raid/start", { method: "POST" });
+          toast("👹 " + r.bossName + " 등장! (HP " + fmt(r.maxHp) + ")");
+          renderClubTab();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
+      } else if (t.id === "clubRaidAttackBtn") {
+        t.disabled = true;
+        try {
+          const r = await api("/club/raid/attack", { method: "POST" });
+          if (r.defeated) {
+            const mine = r.rewards.participants.find((p) => p.userId === state.userId);
+            toast("🎉 " + r.bossName + " 처치! " + (mine ? "내 몫 +" + fmt(mine.coinReward) + " 코인 · EXP +" + mine.xpGained + (mine.leveledUp ? " · 🎉 LEVEL UP!" : "") : "보상 분배 완료"));
+          } else {
+            toast("⚔️ " + fmt(r.damage) + " 데미지! (보스 HP " + fmt(r.raidHp) + " / " + fmt(r.raidMaxHp) + ")");
+          }
+          refreshState();
+          renderClubTab();
+        } catch (err) { toast(err.message, true); t.disabled = false; }
       } else if (t.id === "clubRelationSetBtn") {
         const toClubId = $("clubRelationClubId").value;
         const status = $("clubRelationStatus").value;
