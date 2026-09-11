@@ -465,7 +465,7 @@
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
         '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapHigh ? ' style="color:var(--stamina);"' : '') + '>' + r.staminaCost + (r.levelGapHigh ? " (레벨차 큼)" : "") + "</b></div>" +
-        '<div class="scan-row">오늘 공격 횟수 <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
+        '<div class="scan-row">공격 횟수(8시간마다 초기화) <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
         '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>" +
         '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>';
       $("scanModal").style.display = "flex";
@@ -884,6 +884,7 @@
   setInterval(renderResourceEtas, 1000);
 
   let shopNextRotationAt = 0;
+  let shopDiamondExchangeCost = 0;
   // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착).
   //    상점은 4분마다 통째로 리롤되는 공용 로테이션이라, 카운트다운이 0이 되면 자동으로 다시 그린다. ──
   async function renderShopTab() {
@@ -894,9 +895,11 @@
     try {
       const { items, nextRotationAt, diamonds, diamondExchangeCost, rerollCost } = await api("/shop");
       shopNextRotationAt = nextRotationAt;
+      shopDiamondExchangeCost = diamondExchangeCost;
       $("shopDiamondBalance").textContent = "💎 " + fmt(diamonds);
       $("shopExchangeCost").textContent = fmt(diamondExchangeCost);
       $("shopRerollCost").textContent = fmt(rerollCost);
+      updateExchangeTotalCost();
       grid.innerHTML = items.map((it) => {
         const capped = it.maxOwned && it.owned >= it.maxOwned;
         const soldOut = it.totalStock != null && it.remainingStock <= 0;
@@ -928,13 +931,31 @@
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
 
+  // 교환 개수 입력칸 값이 바뀔 때마다 "총 코인" 표시를 즉시 갱신한다(실제 검증은 서버가 다시 함).
+  function updateExchangeTotalCost() {
+    const totalEl = $("exchangeDiamondTotalCost");
+    const qtyInput = $("exchangeDiamondQty");
+    if (!totalEl || !qtyInput) return;
+    const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
+    totalEl.textContent = fmt(shopDiamondExchangeCost * qty);
+  }
+
   function initShopButtons() {
+    const qtyInput = $("exchangeDiamondQty");
+    if (qtyInput) qtyInput.addEventListener("input", updateExchangeTotalCost);
+    const maxBtn = $("exchangeDiamondMaxBtn");
+    if (maxBtn) maxBtn.addEventListener("click", () => {
+      if (!shopDiamondExchangeCost || !state) return;
+      qtyInput.value = Math.max(1, Math.floor(state.pocketCoins / shopDiamondExchangeCost));
+      updateExchangeTotalCost();
+    });
     const btn = $("exchangeDiamondBtn");
     if (btn) btn.addEventListener("click", async () => {
+      const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
       btn.disabled = true;
       try {
-        const r = await api("/shop/exchange-diamond", { method: "POST", body: { qty: 1 } });
-        toast("💎 다이아 1개 교환 완료!");
+        const r = await api("/shop/exchange-diamond", { method: "POST", body: { qty: qty } });
+        toast("💎 다이아 " + qty + "개 교환 완료!");
         state.pocketCoins = r.pocketCoins; renderHeader(); renderShopTab();
       } catch (e) { toast(e.message, true); }
       btn.disabled = false;
@@ -1250,6 +1271,18 @@
         "<b>" + Math.round(r.rarityChances[rarity] * 1000) / 10 + "%</b></div>"
       )).join("");
 
+      $("researchSlotsLevelTag").textContent = "Lv." + r.slotsLevel;
+      $("researchSlotsCurrent").textContent = r.slotsCurrentMin;
+      const slotsBtn = $("researchSlotsUpgradeBtn");
+      if (r.slotsUpgradeCost == null) {
+        slotsBtn.disabled = true;
+        slotsBtn.textContent = "최대 레벨 (진열 " + r.slotsCurrentMin + "개)";
+      } else {
+        $("researchSlotsCost").textContent = fmt(r.slotsUpgradeCost);
+        slotsBtn.innerHTML = "연구하기 (💎 <span id=\"researchSlotsCost\">" + fmt(r.slotsUpgradeCost) + "</span>)";
+        slotsBtn.disabled = r.diamonds < r.slotsUpgradeCost;
+      }
+
       $("researchExpeditionCost").textContent = fmt(r.expeditionUnlockCost);
       const expBtn = $("researchExpeditionUnlockBtn");
       if (r.expeditionUnlocked) {
@@ -1282,6 +1315,15 @@
         toast("🛰️ 원정 연구 해금 완료!");
         renderResearchTab();
       } catch (e) { toast(e.message, true); expBtn.disabled = false; }
+    });
+    const slotsBtn = $("researchSlotsUpgradeBtn");
+    if (slotsBtn) slotsBtn.addEventListener("click", async () => {
+      slotsBtn.disabled = true;
+      try {
+        const r = await api("/research/slots-upgrade", { method: "POST" });
+        toast("🗄️ 상점 진열대 확장 Lv." + r.slotsLevel + " 달성! (최소 " + r.slotsCurrentMin + "개)");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); slotsBtn.disabled = false; }
     });
   }
 

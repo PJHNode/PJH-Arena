@@ -200,10 +200,14 @@ const SHOP_ITEMS = {
 };
 
 // 예전엔 공격당하면 자동으로 12시간 보호막이 붙어서 그 사람이 전체 유저의 타겟 목록에서
-// 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 24시간 안에 몇 번까지 노릴 수 있는지"만
-// 공격자별로 제한한다(아래 PVP_MAX_ATTACKS_PER_TARGET_PER_DAY). 소비재로 사는 자가 보호막
+// 아예 사라졌는데, 폐지했다 — 대신 "같은 상대를 한 주기 안에 몇 번까지 노릴 수 있는지"만
+// 공격자별로 제한한다(아래 PVP_MAX_ATTACKS_PER_TARGET_PER_RESET). 소비재로 사는 자가 보호막
 // (stealth_cloak 등, shield_until 컬럼)은 이것과 별개로 그대로 유효하다.
-const PVP_MAX_ATTACKS_PER_TARGET_PER_DAY = 5;
+// 예전엔 "최근 24시간" 롤링 윈도우였는데, 요청으로 "8시간마다 고정 초기화"로 바꿨다 — 상점
+// 로테이션/행성 리롤/클럽 전쟁 시즌과 같은 방식(시간을 버킷으로 나누는 결정론적 경계)이라
+// 하루에 딱 3번(자정/오전8시/오후4시 UTC 기준) 정확히 초기화되고, 크론 없이 그냥 계산만 하면 된다.
+const PVP_MAX_ATTACKS_PER_TARGET_PER_RESET = 5;
+const ATTACK_LIMIT_RESET_MS = 8 * 60 * 60 * 1000;
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
@@ -254,7 +258,7 @@ const BANK_DEPOSIT_TAX_RATE = 0.10;
 // 상대적으로 15배 싸져 있었다(연구 비용이 너무 싸다는 문제의 실제 원인). 소득과 같은 배율로
 // 올려서 "다이아=특수 재화"라는 상대적 희소성을 예전 수준으로 되돌렸다.
 const DIAMOND_EXCHANGE_COIN_COST = 150000; // 코인 150,000개 -> 다이아 1개(단방향, 코인 싱크)
-const SHOP_REROLL_DIAMOND_COST = 2; // 다이아 2개로 자연 타이머 안 기다리고 내 상점 즉시 리롤
+const SHOP_REROLL_DIAMOND_COST = 1; // 다이아 1개로 자연 타이머 안 기다리고 내 상점 즉시 리롤
 
 // ── Trade — 유저 간 코인+아이템 동시 거래. "고인물이 초보를 코인으로 그냥 키워주는" 것을
 //    막기 위해, 한 번에 오가는 코인은 두 사람 중 레벨이 더 낮은 쪽 자산의 1/3을 넘을 수 없다.
@@ -671,7 +675,9 @@ async function buildAchievementContext(env, row) {
 // 희소성이 의미가 있다)에서 아직 안 뽑힌 아이템으로 채운다.
 const MIN_SHOP_ITEMS = 8;
 const SHOP_FILLER_MAX_RARITY_IDX = RARITY_ORDER.indexOf("epic");
-function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
+// "상점 진열대 확장" 연구(레벨당 +1)로 이 최소 개수를 유저별로 늘릴 수 있다 — minItems를
+// 안 넘기면(기존 호출부) 그냥 MIN_SHOP_ITEMS 그대로라 하위 호환된다.
+function computeShopRotation(nowMs, userId, researchLevel, rerollNonce, minItems) {
   const bucket = Math.floor((nowMs || Date.now()) / SHOP_ROTATION_MS);
   const rng = mulberry32((bucket ^ hashStr(userId || "") ^ (rerollNonce || 0)) | 0);
   const byRarity = {};
@@ -692,7 +698,8 @@ function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
       itemIds.push(pool.splice(idx, 1)[0]);
     }
   }
-  if (itemIds.length < MIN_SHOP_ITEMS) {
+  const targetMin = minItems || MIN_SHOP_ITEMS;
+  if (itemIds.length < targetMin) {
     const chosen = new Set(itemIds);
     const remaining = Object.keys(SHOP_ITEMS).filter(function (id) {
       return !chosen.has(id) && RARITY_ORDER.indexOf(SHOP_ITEMS[id].rarity) <= SHOP_FILLER_MAX_RARITY_IDX;
@@ -702,10 +709,18 @@ function computeShopRotation(nowMs, userId, researchLevel, rerollNonce) {
       const tmp = remaining[i]; remaining[i] = remaining[j]; remaining[j] = tmp;
     }
     remaining.sort(function (a, b) { return RARITY_ORDER.indexOf(SHOP_ITEMS[a].rarity) - RARITY_ORDER.indexOf(SHOP_ITEMS[b].rarity); });
-    itemIds.push.apply(itemIds, remaining.slice(0, MIN_SHOP_ITEMS - itemIds.length));
+    itemIds.push.apply(itemIds, remaining.slice(0, targetMin - itemIds.length));
   }
   return { itemIds: itemIds, bucket: bucket, nextRotationAt: (bucket + 1) * SHOP_ROTATION_MS };
 }
+// ── 연구: 상점 진열대 확장 — 레벨당 최소 진열 개수 +1. 채우기 후보 풀(common~epic, 19개)
+//    보다 커봐야 의미가 없으니 최대 레벨을 낮게(8) 잡았다 — 그래도 8(기본)+8=16개까지 늘어난다.
+const RESEARCH_SLOTS_BASE_COST = 15;
+const RESEARCH_SLOTS_GROWTH = 1.7;
+const RESEARCH_SLOTS_MAX_LEVEL = 8;
+const RESEARCH_SLOTS_BONUS_PER_LEVEL = 1;
+function researchSlotsUpgradeCost(level) { return Math.round(RESEARCH_SLOTS_BASE_COST * Math.pow(RESEARCH_SLOTS_GROWTH, level)); }
+function effectiveMinShopItems(slotsLevel) { return MIN_SHOP_ITEMS + Math.min(slotsLevel || 0, RESEARCH_SLOTS_MAX_LEVEL) * RESEARCH_SLOTS_BONUS_PER_LEVEL; }
 
 // ── 상점 재고 — 장착 아이템(무기/방어/코어)과 소비재 전부, 로테이션(bucket)마다 아이템별로
 //    1~3개 중 하나가 시드되어 다 팔리면 그 로테이션 동안은 품절. 등급이 높을수록 "떴다 하면
@@ -754,6 +769,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_stance TEXT"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN diamonds INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shop_slots_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_expedition_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
@@ -1192,17 +1208,19 @@ async function isTargetOnline(env, userId) {
   }
 }
 
-// ── 같은 (공격자, 방어자) 쌍이 최근 24시간 안에 몇 번 붙었는지 — arena_logs에 이미 매 PvP
-// 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다. 24시간이 지난 기록은 자연히 창밖으로
-// 밀려나 다시 카운트에서 빠지므로("슬라이딩 윈도우") 별도 리셋 로직이 필요 없다. ──
+// ── 같은 (공격자, 방어자) 쌍이 이번 8시간 주기 안에 몇 번 붙었는지 — arena_logs에 이미 매
+// 공격마다 기록이 남으므로 새 테이블 없이 그대로 센다. 예전엔 "최근 24시간" 롤링 윈도우였는데
+// 요청으로 "8시간마다 고정 초기화"로 바꿨다 — 상점 로테이션/행성 리롤과 같은 시간 버킷 방식이라
+// (지금 시각을 ATTACK_LIMIT_RESET_MS로 나눈 몫이 곧 "이번 주기"), 그 주기가 시작된 시각 이후
+// 기록만 세면 되고 별도 리셋 로직이나 크론이 필요 없다. ──
 // kind를 생략하면 기존과 동일하게 PvP 직접 결투(pvp_attack)만 센다 — 행성 공격 쪽에서
-// "이 사람의 행성들을 24시간 안에 몇 번이나 노렸는지"를 셀 때는 kind="planet_attack"으로 넘긴다
-// (행성이 몇 개든 opponent_id는 그 소유자 한 명으로 고정이라 자연스럽게 "그 사람 전체"가 묶인다).
+// "이 사람의 행성들을 이번 주기 안에 몇 번이나 노렸는지"를 셀 때는 kind="planet_attack"으로
+// 넘긴다(행성이 몇 개든 opponent_id는 그 소유자 한 명으로 고정이라 자연스럽게 "그 사람 전체"가 묶인다).
 async function countRecentAttacks(env, attackerId, defenderId, kind) {
-  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const resetBucketStart = Math.floor(Date.now() / ATTACK_LIMIT_RESET_MS) * ATTACK_LIMIT_RESET_MS;
   const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = ? AND created_at > ?"
-  ).bind(attackerId, defenderId, kind || "pvp_attack", dayAgo).first();
+    "SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND opponent_id = ? AND kind = ? AND created_at >= ?"
+  ).bind(attackerId, defenderId, kind || "pvp_attack", resetBucketStart).first();
   return (row && row.cnt) || 0;
 }
 
@@ -1612,7 +1630,7 @@ export default {
           const attacksUsed = await countRecentAttacks(env, user.userId, t.user_id);
           const shielded = t.shield_until > now;
           const downed = t.hp <= 0;
-          const attackCapped = attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY;
+          const attackCapped = attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_RESET;
           // 레벨 차이는 더 이상 공격을 막지 않는다 — 정보 표시용으로만 남겨둔다(스태미나가
           // 더 드는 구간에 들어왔는지 보여주기 위함, computeAttackStaminaCost와 같은 ±10 기준).
           const levelGapHigh = Math.abs(me.level - t.level) > 10;
@@ -1622,7 +1640,7 @@ export default {
             lastStance: t.last_stance || null, lastStanceLabel: t.last_stance ? STANCES[t.last_stance].label : null,
             estimatedVictoryPct: Math.round((wins / 300) * 100),
             staminaCost: computeAttackStaminaCost(me.level, t.level, online),
-            attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+            attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
             attackCapped: attackCapped, shielded: shielded, downed: downed, levelGapHigh: levelGapHigh,
             attackable: !shielded && !downed && !attackCapped,
           });
@@ -1664,8 +1682,8 @@ export default {
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: computeAttackStaminaCost(me.level, target.level, online),
           scanStaminaCost: SCAN_STAMINA_COST,
-          attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
-          attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY,
+          attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
+          attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
           levelGapHigh: Math.abs(me.level - target.level) > 10,
           state: publicState(me, combat),
         });
@@ -1694,12 +1712,12 @@ export default {
         // 레벨 차이는 더 이상 공격 자체를 막지 않는다 — computeAttackStaminaCost가 차이가
         // 클수록 스태미나를 훨씬 더 물리는 것으로 대신한다.
 
-        // 같은 상대를 24시간 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
+        // 같은 상대를 이번 8시간 주기 안에 너무 많이 노리는 것만 막는다(한 명 붙잡고 무한 파밍 방지) — 그 외엔
         // 공격을 당해도 상대가 목록에서 아예 사라지지는 않는다(예전의 "피격 시 12시간 자동 보호막"은
         // 폐지, 소비재로 직접 사는 자가 보호막(shield_until)만 그대로 유효).
         const attackCount = await countRecentAttacks(env, attacker.user_id, defender.user_id);
-        if (attackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY) {
-          return json({ error: "이 상대는 24시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_DAY + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
+        if (attackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_RESET) {
+          return json({ error: "이 상대는 8시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_RESET + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
         }
 
         const defenderOnline = await isTargetOnline(env, defender.user_id);
@@ -2278,7 +2296,7 @@ export default {
         const ownedMap = {};
         ownedRes.results.forEach(function (o) { ownedMap[o.item_id] = o.qty; });
         const equippedCount = await equippedCountMap(env, user.userId);
-        const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level, row0.shop_reroll_nonce);
+        const rotation = computeShopRotation(Date.now(), user.userId, row0.research_shop_level, row0.shop_reroll_nonce, effectiveMinShopItems(row0.research_shop_slots_level));
         // 재고는 "자연 로테이션 구간(bucket)"뿐 아니라 "몇 번째 리롤인지(shop_reroll_nonce)"까지
         // 합쳐서 키로 쓴다 — 안 그러면 common/uncommon처럼 후보가 적어 리롤해도 거의 항상 같은
         // 아이템이 다시 뜨는 등급은, 품절시켜 놓고 리롤해도 같은 재고 카운터를 계속 보게 되어
@@ -2337,7 +2355,7 @@ export default {
         const item = SHOP_ITEMS[itemId];
         if (!item) return json({ error: "알 수 없는 아이템입니다." }, 400);
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce);
+        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
         if (rotation.itemIds.indexOf(itemId) === -1) return json({ error: "지금 상점에 없는 아이템입니다(로테이션이 바뀌었어요)." }, 400);
 
         if (row.pocket_coins < item.price) return json({ error: "코인이 부족합니다." }, 400);
@@ -2747,6 +2765,10 @@ export default {
           rarityColors: Object.fromEntries(RARITY_ORDER.map(function (r) { return [r, RARITY_META[r].color]; })),
           expeditionUnlocked: !!row.research_expedition_unlocked,
           expeditionUnlockCost: RESEARCH_EXPEDITION_UNLOCK_COST,
+          slotsLevel: row.research_shop_slots_level || 0,
+          slotsMaxLevel: RESEARCH_SLOTS_MAX_LEVEL,
+          slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
+          slotsUpgradeCost: (row.research_shop_slots_level || 0) >= RESEARCH_SLOTS_MAX_LEVEL ? null : researchSlotsUpgradeCost(row.research_shop_slots_level || 0),
         });
       }
 
@@ -2773,6 +2795,25 @@ export default {
         row.research_expedition_unlocked = 1;
         await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_expedition_unlocked=1 WHERE user_id=?").bind(row.diamonds, row.user_id).run();
         return json({ ok: true, diamonds: row.diamonds, expeditionUnlocked: true });
+      }
+
+      // ── POST /research/slots-upgrade — 다이아를 써서 상점에 뜨는 최소 진열 개수를 레벨당 1개
+      //    늘린다(RESEARCH_SLOTS_MAX_LEVEL에서 상한). 행운 연구(등급 확률)와는 완전히 별개 축 —
+      //    이건 순수하게 "몇 개나 보이는지"만 늘린다. ──
+      if (request.method === "POST" && path === "/research/slots-upgrade") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const level = row.research_shop_slots_level || 0;
+        if (level >= RESEARCH_SLOTS_MAX_LEVEL) return json({ error: "이미 최대 레벨입니다." }, 400);
+        const cost = researchSlotsUpgradeCost(level);
+        if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
+        row.diamonds -= cost;
+        row.research_shop_slots_level = level + 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_shop_slots_level=? WHERE user_id=?").bind(row.diamonds, row.research_shop_slots_level, row.user_id).run();
+        return json({
+          ok: true, diamonds: row.diamonds, slotsLevel: row.research_shop_slots_level,
+          slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
+          nextCost: row.research_shop_slots_level >= RESEARCH_SLOTS_MAX_LEVEL ? null : researchSlotsUpgradeCost(row.research_shop_slots_level),
+        });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -3047,12 +3088,12 @@ export default {
         // 홈 행성도 이제 공격 대상이다 — 정복하면 그 즉시 일반 행성으로 강등되고(is_home=0),
         // 원래 주인은 다음 접속 때 ensureHomePlanet이 새 홈 행성을 자동으로 만들어준다.
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
-        // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 24시간 안에 너무 많이 노리는 것만 막는다
+        // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 이번 8시간 주기 안에 너무 많이 노리는 것만 막는다
         // — opponent_id가 소유자 한 명으로 고정이라 그 사람 행성이 몇 개든 합쳐서 센다.
         if (planet.owner_user_id) {
           const planetAttackCount = await countRecentAttacks(env, user.userId, planet.owner_user_id, "planet_attack");
-          if (planetAttackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_DAY) {
-            return json({ error: "이 유저의 행성은 24시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_DAY + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
+          if (planetAttackCount >= PVP_MAX_ATTACKS_PER_TARGET_PER_RESET) {
+            return json({ error: "이 유저의 행성은 8시간 안에 이미 " + PVP_MAX_ATTACKS_PER_TARGET_PER_RESET + "번 공격했습니다. 다른 대상을 노려보세요." }, 400);
           }
         }
 

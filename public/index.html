@@ -599,12 +599,16 @@
             <div class="diamond-exchange-card">
               <div class="diamond-exchange-title">💎 다이아 교환</div>
               <div class="diamond-exchange-balance">보유 다이아 <b id="shopDiamondBalance">0</b></div>
-              <p class="dim" style="margin:6px 0 10px;">코인 <b id="shopExchangeCost">10,000</b>개 → 다이아 1개</p>
-              <button class="btn-primary" id="exchangeDiamondBtn" style="width:100%;">교환하기</button>
+              <p class="dim" style="margin:6px 0 10px;">코인 <b id="shopExchangeCost">150,000</b>개 → 다이아 1개</p>
+              <div class="bank-form" style="margin-bottom:10px;">
+                <input id="exchangeDiamondQty" type="number" min="1" value="1" placeholder="개수" />
+                <button class="btn-ghost" id="exchangeDiamondMaxBtn">MAX</button>
+              </div>
+              <button class="btn-primary" id="exchangeDiamondBtn" style="width:100%;">교환하기 (💰 <span id="exchangeDiamondTotalCost">150,000</span>)</button>
             </div>
             <div class="diamond-exchange-card" style="margin-top:14px;border-left-color:var(--stamina);">
               <div class="diamond-exchange-title" style="color:var(--stamina);">🎲 상점 리롤</div>
-              <p class="dim" style="margin:0 0 10px;">지금 목록이 마음에 안 들면 다이아 <b id="shopRerollCost">2</b>개로 즉시 다시 뽑기(다음 자연 로테이션 시각은 그대로).</p>
+              <p class="dim" style="margin:0 0 10px;">지금 목록이 마음에 안 들면 다이아 <b id="shopRerollCost">1</b>개로 즉시 다시 뽑기(다음 자연 로테이션 시각은 그대로).</p>
               <button class="btn-primary" id="rerollShopBtn" style="width:100%;">리롤하기</button>
             </div>
           </div>
@@ -663,12 +667,17 @@
           <div class="research-node-title">🍀 상점 행운 연구 <span class="research-level-tag" id="researchShopLevelTag">Lv.0</span></div>
           <p class="dim">다이아로 상점에서 rare 이상 등급이 뜰 확률을 영구적으로 올립니다. 레벨이 오를수록 다음 레벨 비용도 크게 늘어납니다.</p>
           <div class="research-rarity-table" id="researchRarityTable"></div>
-          <button class="btn-primary" id="researchShopUpgradeBtn">연구하기 (💎 <span id="researchShopCost">10</span>)</button>
+          <button class="btn-primary" id="researchShopUpgradeBtn">연구하기 (💎 <span id="researchShopCost">150</span>)</button>
+        </div>
+        <div class="research-node">
+          <div class="research-node-title">🗄️ 상점 진열대 확장 연구 <span class="research-level-tag" id="researchSlotsLevelTag">Lv.0</span></div>
+          <p class="dim">다이아로 상점에 한 번에 뜨는 최소 진열 개수를 영구적으로 늘립니다(등급 확률과는 무관 — 순수하게 "몇 개나 보이는지"만). 현재 최소 <b id="researchSlotsCurrent">8</b>개.</p>
+          <button class="btn-primary" id="researchSlotsUpgradeBtn">연구하기 (💎 <span id="researchSlotsCost">15</span>)</button>
         </div>
         <div class="research-node">
           <div class="research-node-title">🛰️ 원정 연구 <span class="research-level-tag" id="researchExpeditionTag">미해금</span></div>
           <p class="dim">해금하면 Galaxy Map의 정예/악몽/극한 등급 행성에 원정을 보낼 수 있습니다 — 태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정하므로, 자리에 없어도(오프라인이어도) 가능합니다. 결과는 나중에 Hack Log 최상단에서 확인하세요.</p>
-          <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">20</span>)</button>
+          <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">300</span>)</button>
         </div>
       </div>
 
