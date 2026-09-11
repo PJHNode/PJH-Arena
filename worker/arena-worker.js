@@ -219,6 +219,13 @@ const SHOP_ITEMS = {
 // 8시간 동안 몇 번 맞았는지만 정확히 세므로 이 구멍이 없다.
 const PVP_MAX_ATTACKS_PER_TARGET_PER_RESET = 5;
 const ATTACK_LIMIT_RESET_MS = 8 * 60 * 60 * 1000;
+// 공격(PvP 직접/행성/원정) 직후 30초 동안은 다음 공격을 아예 못 한다 — 대상이 누구든, 어떤
+// 종류의 공격이든 상관없이 "내가 마지막으로 공격한 시각"만 본다. 연속 클릭/매크로로 몰아
+// 때리는 것 자체를 막는 전역 쿨다운이라, 위 8시간/5회 한도(같은 상대 한정)와는 별개다.
+const ATTACK_COOLDOWN_MS = 30 * 1000;
+function attackCooldownRemainingMs(row) {
+  return row.last_attack_at ? Math.max(0, ATTACK_COOLDOWN_MS - (Date.now() - row.last_attack_at)) : 0;
+}
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
@@ -926,6 +933,8 @@ async function ensureSchema(env) {
   // /activity-summary 호출 시 이 시각 이후의 arena_logs(피격/행성 강탈당함)를 모아 보여주고
   // 그 즉시 이 시각을 지금으로 갱신한다(다음엔 또 그 이후분만 보여줌 — 읽으면 확인 처리).
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_activity_summary_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 공격 쿨다운(30초) — 마지막으로 공격(PvP/행성/원정 무엇이든)한 시각.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
 
   // ── 클럽 전쟁 시즌 — 기존 arena_clubs.war_score(전체 누적)는 그대로 두고, 시즌별 점수만
   // 따로 쌓는다(club_id, season_bucket) 복합키. 시즌 경계는 별도 크론 없이 시간을 CLUB_WAR_
@@ -1411,7 +1420,8 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
         await env.DB.prepare("UPDATE arena_bots SET stationed_planet_id = NULL WHERE stationed_planet_id = ?").bind(planet.id).run();
       }
     }
-    attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
+    // 완전 승리(3판 전승)면 HP 손실 없음 — 스치지도 않고 이겼는데 깎이는 게 이상하다는 요청 반영.
+    if (!sweep) attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
   } else {
     attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
   }
@@ -1759,6 +1769,8 @@ export default {
 
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
+        const cooldownLeft = attackCooldownRemainingMs(attacker);
+        if (cooldownLeft > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
 
         const defender = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(targetUserId).first();
         if (!defender) return json({ error: "대상을 찾을 수 없습니다." }, 404);
@@ -1828,25 +1840,28 @@ export default {
           attackerGain = Math.round(coinsDelta * clubBonus * rebirthBoostMult(attacker));
           attacker.pocket_coins += attackerGain;
           defender.hp = clamp(defender.hp - PVP_WIN_DEF_HP_LOSS, 0, defender.max_hp);
-          attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
+          // 완전 승리(3판 전승)면 공격자 HP 손실 없음 — 방어자 쪽 피해는 그대로(패배 페널티라
+          // 공격자가 얼마나 완벽하게 이겼는지와는 무관).
+          if (!sweep) attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
           attacker.plunder_wins += 1;
         } else {
           defender.hp = clamp(defender.hp - PVP_LOSE_DEF_HP_LOSS, 0, defender.max_hp);
           attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
         }
 
+        attacker.last_attack_at = Date.now();
         await env.DB.batch([
           env.DB.prepare(
-            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+            "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, plunder_wins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
           ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, attacker.plunder_wins, stanceId,
-                 attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id),
+                 attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id),
           env.DB.prepare(
             "UPDATE arena_users SET hp=?, pocket_coins=?, shield_until=? WHERE user_id=?"
           ).bind(defender.hp, defender.pocket_coins, defender.shield_until, defender.user_id),
         ]);
 
         const attackResult = attackerWins ? (isCrit ? "crit" : "win") : "lose";
-        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? attackerGain : 0, attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? attackerGain : 0, attackerWins ? (sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS);
         await insertLog(env, defender.user_id, "pvp_defend", attacker.user_id, attacker.real_name, attackerWins ? "lose" : "win", attackerWins ? -coinsDelta : 0, attackerWins ? -PVP_WIN_DEF_HP_LOSS : -PVP_LOSE_DEF_HP_LOSS);
         if (attackerWins) await recordWarScoreIfHostile(env, attacker.user_id, defender.user_id);
         await bumpDailyProgress(env, attacker.user_id, "battles");
@@ -3179,6 +3194,8 @@ export default {
 
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
+        const cooldownLeft1 = attackCooldownRemainingMs(attacker);
+        if (cooldownLeft1 > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft1 / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
         if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
 
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
@@ -3199,12 +3216,13 @@ export default {
         if (result.error) return json({ error: result.error }, 400);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
+        attacker.last_attack_at = Date.now();
         await env.DB.prepare(
-          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
-        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id).run();
+          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
+        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
 
         await insertLog(env, attacker.user_id, "planet_attack", result.isBotPlanet ? null : planet.owner_user_id, result.isBotPlanet ? planet.name : planet.owner_name,
-          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, result.attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
         if (!result.isBotPlanet && result.attackerWins) {
           await insertLog(env, planet.owner_user_id, "planet_lost", user.userId, user.realName, "lose", -result.lootCoins, 0);
         }
@@ -3231,6 +3249,8 @@ export default {
         const attacker = await loadOrCreateUser(env, user.userId, user.realName);
         if (!attacker.research_expedition_unlocked) return json({ error: "원정 연구를 먼저 해금하세요." }, 400);
         if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
+        const cooldownLeft2 = attackCooldownRemainingMs(attacker);
+        if (cooldownLeft2 > 0) return json({ error: "공격 후 " + Math.ceil(cooldownLeft2 / 1000) + "초 동안은 다시 공격할 수 없습니다." }, 400);
         if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
 
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
@@ -3249,12 +3269,13 @@ export default {
         if (result.error) return json({ error: result.error }, 400);
 
         attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
+        attacker.last_attack_at = Date.now();
         await env.DB.prepare(
-          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
-        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.user_id).run();
+          "UPDATE arena_users SET stamina=?, hp=?, pocket_coins=?, last_stance=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
+        ).bind(attacker.stamina, attacker.hp, attacker.pocket_coins, stanceId, attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
 
         await insertLog(env, attacker.user_id, "planet_expedition", null, planet.name,
-          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, result.attackerWins ? -PVP_WIN_ATK_HP_LOSS : -PVP_LOSE_ATK_HP_LOSS);
+          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
 
         const combat = await totalCombatStats(env, attacker);
         return json({
