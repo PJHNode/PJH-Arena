@@ -188,36 +188,43 @@ const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" }
 // mythic 대비로는 90배 가까이 차이 나는 기형적인 가격 단절이 생겨 있었다 — 무기/방어 25,000→
 // 200,000(x8), 코어 75,000→600,000(x8)로 올려서 mythic(무기/방어 225만·코어 675만)과의 격차를
 // 약 11배로 줄였다(여전히 mythic보다는 확실히 싸다). value(스탯)는 그대로 — 가격만 조정.
+// ── value(스탯) 곡선 리밸런싱 — 예전엔 등급이 오를수록 배율이 오히려 줄어들었다(2, 2, 1.75,
+// 1.71, 1.67, 1.6, 1.56배로 계속 감소하다가 forbidden→abyssal에서만 갑자기 3.2배). "등급이
+// 높을수록 값이 곱셈으로 커져야 한다"는 요청 반영 — 이제 common부터 secret까지 깔끔하게
+// 매 등급 정확히 2배(5→10→20→40→80→160→320)로 커지고, forbidden에서 2.5배(320→800),
+// abyssal에서는 그보다 훨씬 큰 5배(800→4000)를 줘서 최종 등급이 확실히 도드라지게 했다.
+// 가격은 이 변경과 무관하게 그대로 둔다(리롤/시세 체계 재설계는 별도 사안). 코어는 항상
+// 무기/방어 value의 0.4배 유지.
 const SHOP_ITEMS = {
   rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
   packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
   plasma_cannon:    { name: "플라즈마 캐논",         type: "weapon", rarity: "rare",      price: 900,      value: 20 },
-  hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 4500,     value: 35 },
-  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 200000,   value: 60 },
-  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 100 },
-  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 160 },
-  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 250 },
-  abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 800 },
+  hf_blade:         { name: "고주파 블레이드",       type: "weapon", rarity: "epic",      price: 4500,     value: 40 },
+  emp_missile:      { name: "EMP 유도 미사일",       type: "weapon", rarity: "legendary", price: 200000,   value: 80 },
+  stuxnet:          { name: "Stuxnet Variant",      type: "weapon", rarity: "mythic",    price: 2250000,   value: 160 },
+  singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 320 },
+  omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 800 },
+  abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 4000 },
 
   basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
   nano_composite:   { name: "나노 복합 장갑",         type: "armor", rarity: "rare",      price: 900,      value: 20 },
-  ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 4500,     value: 35 },
-  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 200000,   value: 60 },
-  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 100 },
-  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 160 },
-  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 250 },
-  eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 800 },
+  ngfw:             { name: "Next-Gen Firewall",    type: "armor", rarity: "epic",      price: 4500,     value: 40 },
+  phase_shield:     { name: "위상 변조 실드",         type: "armor", rarity: "legendary", price: 200000,   value: 80 },
+  adaptive_ai:      { name: "Adaptive AI Shield",   type: "armor", rarity: "mythic",    price: 2250000,   value: 160 },
+  black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 320 },
+  absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 800 },
+  eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 4000 },
 
   overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
   quantum_core:       { name: "양자 연산 장치",      type: "core", rarity: "rare",      price: 2700,     value: 8 },
-  neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 13500,    value: 14 },
-  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 600000,   value: 24 },
-  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 40 },
-  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 64 },
-  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 100 },
-  voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 320 },
+  neural_accelerator: { name: "뉴럴 가속기",         type: "core", rarity: "epic",      price: 13500,    value: 16 },
+  singularity_core:   { name: "특이점 코어",         type: "core", rarity: "legendary", price: 600000,   value: 32 },
+  dimensional_proc:   { name: "차원 연산 프로세서",   type: "core", rarity: "mythic",    price: 6750000,   value: 64 },
+  observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 128 },
+  algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 320 },
+  voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 1600 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20 },
@@ -3046,17 +3053,20 @@ export default {
       }
 
       // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯을 한 번에 랜덤으로
-      //    뽑는다. 슬롯마다 "새로 뽑은 게 지금 장착된 것보다 등급이 같거나 높을 때만" 실제로
-      //    교체한다 — 예전엔 결과와 무관하게 무조건 덮어써서, 좋은 장비를 달고 재가챠했다가
-      //    운 나쁘면 하위 등급으로 떨어지는 문제가 있었다(요청 반영: "아이템이 바뀌면 안돼").
-      //    인벤토리 재고와는 무관하게 가챠가 직접 아이템을 만들어 붙여준다 — 이 3개는 실제로
-      //    장착이 안 됐어도 항상 인벤토리에 쌓인다(다른 슬롯에 나중에 꺼내 쓸 수 있게). ──
+      //    뽑아서 무조건 새로 장착한다. 예전엔 "새로 뽑은 게 지금 장착된 것보다 등급이 같거나
+      //    높을 때만" 교체했는데, 그 로직 때문에 실제로는 버그가 하나 있었다 — 어비샬 아이템은
+      //    가챠 테이블 자체에 없어서(EQUIP_ITEM_BY_TYPE_RARITY 참고, 최고가 forbidden) 어비샬을
+      //    수동 장착해 둔 슬롯은 그 뒤로 무슨 가챠를 돌려도 "롤 결과가 어비샬 이상일 때만
+      //    교체"라는 조건을 영원히 못 만족해 항상 그대로 어비샬로 남았다. 겉보기엔 "가챠가
+      //    자동으로 어비샬만 뽑는" 것처럼 보이지만 실은 롤 자체는 정상 랜덤이고 결과가 그냥
+      //    무시되고 있었던 것 — 가챠는 순수 랜덤이어야 하고 지금 장착된 것과는 무관해야
+      //    한다는 요청(신고)을 반영해 이 "보호" 로직 자체를 없앴다. ──
       if (request.method === "POST" && path === "/bots/gacha") {
         const body = await request.json().catch(function () { return {}; });
         const tierDef = BOT_GACHA_TIERS[body.tier];
         if (!tierDef) return json({ error: "알 수 없는 가챠 등급입니다." }, 400);
         const botId = parseInt(body.botId, 10);
-        const bot = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
         if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
@@ -3065,36 +3075,21 @@ export default {
         const rolled = rollBotGacha(body.tier);
         row.pocket_coins -= tierDef.price;
 
-        function rarityIdx(itemId) { return itemId && SHOP_ITEMS[itemId] ? RARITY_ORDER.indexOf(SHOP_ITEMS[itemId].rarity) : -1; }
-        function bestRarityAmong(ids) {
-          let bestI = -1, best = null;
-          ids.forEach(function (id) { const i = rarityIdx(id); if (i > bestI) { bestI = i; best = SHOP_ITEMS[id].rarity; } });
-          return best;
-        }
-        const finalWeapon = rarityIdx(rolled.weapon) >= rarityIdx(bot.equipped_weapon) ? rolled.weapon : bot.equipped_weapon;
-        const finalArmor  = rarityIdx(rolled.armor)  >= rarityIdx(bot.equipped_armor)  ? rolled.armor  : bot.equipped_armor;
-        const finalCore   = rarityIdx(rolled.core)   >= rarityIdx(bot.equipped_core)   ? rolled.core   : bot.equipped_core;
-        const upgraded = { weapon: finalWeapon !== bot.equipped_weapon, armor: finalArmor !== bot.equipped_armor, core: finalCore !== bot.equipped_core };
-        // 등급 배지도 "이번에 뽑은 것"이 아니라 "지금 실제로 장착된 3개 중 최고"로 매겨서,
-        // 슬롯 일부가 교체 안 됐어도(기존 장비가 더 좋아서) 배지가 거꾸로 떨어지지 않는다.
-        const bestRarity = bestRarityAmong([finalWeapon, finalArmor, finalCore]);
-
         await env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id).run();
-        // 가챠로 나온 3개는 실제 장착 여부와 무관하게 인벤토리에도 정식으로 한 벌씩 쌓아둔다
-        // — 이래야 이 봇을 되팔아도(장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가
-        // 사라지지 않고, 다른 슬롯에 다시 꺼내 쓸 수도 있다.
+        // 가챠로 나온 3개는 인벤토리에도 정식으로 한 벌씩 쌓아둔다 — 이래야 이 봇을 되팔아도
+        // (장비 슬롯만 비워질 뿐 인벤토리 소유는 그대로 남음) 장비가 사라지지 않고, 다른
+        // 슬롯에 다시 꺼내 쓸 수도 있다.
         await env.DB.batch([
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.weapon),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.armor),
           env.DB.prepare("INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1").bind(user.userId, rolled.core),
-          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(finalWeapon, finalArmor, finalCore, bestRarity, botId),
+          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
         ]);
 
         return json({
           ok: true, pocketCoins: row.pocket_coins,
-          weapon: finalWeapon, armor: finalArmor, core: finalCore,
-          rolledWeapon: rolled.weapon, rolledArmor: rolled.armor, rolledCore: rolled.core, upgraded: upgraded,
-          bestRarity: bestRarity, rarityLabel: RARITY_META[bestRarity].label, rarityColor: RARITY_META[bestRarity].color,
+          weapon: rolled.weapon, armor: rolled.armor, core: rolled.core,
+          bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
         });
       }
 

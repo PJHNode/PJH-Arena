@@ -1234,10 +1234,10 @@
           btn.disabled = true;
           try {
             const r = await api("/bots/gacha", { method: "POST", body: { botId: btn.dataset.gacha, tier: btn.dataset.tier } });
-            // 슬롯이 하나도 안 바뀌었으면(이미 더 좋은 걸 달고 있었음) 그렇다고 알려준다 —
-            // 아이템 자체는 인벤토리에 그대로 쌓이니 손해는 없다.
-            const anyUpgraded = r.upgraded.weapon || r.upgraded.armor || r.upgraded.core;
-            toast(anyUpgraded ? "🎰 가챠 결과: [" + r.rarityLabel + "] 등급! (더 안 좋은 슬롯은 유지됨)" : "🎰 가챠 결과가 기존 장비보다 안 좋아서 장착은 그대로예요(아이템은 인벤토리에 저장됨).");
+            // 가챠는 이제 순수 랜덤 — 기존 장비가 뭐였든 상관없이 무장/방어/코어 3슬롯이
+            // 전부 새로 뽑은 걸로 교체된다(예전엔 기존 것보다 안 좋으면 유지했는데, 그 로직이
+            // "어비샬을 달고 있으면 가챠가 영원히 어비샬만 나오는 것처럼 보이는" 버그였음).
+            toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급으로 3슬롯 전부 새로 장착!");
             state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
