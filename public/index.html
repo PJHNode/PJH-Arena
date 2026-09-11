@@ -4,16 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PJH Arena</title>
-<!-- 절제된 사이버펑크 리뉴얼 — 제목류에 쓰는 세리프(--font-serif)가 한글도 정갈하게 나오도록
-     Noto Serif KR을 불러온다(시스템에 없으면 Georgia/기본 serif로 자연히 대체됨). -->
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* ── 절제된 사이버펑크 v2 — 1차 시도가 배경/테두리뿐 아니라 포인트 컬러까지 다 죽여서
-       전체적으로 탁하다는 피드백을 받았다. 배경·카드·테두리는 여전히 어둡고 차분하게 두되,
-       "빛나고 튀어야 하는 것"(포인트 컬러, 리소스 바, 주요 버튼 글로우)은 다시 선명하고
-       채도 있게 되돌렸다 — 무광 탄광석 브론즈가 아니라 광택 있는 금동색으로. ── */
+    /* ── 구조/이펙트는 리뉴얼 이전(글로우 있는 "게임 패널" 느낌)으로 되돌리고, 색상 팔레트만
+       새 걸로 유지한다 — "그래픽은 원래대로, 색깔은 이게 낫다"는 최종 결정. 네온 초록/시안
+       대신 금동색 포인트 컬러 + 톤을 맞춘 채도 있는 hp/energy/stamina/danger. ── */
     --bg: #060809;
     --surface: #10151c;
     --surface-2: #19212b;
@@ -21,7 +16,7 @@
     --text: #eef1f4;
     --sub: #96a0b0;
     --accent: #f5c869;
-    --accent-glow: rgba(245, 200, 105, 0.55);
+    --accent-glow: rgba(245, 200, 105, 0.35);
     --accent-contrast: #201404; /* 밝은 금색 배경 위에 올라가는 어두운 웜톤 글자색 */
     --cyan: #d9e6f0;
     --danger: #ff7590;
@@ -29,7 +24,6 @@
     --energy: #7ad99c;
     --stamina: #ffbb66;
     --font-mono: 'Consolas', 'SFMono-Regular', Menlo, monospace;
-    --font-serif: Georgia, 'Noto Serif KR', serif;
   }
   /* ── 환생 마스터(10회, 최고 등급) 전용 사이트 테마 — body.theme-ascended가 붙으면 초록
      사이버펑크 팔레트 대신 자수정/마젠타 팔레트로 전체가 바뀐다. 레이아웃은 그대로 두고
@@ -43,7 +37,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-mono);
     min-height: 100vh; display: flex; flex-direction: column; line-height: 1.5;
-    background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(176,141,87,0.04), transparent 60%);
+    background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(245,200,105,0.05), transparent 60%);
     background-attachment: fixed;
   }
   body.theme-ascended { background-image: radial-gradient(ellipse 1200px 700px at 50% -10%, rgba(255,46,196,0.09), transparent 60%); }
@@ -56,27 +50,25 @@
      가깝게 만든다(라운드 코너 + 은은한 발광 + 눌림/호버 피드백). 색상 팔레트나 레이아웃은
      그대로 두고 마감만 다듬은 것이라 위험 없이 전체 화면에 일괄 적용된다. ── */
   .btn-primary, .btn-ghost, .btn-danger {
-    border-radius: 3px; transition: filter 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
+    border-radius: 4px; transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
   }
-  /* 기본기는 절제하되(사각·헤어라인), 실제로 누르는 순간엔 확실히 반응하도록 은은한 글로우를 준다. */
-  .btn-primary:hover:not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 10px var(--accent-glow); }
-  .btn-ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--cyan); box-shadow: 0 0 9px rgba(217,230,240,0.35); }
-  .btn-danger:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 12px rgba(255,117,144,0.5); }
-  .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.97); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px var(--accent-glow); }
+  .btn-ghost:hover:not(:disabled) { background: rgba(217,230,240,0.12); box-shadow: 0 0 8px rgba(217,230,240,0.25); }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.15); box-shadow: 0 0 10px rgba(255,117,144,0.4); }
+  .btn-primary:active:not(:disabled), .btn-ghost:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: scale(0.96); }
 
-  .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 3px; }
-  .exp-fill, .resource-fill, .club-xp-fill, .enchant-level-fill { border-radius: 3px; }
+  .exp-track, .resource-track, .club-xp-track, .enchant-level-track { border-radius: 5px; }
+  .exp-fill, .resource-fill, .club-xp-fill, .enchant-level-fill { border-radius: 5px; }
 
   .job-card, .shop-card, .achievement-card, .enchant-card, .diamond-exchange-card, .research-node,
   .trade-composer, .trade-row, .club-header, .club-browse-card, .club-create-card, .daily-widget,
   .admin-card, .profile-card, .profile-slot, .profile-edit, .bot-card, .bot-recruit-card,
   .property-card, .galaxy-empire, .planet-card, .bank-card, .club-chat-box {
-    border-radius: 4px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    border-radius: 6px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
   }
-  /* 카드 호버는 색 글로우 없이 아주 은은한 중립 그림자로만 살짝 들어올린다(고풍스럽고 담백하게). */
   .job-card:hover, .shop-card:hover, .achievement-card:hover, .enchant-card:hover, .bot-card:hover,
   .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover {
-    transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.35); border-color: #6b7889;
+    transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   }
   .pvp-row, .lb-row, .log-row, .inv-row, .club-member-row, .club-relation-row, .daily-quest-row {
     transition: background 0.12s ease;
@@ -99,7 +91,7 @@
   .avatar-icon { font-size: 22px; line-height: 1; }
   .exp-wrap { flex: 1; min-width: 160px; max-width: 260px; }
   .exp-track { background: var(--surface-2); border: 1px solid var(--border); height: 8px; overflow: hidden; }
-  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; box-shadow: 0 0 8px var(--accent-glow); }
+  .exp-fill { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; box-shadow: 0 0 6px var(--accent-glow); }
   #expText { font-size: 10px; color: var(--sub); }
   .pocket-tag { font-size: 13px; color: var(--stamina); margin-left: auto; }
   .stat-mini { font-size: 11px; color: var(--sub); }
@@ -134,9 +126,9 @@
   .resource-eta { flex-shrink: 0; font-size: 10px; color: var(--cyan); opacity: 0.85; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
-  .resource-fill.hp { background: var(--hp); box-shadow: 0 0 7px rgba(122,180,240,0.7); }
-  .resource-fill.energy { background: var(--energy); box-shadow: 0 0 7px rgba(122,217,156,0.7); }
-  .resource-fill.stamina { background: var(--stamina); box-shadow: 0 0 7px rgba(255,187,102,0.7); }
+  .resource-fill.hp { background: var(--hp); box-shadow: 0 0 6px rgba(122,180,240,0.6); }
+  .resource-fill.energy { background: var(--energy); box-shadow: 0 0 6px rgba(122,217,156,0.6); }
+  .resource-fill.stamina { background: var(--stamina); box-shadow: 0 0 6px rgba(255,187,102,0.6); }
   .atk-def-row { display: flex; gap: 16px; align-items: center; font-size: 12px; padding-left: 8px; flex-wrap: wrap; }
   .stat-plus-btn {
     width: 16px; height: 16px; line-height: 14px; padding: 0; background: var(--accent); color: var(--accent-contrast);
@@ -168,7 +160,7 @@
     background: none; border: none; color: var(--sub); text-align: left; padding: 10px 18px; font-size: 12px;
     border-left: 3px solid transparent; transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
   }
-  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 12px var(--accent-glow); }
+  .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 14px rgba(245,200,105,0.08); }
   .side-tab:hover { color: var(--text); background: var(--surface-2); }
   .side-section-label {
     font-size: 9px; color: var(--sub); opacity: 0.6; text-transform: uppercase; letter-spacing: 0.1em;
@@ -178,7 +170,7 @@
 
   .content { flex: 1; padding: 20px; overflow-y: auto; }
   .tab-panel { display: none; }
-  .panel-title { font-size: 15px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.03em; font-family: var(--font-serif); font-weight: bold; }
+  .panel-title { font-size: 14px; color: var(--accent); margin: 0 0 14px; letter-spacing: 0.04em; }
   .panel-subtitle { font-size: 12px; color: var(--sub); margin: 22px 0 8px; font-weight: bold; }
 
   .accent-text { color: var(--accent); }
@@ -265,7 +257,7 @@
 
   /* Club */
   .club-header { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); padding: 16px; margin-bottom: 16px; }
-  .club-header-title { font-size: 17px; font-weight: bold; margin-bottom: 4px; font-family: var(--font-serif); }
+  .club-header-title { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
   .club-header-meta { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
   .club-header-actions { display: flex; gap: 8px; }
   .club-section-title { font-size: 12px; color: var(--sub); font-weight: bold; margin: 18px 0 8px; }
@@ -313,7 +305,7 @@
   .profile-card { background: var(--surface); border: 2px solid var(--border); padding: 20px; margin-bottom: 18px; position: relative; }
   .profile-card.rebirth-glow { animation: profileGlow 2s ease-in-out infinite; }
   @keyframes profileGlow { 0%, 100% { box-shadow: 0 0 8px rgba(255,215,0,0.4); } 50% { box-shadow: 0 0 22px rgba(255,215,0,0.8); } }
-  .profile-card-name { font-size: 19px; font-weight: bold; margin-bottom: 6px; font-family: var(--font-serif); }
+  .profile-card-name { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
   .profile-card-name .rebirth-badge { color: #ffd700; font-size: 12px; border: 1px solid #ffd700; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
   .rebirth-name-badge { color: #ffd700; font-size: 10px; font-weight: bold; border: 1px solid #ffd700; padding: 1px 6px; white-space: nowrap; }
 
@@ -467,7 +459,7 @@
   #authCloseBtn { position: absolute; top: 10px; right: 14px; background: none; border: none; color: var(--sub); font-size: 16px; }
 
   #loggedOutHint { text-align: center; padding: 80px 20px; color: var(--sub); }
-  #loggedOutHint h1 { color: var(--accent); font-size: 32px; font-family: var(--font-serif); letter-spacing: 0.03em; text-shadow: 0 0 20px var(--accent-glow); }
+  #loggedOutHint h1 { color: var(--accent); font-size: 30px; text-shadow: 0 0 18px var(--accent-glow); letter-spacing: 0.06em; }
   #loggedOutHint p { font-size: 13px; }
   #loggedOutCta {
     margin-top: 22px; background: var(--accent); color: var(--accent-contrast); border: none; font-weight: bold;
@@ -504,7 +496,7 @@
   .timing-wrap { text-align: center; }
   .timing-round-label { font-size: 11px; color: var(--sub); margin-bottom: 10px; }
   .timing-track { position: relative; height: 30px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 14px; overflow: hidden; }
-  .timing-sweetspot { position: absolute; top: 0; bottom: 0; background: var(--accent-glow); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+  .timing-sweetspot { position: absolute; top: 0; bottom: 0; background: rgba(245,200,105,0.25); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
   .timing-marker { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--danger); }
   .timing-stop-btn { width: 100%; background: var(--danger); color: #fff; border: none; font-weight: bold; padding: 12px; font-size: 13px; letter-spacing: 0.05em; }
   .round-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; }
