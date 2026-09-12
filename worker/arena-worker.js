@@ -1633,15 +1633,19 @@ function gachaRarityValue(type, rarity) {
   const it = id ? SHOP_ITEMS[id] : null;
   return it ? it.value : 0;
 }
-// 봇은 equipped_*(실제 인벤토리 아이템, /bots/equip으로만 채움)이 있으면 그게 항상 우선이고,
-// 없는 슬롯만 가챠로 뽑은 가상 등급(gacha_*_rarity) 값을 대신 쓴다 — 가챠를 아무리 돌려도
-// "그 봇 자체의 무기가 바뀌는" 일은 없고(equipped_weapon은 그대로), 등급에 따른 전투 보너스만
-// 오른다(요청 반영). 플레이어 본인(row)은 gacha_*_rarity 자체가 없어서 항상 0으로 무시된다.
+// 봇은 equipped_*(실제 인벤토리 아이템, /bots/equip으로만 채움)와 가챠로 뽑은 가상 등급
+// (gacha_*_rarity) 중 "더 높은 값"을 슬롯별로 쓴다(요청 반영: "장비를 장착하면 스탯이
+// 낮아지면 안 된다 — 아무것도 없으면 0, 장착하면 그만큼 보너스가 붙어야 한다"). 예전엔
+// "실제 장착 있으면 무조건 그게 우선"이었는데, 그러면 고등급 가챠 결과 위에 저등급 아이템을
+// 얹었을 때 오히려 스탯이 깎이는 역설이 생겼다 — max로 바꿔서 장착은 항상 "손해가 아니거나
+// 이득"이 되게 했다. 가챠를 한 번도 안 돌렸으면 가상 등급이 0이라 실제 장착값이 그대로
+// 나오고, 아예 아무것도 없으면(둘 다 0) 스탯도 0이다. 플레이어 본인(row)은 gacha_*_rarity
+// 자체가 없어서 항상 0으로 무시된다.
 function equipStats(unit, enchantMap, maxLevel) {
   return {
-    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap, maxLevel) || gachaRarityValue("weapon", unit.gacha_weapon_rarity),
-    def: slotBonus(unit.equipped_armor, "armor", enchantMap, maxLevel) || gachaRarityValue("armor", unit.gacha_armor_rarity),
-    crit: slotBonus(unit.equipped_core, "core", enchantMap, maxLevel) || gachaRarityValue("core", unit.gacha_core_rarity),
+    atk: Math.max(slotBonus(unit.equipped_weapon, "weapon", enchantMap, maxLevel), gachaRarityValue("weapon", unit.gacha_weapon_rarity)),
+    def: Math.max(slotBonus(unit.equipped_armor, "armor", enchantMap, maxLevel), gachaRarityValue("armor", unit.gacha_armor_rarity)),
+    crit: Math.max(slotBonus(unit.equipped_core, "core", enchantMap, maxLevel), gachaRarityValue("core", unit.gacha_core_rarity)),
   };
 }
 
