@@ -1712,6 +1712,60 @@
     $("bankVault").textContent = fmt(state.bankCoins);
   }
 
+  // ── 슬롯머신(Slots) — "그 로또에다가 슬롯머신 추가하자" 요청 반영. 다크넷 로또 탭 안에
+  //    같이 들어간다(별도 탭 아님). 릴 3칸은 정적 마크업이라(renderRaffleTab이 다시 그리는
+  //    .raffle-grid 밖) 리스너는 한 번만 건다. 실제 결과는 서버가 즉시 계산해서 주지만,
+  //    바로 보여주면 심심하니 짧게 랜덤 심볼을 돌리는 연출(스핀) 후 결과를 반영한다.
+  const SLOT_SYMBOL_EMOJI = { cherry: "🍒", bell: "🔔", coin: "💰", diamond: "💎", seven: "7️⃣", crown: "👑" };
+  function initSlotMachine() {
+    const betInput = $("slotBetInput");
+    const spinBtn = $("slotSpinBtn");
+    const reelsEl = $("slotReels");
+    const resultNote = $("slotResultNote");
+    if (!spinBtn || !reelsEl) return;
+    const reelEls = Array.from(reelsEl.querySelectorAll(".slot-reel"));
+    document.querySelectorAll("button[data-slotbet]").forEach((btn) => {
+      btn.addEventListener("click", () => { betInput.value = btn.dataset.slotbet; });
+    });
+    spinBtn.addEventListener("click", async () => {
+      const bet = Math.floor(Number(betInput.value) || 0);
+      if (bet < 100) { toast("최소 배팅액은 100 코인입니다.", true); return; }
+      if (!state || state.pocketCoins < bet) { toast("코인이 부족합니다.", true); return; }
+      spinBtn.disabled = true;
+      resultNote.textContent = "";
+      reelEls.forEach((el) => el.classList.add("spinning"));
+      // 스핀 연출 — 결과가 오기 전까지 릴을 무작위 심볼로 빠르게 굴린다(순수 시각 효과).
+      const emojiList = Object.values(SLOT_SYMBOL_EMOJI);
+      const spinTimer = setInterval(() => {
+        reelEls.forEach((el) => { el.textContent = emojiList[Math.floor(Math.random() * emojiList.length)]; });
+      }, 80);
+      try {
+        const [r] = await Promise.all([
+          api("/slots/spin", { method: "POST", body: { bet: bet } }),
+          new Promise((resolve) => setTimeout(resolve, 900)), // 최소 스핀 연출 시간
+        ]);
+        clearInterval(spinTimer);
+        reelEls.forEach((el, i) => {
+          el.classList.remove("spinning");
+          el.textContent = SLOT_SYMBOL_EMOJI[r.reels[i]] || "❓";
+          el.classList.toggle("won", r.payout > 0);
+        });
+        if (r.payout > 0) {
+          resultNote.textContent = "🎉 " + r.multiplier + "배 당첨! +" + fmt(r.payout) + " 코인";
+          toast("🎰 " + r.multiplier + "배 당첨! +" + fmt(r.payout) + " 코인");
+        } else {
+          resultNote.textContent = "꽝 — 다시 도전!";
+        }
+        state.pocketCoins = r.pocketCoins; renderHeader();
+      } catch (e) {
+        clearInterval(spinTimer);
+        reelEls.forEach((el) => el.classList.remove("spinning"));
+        toast(e.message, true);
+      }
+      spinBtn.disabled = false;
+    });
+  }
+
   // ── 다크넷 로또(Raffle) — "RNG 느낌의 탭" 요청 반영. 코인으로 티켓을 사서 판돈에 참여하고,
   //    라운드가 끝나면 산 티켓 수에 비례한 확률로 한 명이 판돈(의 85%, 나머지는 하우스 몫)을
   //    가져간다. 수익원이 아니라 순수 코인 소모처 — Property처럼 "액티브를 못 이겨야 한다"는
@@ -3010,6 +3064,7 @@
         else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "raffle_win") { icon = "🎫"; desc = escapeHtml(l.opponent_name || "") + " 등급 다크넷 로또 당첨!"; }
         else if (l.kind === "stock_sell") { icon = "📈"; desc = escapeHtml(l.opponent_name || "") + " 주식 매도"; }
+        else if (l.kind === "slot_win") { icon = "🎰"; desc = escapeHtml(l.opponent_name || "") + " 슬롯머신 당첨!"; }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
           '<div class="log-row"><span>' + icon + "</span><span>" + desc + '</span><span class="' + coinCls + '">' +
@@ -3062,6 +3117,7 @@
     initClubButtons();
     initDailyButtons();
     initSignalInterceptButton();
+    initSlotMachine();
     initAdminButtons();
     initProfileButtons();
     initPropertyButtons();
