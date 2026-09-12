@@ -1119,6 +1119,9 @@
 
   let shopNextRotationAt = 0;
   let shopDiamondExchangeCost = 0;
+  // 자동 리롤 진행 상태 — 서버는 한 번에 한 번만 리롤하고, 여기서 AUTO_RETRY_DELAY_MS(3초)
+  // 간격으로 반복 호출한다("바로 되기보다는 계속 시도하는 쿨타임 느낌" 요청 반영).
+  let shopAutoRerollToken = null;
   // ── ③ Hardware Shop — 장비(무장/방어/코어)는 여러 개 살 수 있다(플레이어+봇에 나눠 장착).
   //    상점은 4분마다 통째로 리롤되는 공용 로테이션이라, 카운트다운이 0이 되면 자동으로 다시 그린다. ──
   async function renderShopTab() {
@@ -1219,20 +1222,42 @@
       rerollBtn.disabled = false;
     });
     const autoRerollBtn = $("shopAutoRerollBtn");
-    if (autoRerollBtn) autoRerollBtn.addEventListener("click", async () => {
-      const raritySel = $("shopAutoRerollRarity");
-      autoRerollBtn.disabled = true;
-      const original = autoRerollBtn.textContent;
-      autoRerollBtn.textContent = "자동 리롤 중...";
-      try {
-        const r = await api("/shop/reroll-auto", { method: "POST", body: { targetRarity: raritySel.value } });
-        if (r.found) toast("🎯 자동 리롤 성공! " + fmt(r.attempts) + "회 만에 목표 등급을 찾았습니다.");
-        else toast("자동 리롤 " + fmt(r.attempts) + "회 시도했지만 목표 등급을 못 찾았습니다(다이아 부족 또는 시도 한도 도달) — 다이아를 모아 다시 시도하세요.", true);
-        renderShopTab();
-      } catch (e) { toast(e.message, true); }
-      autoRerollBtn.disabled = false;
-      autoRerollBtn.textContent = original;
-    });
+    if (autoRerollBtn) {
+      if (shopAutoRerollToken) autoRerollBtn.textContent = "⏹ 취소 (진행 중...)";
+      autoRerollBtn.addEventListener("click", () => {
+        if (shopAutoRerollToken) { shopAutoRerollToken.cancelled = true; return; } // 진행 중 클릭 = 취소
+
+        const raritySel = $("shopAutoRerollRarity");
+        const targetRarity = raritySel.value;
+        const token = { cancelled: false };
+        shopAutoRerollToken = token;
+        raritySel.disabled = true;
+        let attempts = 0;
+
+        function stop(msg, isError) {
+          shopAutoRerollToken = null;
+          autoRerollBtn.textContent = "목표 등급까지 자동 리롤";
+          raritySel.disabled = false;
+          toast(msg, !!isError);
+          renderShopTab();
+        }
+        async function attempt() {
+          if (token.cancelled) { stop("자동 리롤을 취소했습니다. (" + attempts + "회 시도)"); return; }
+          attempts++;
+          autoRerollBtn.textContent = "⏹ 취소 (" + attempts + "회 시도 중...)";
+          let r;
+          try {
+            r = await api("/shop/reroll", { method: "POST" });
+          } catch (e) { stop(e.message, true); return; }
+          if (r.rarities.indexOf(targetRarity) !== -1) { stop("🎯 자동 리롤 성공! " + attempts + "회 만에 목표 등급을 찾았습니다."); return; }
+          if (token.cancelled) { stop("자동 리롤을 취소했습니다. (" + attempts + "회 시도)"); return; }
+          // 다음 시도까지 3초 대기 — "바로 되기보다는 계속 시도하는 쿨타임 느낌" 요청 반영.
+          autoRerollBtn.textContent = "⏹ 취소 (" + attempts + "회, 대기 중...)";
+          setTimeout(attempt, AUTO_RETRY_DELAY_MS);
+        }
+        attempt();
+      });
+    }
   }
 
   // 1초마다 카운트다운 갱신, 0이 되면(로테이션이 바뀌면) 상점 탭이 보이는 동안만 자동 재조회.
@@ -1303,6 +1328,14 @@
     premium:  { label: "Premium",  price: 10000000 },
   };
   let botsTabLoadedOnce = false;
+  // 자동 뽑기 진행 상태(botId → { cancelled }) — "바로 되기보다는 계속 시도하는 쿨타임
+  // 느낌" 요청 반영: 서버는 한 번에 한 번만 굴리고, 여기서 3초 간격으로 반복 호출한다.
+  // 탭이 다시 그려져도(장착 변경 등) 진행 중인 루프가 끊기지 않도록 el 재조회 없이
+  // 클로저로 잡은 버튼/셀렉트 참조만 갱신한다 — 도중에 다른 이유로 renderBotsTab이 다시
+  // 불리면 그 버튼은 DOM에서 떨어져 나가 화면엔 안 보이지만(진행 중 표시가 잠깐 사라짐),
+  // 다음 완료 시점의 renderBotsTab() 호출로 다시 정상 상태로 돌아온다.
+  const botAutoRollTokens = new Map();
+  const AUTO_RETRY_DELAY_MS = 3000;
   async function renderBotsTab() {
     const panel = $("panel-bots");
     const el = panel.querySelector(".bot-roster");
@@ -1473,22 +1506,48 @@
         });
       });
       el.querySelectorAll("button[data-auto-gacha]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const botId = btn.dataset.autoGacha;
+        const botId = btn.dataset.autoGacha;
+        // 이미 이 봇에 대해 자동 뽑기가 진행 중이면(탭을 잠깐 떠났다 돌아온 경우) 버튼을
+        // "취소" 상태로 복원해서 이어서 볼 수 있게 한다.
+        if (botAutoRollTokens.has(botId)) btn.textContent = "⏹ 취소 (진행 중...)";
+        btn.addEventListener("click", () => {
+          const running = botAutoRollTokens.get(botId);
+          if (running) { running.cancelled = true; return; } // 이미 도는 중이면 클릭 = 취소
+
           const tierSel = el.querySelector('select[data-auto-tier="' + botId + '"]');
           const raritySel = el.querySelector('select[data-auto-rarity="' + botId + '"]');
-          btn.disabled = true;
-          const original = btn.textContent;
-          btn.textContent = "자동 뽑는 중...";
-          try {
-            const r = await api("/bots/gacha", { method: "POST", body: { botId: botId, tier: tierSel.value, autoTarget: raritySel.value } });
-            if (r.autoFound) {
-              toast("🎯 자동 뽑기 성공! " + fmt(r.attempts) + "회 만에 [" + r.rarityLabel + "] 등급 획득 (실제 장착 장비는 그대로)");
-            } else {
-              toast("자동 뽑기 " + fmt(r.attempts) + "회 시도했지만 목표 등급을 못 얻었습니다(코인 부족 또는 시도 한도 도달) — 코인을 모아 다시 시도하세요.", true);
-            }
-            state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
-          } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = original; }
+          const targetRarity = raritySel.value;
+          const tier = tierSel.value;
+          const token = { cancelled: false };
+          botAutoRollTokens.set(botId, token);
+          tierSel.disabled = true; raritySel.disabled = true;
+          let attempts = 0;
+          // el(.bot-roster)은 renderBotsTab이 innerHTML만 갈아끼울 뿐 재생성하지 않는 컨테이너라
+          // 다른 이유로 중간에 다시 그려져도(장착 변경 등) 계속 유효하다 — 그래서 처음 클릭 시의
+          // btn을 그대로 붙들지 않고, 매번 이걸로 "지금 화면에 있는" 버튼을 다시 찾아 갱신한다.
+          function liveBtn() { return el.querySelector('button[data-auto-gacha="' + botId + '"]'); }
+
+          function stop(msg, isError) {
+            botAutoRollTokens.delete(botId);
+            toast(msg, !!isError);
+            renderBotsTab();
+          }
+          async function attempt() {
+            if (token.cancelled) { stop("자동 뽑기를 취소했습니다. (" + attempts + "회 시도)"); return; }
+            attempts++;
+            const b1 = liveBtn(); if (b1) b1.textContent = "⏹ 취소 (" + attempts + "회 시도 중...)";
+            let r;
+            try {
+              r = await api("/bots/gacha", { method: "POST", body: { botId: botId, tier: tier, autoTarget: targetRarity } });
+            } catch (e) { stop(e.message, true); return; }
+            state.pocketCoins = r.pocketCoins; renderHeader();
+            if (r.autoFound) { stop("🎯 자동 뽑기 성공! " + attempts + "회 만에 [" + r.rarityLabel + "] 등급 획득 (실제 장착 장비는 그대로)"); return; }
+            if (token.cancelled) { stop("자동 뽑기를 취소했습니다. (" + attempts + "회 시도)"); return; }
+            // 다음 시도까지 3초 대기 — "바로 되기보다는 계속 시도하는 쿨타임 느낌" 요청 반영.
+            const b2 = liveBtn(); if (b2) b2.textContent = "⏹ 취소 (" + attempts + "회, 대기 중...)";
+            setTimeout(attempt, AUTO_RETRY_DELAY_MS);
+          }
+          attempt();
         });
       });
       el.querySelectorAll("button[data-sell]").forEach((btn) => {

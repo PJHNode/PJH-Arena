@@ -718,13 +718,11 @@ function effectivePropertyMaxDevices(level) { return PROPERTY_MAX_DEVICES + Math
 
 // ── 자동 뽑기(Auto Roll) 연구 — 다이아 5000개 1회성 해금. 해금하면 (1) BOT 탭 가챠에서
 // 원하는 최소 등급을 지정해 그 등급(또는 그 이상)이 나올 때까지 자동으로 반복 뽑고,
-// (2) 상점에서도 원하는 등급의 아이템이 뜰 때까지 자동으로 리롤한다. 두 경우 모두 서버가
-// 한 요청 안에서 반복(각 회차는 순수 연산이라 매우 빠름)하고 DB는 최종 결과 한 번만 쓴다 —
-// 재화(코인/다이아)가 바닥나거나 시행 횟수 상한(MAX_AUTO_*_ATTEMPTS)에 닿으면 그 시점에서
-// 멈추고 "아직 못 찾음" 상태로 결과를 돌려준다(추가로 다시 요청하면 이어서 계속됨).
+// (2) 상점에서도 원하는 등급의 아이템이 뜰 때까지 자동으로 리롤한다. 서버는 한 번 호출에
+// 항상 딱 한 번만 굴리고("바로 되기보다는 계속 시도하는 쿨타임 느낌" 요청 반영), 반복
+// 자체는 프론트가 이 엔드포인트를 3초 간격으로 다시 호출하는 식으로 진행한다(POST
+// /bots/gacha, /shop/reroll 참고) — 그래서 여기 서버 쪽엔 시행 횟수 상한이 따로 없다.
 const AUTO_ROLL_UNLOCK_COST = 5000; // 다이아, 1회성
-const MAX_AUTO_GACHA_ATTEMPTS = 3000;
-const MAX_AUTO_SHOP_REROLL_ATTEMPTS = 2000;
 
 // ── 보호막 파쇄기 연구 — 다이아 10000개 1회성 해금. 해금하면 PvP에서 현재 보호막
 // (shield_until) 상태인 상대를 지정해 그 보호막을 즉시 제거할 수 있다. 파쇄당한 사람은
@@ -3373,45 +3371,21 @@ export default {
         return json({ ok: true, pocketCoins: row.pocket_coins, diamonds: row.diamonds });
       }
 
-      // ── POST /shop/reroll — 다이아 2개로 자연 타이머를 기다리지 않고 내 상점 목록만 즉시
+      // ── POST /shop/reroll — 다이아 1개로 자연 타이머를 기다리지 않고 내 상점 목록만 즉시
       //    다시 뽑는다. rerollNonce를 1 늘리는 게 전부라 다음 자연 로테이션 시각(nextRotationAt)
-      //    자체는 안 바뀐다 — "지금 이 목록이 마음에 안 들 때 한 번 더 보는" 용도. ──
+      //    자체는 안 바뀐다 — "지금 이 목록이 마음에 안 들 때 한 번 더 보는" 용도. 응답에 새
+      //    로테이션의 등급 목록(rarities)도 함께 내려준다 — 자동 리롤(프론트에서 이 엔드포인트를
+      //    반복 호출)이 매번 GET /shop을 따로 안 불러도 원하는 등급이 떴는지 바로 확인할 수
+      //    있게 하기 위함(KV/D1 호출을 늘리지 않으려는 목적, 위 KV 최적화와 같은 맥락). ──
       if (request.method === "POST" && path === "/shop/reroll") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.diamonds < SHOP_REROLL_DIAMOND_COST) return json({ error: "다이아가 부족합니다. (필요 " + SHOP_REROLL_DIAMOND_COST + ")" }, 400);
         row.diamonds -= SHOP_REROLL_DIAMOND_COST;
         row.shop_reroll_nonce += 1;
         await env.DB.prepare("UPDATE arena_users SET diamonds=?, shop_reroll_nonce=? WHERE user_id=?").bind(row.diamonds, row.shop_reroll_nonce, row.user_id).run();
-        return json({ ok: true, diamonds: row.diamonds });
-      }
-
-      // ── POST /shop/reroll-auto { targetRarity } — 자동 뽑기 연구를 해금한 유저 전용.
-      //    원하는 등급의 아이템이 지금 로테이션에 뜰 때까지 다이아 1개씩 써서 서버가 한 요청
-      //    안에서 반복 리롤한다(다이아가 떨어지거나 MAX_AUTO_SHOP_REROLL_ATTEMPTS에 닿으면
-      //    멈추고 found:false로 응답 — 다시 요청하면 이어서 계속됨). ──
-      if (request.method === "POST" && path === "/shop/reroll-auto") {
-        const body = await request.json().catch(function () { return {}; });
-        const targetRarity = body.targetRarity;
-        if (RARITY_ORDER.indexOf(targetRarity) === -1) return json({ error: "알 수 없는 목표 등급입니다." }, 400);
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
-        if (!row.research_auto_roll_unlocked) return json({ error: "자동 뽑기 연구를 먼저 해금하세요." }, 400);
-        const exists = Object.keys(SHOP_ITEMS).some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
-        if (!exists) return json({ error: "이 등급의 아이템 자체가 존재하지 않습니다." }, 400);
-
-        let rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
-        let found = rotation.itemIds.some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
-        if (!found && row.diamonds < SHOP_REROLL_DIAMOND_COST) return json({ error: "다이아가 부족합니다. (필요 " + SHOP_REROLL_DIAMOND_COST + ")" }, 400);
-
-        let attempts = 0;
-        while (!found && attempts < MAX_AUTO_SHOP_REROLL_ATTEMPTS && row.diamonds >= SHOP_REROLL_DIAMOND_COST) {
-          attempts++;
-          row.diamonds -= SHOP_REROLL_DIAMOND_COST;
-          row.shop_reroll_nonce += 1;
-          rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
-          found = rotation.itemIds.some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
-        }
-        await env.DB.prepare("UPDATE arena_users SET diamonds=?, shop_reroll_nonce=? WHERE user_id=?").bind(row.diamonds, row.shop_reroll_nonce, row.user_id).run();
-        return json({ ok: true, diamonds: row.diamonds, attempts: attempts, found: found });
+        const rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
+        const rarities = rotation.itemIds.map(function (id) { return SHOP_ITEMS[id].rarity; });
+        return json({ ok: true, diamonds: row.diamonds, rarities: rarities });
       }
 
       if (request.method === "POST" && path === "/shop/buy") {
@@ -3640,40 +3614,15 @@ export default {
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
 
-        // ── 자동 뽑기("원하는 등급이 나올 때까지 뽑기") — research_auto_roll_unlocked를
-        //    해금한 유저만 body.autoTarget(원하는 최소 등급)을 넘길 수 있다. 한 요청 안에서
-        //    코인이 떨어지거나 MAX_AUTO_GACHA_ATTEMPTS에 닿을 때까지 서버가 반복하고, DB에는
-        //    마지막(성공했다면 성공한, 아니면 마지막으로 시도한) 결과 하나만 기록한다 — 중간
-        //    결과들은 어차피 그 자리에서 덮어써질 값이라 저장할 필요가 없다.
+        // ── 자동 뽑기("원하는 등급이 나올 때까지 뽑기") — 예전엔 서버가 한 요청 안에서 코인이
+        //    떨어질 때까지 즉시 반복해서 순식간에 끝나 버렸는데, "바로 되기보다는 계속 시도하는
+        //    쿨타임 느낌"을 원한다는 요청 반영 — 이제 서버는 항상 "한 번만" 굴리고, 반복은
+        //    프론트가 이 엔드포인트를 3초 간격으로 다시 호출하는 식으로 진행한다(연구 해금
+        //    여부는 프론트에서 버튼 노출로만 게이팅 — 어차피 원래도 이 엔드포인트 자체는 늘
+        //    공개돼 있었다). autoTarget이 오면 원하는 목표 등급 도달 여부(autoFound)만 계산해
+        //    같이 내려준다.
         const autoTarget = body.autoTarget;
-        if (autoTarget) {
-          if (!row.research_auto_roll_unlocked) return json({ error: "자동 뽑기 연구를 먼저 해금하세요." }, 400);
-          const targetIdx = RARITY_ORDER.indexOf(autoTarget);
-          if (targetIdx === -1) return json({ error: "알 수 없는 목표 등급입니다." }, 400);
-          const feasible = RARITY_ORDER.slice(targetIdx).some(function (r) { return (tierDef.table[r] || 0) > 0; });
-          if (!feasible) return json({ error: "이 가챠 등급표에서는 나올 수 없는 목표 등급입니다." }, 400);
-          if (row.pocket_coins < tierDef.price) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(tierDef.price) + ")" }, 400);
-
-          let rolled = null, attempts = 0, autoFound = false;
-          while (attempts < MAX_AUTO_GACHA_ATTEMPTS && row.pocket_coins >= tierDef.price) {
-            attempts++;
-            row.pocket_coins -= tierDef.price;
-            rolled = rollBotGacha(body.tier);
-            if (RARITY_ORDER.indexOf(rolled.bestRarity) >= targetIdx) { autoFound = true; break; }
-          }
-          await env.DB.batch([
-            env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id),
-            env.DB.prepare(
-              "UPDATE arena_bots SET gacha_weapon_rarity=?, gacha_armor_rarity=?, gacha_core_rarity=?, gacha_rarity=? WHERE id=?"
-            ).bind(rolled.weaponRarity, rolled.armorRarity, rolled.coreRarity, rolled.bestRarity, botId),
-          ]);
-          return json({
-            ok: true, pocketCoins: row.pocket_coins, attempts: attempts, autoFound: autoFound,
-            weaponRarity: rolled.weaponRarity, armorRarity: rolled.armorRarity, coreRarity: rolled.coreRarity,
-            bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
-          });
-        }
-
+        if (autoTarget && RARITY_ORDER.indexOf(autoTarget) === -1) return json({ error: "알 수 없는 목표 등급입니다." }, 400);
         if (row.pocket_coins < tierDef.price) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(tierDef.price) + ")" }, 400);
 
         const rolled = rollBotGacha(body.tier);
@@ -3690,6 +3639,7 @@ export default {
           ok: true, pocketCoins: row.pocket_coins,
           weaponRarity: rolled.weaponRarity, armorRarity: rolled.armorRarity, coreRarity: rolled.coreRarity,
           bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
+          autoFound: autoTarget ? RARITY_ORDER.indexOf(rolled.bestRarity) >= RARITY_ORDER.indexOf(autoTarget) : undefined,
         });
       }
 
