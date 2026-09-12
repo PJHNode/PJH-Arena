@@ -220,6 +220,10 @@
     // 환생 마스터(10회) 전용 사이트 테마 — 본인이 프로필 탭에서 끄지 않은 이상 자동 적용.
     document.body.classList.toggle("theme-ascended", !!(state.maxThemeUnlocked && state.maxThemeEnabled));
 
+    // 사이드바 알림 점 — 다른 탭에 있어도 "지금 누를 게 생겼다"를 알려준다. 추가 API 호출
+    // 없이 이미 15초마다 받아오는 /state 값만으로 판단한다.
+    setTabDot("jobs", (state.signalInterceptReadyAt || 0) <= Date.now());
+
     // 관리자 테스트 계정에게만 Admin 탭을 보여준다.
     $("adminTabBtn").style.display = state.isAdmin ? "" : "none";
 
@@ -359,6 +363,21 @@
     logs: renderLogsTab,
   };
 
+  // 사이드바 탭 옆의 알림 점을 켜고 끈다. 탭 버튼의 라벨 텍스트는 건드리지 않고 점 span만
+  // 붙였다 뗐다 해서, 나중에 다른 탭(행성 탐사선 도착 등)에도 그대로 재사용할 수 있다.
+  function setTabDot(tabName, on) {
+    const btn = document.querySelector('.side-tab[data-tab="' + tabName + '"]');
+    if (!btn) return;
+    const existing = btn.querySelector(".side-tab-dot");
+    if (on && !existing) {
+      const dot = document.createElement("span");
+      dot.className = "side-tab-dot";
+      btn.appendChild(dot);
+    } else if (!on && existing) {
+      existing.remove();
+    }
+  }
+
   function initTabs() {
     document.querySelectorAll(".side-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -373,6 +392,10 @@
   function renderTab(tab) {
     if (!dashboardStarted) return;
     document.querySelectorAll(".tab-panel").forEach((p) => { p.style.display = "none"; });
+    // 탭을 바꿨는데 이전 탭에서 내려놨던 스크롤 위치가 그대로 남아 있어서, 긴 탭(상점/업적)을
+    // 보다가 짧은 탭으로 옮기면 빈 화면만 보이던 문제 — 옮길 때마다 맨 위로 올려준다.
+    const contentEl = document.querySelector(".content");
+    if (contentEl) contentEl.scrollTop = 0;
     const panel = $("panel-" + tab);
     // .tab-panel의 CSS 기본값이 display:none이라, 인라인 스타일을 ""로 지우면 그 기본값으로
     // "되돌아갈 뿐"이라 계속 숨겨진 채로 남는다(실제로 겪은 버그) — 반드시 명시적으로 "block".
@@ -1182,6 +1205,9 @@
         const r = state.signalInterceptNextReward;
         interceptBtn.textContent = "감청하기" + (r ? " (+" + fmt(r.coins) + " 코인)" : "");
       }
+      // 쿨타임이 끝나는 순간 바로 사이드바 점이 켜지도록 여기서도 같이 갱신한다(/state 갱신을
+      // 기다리면 최대 15초까지 늦게 켜진다).
+      setTabDot("jobs", signalInterceptReadyAt <= now);
     }
   }
   setInterval(renderResourceEtas, 1000);
@@ -1651,6 +1677,9 @@
       const data = await api("/property");
       $("propertyRate").textContent = fmt(data.ratePerHour) + " / hr";
       $("propertyPending").textContent = fmt(data.pendingCoins);
+      // 슬롯 상한은 연구(최대 +3)와 환생(최대 +4)으로 늘어나므로 안내문도 서버 값으로 맞춘다
+      // (예전엔 "기기 최대 6개"가 하드코딩돼 있어서 확장한 유저에게 거짓말이 됐다).
+      setText("propertyMaxNote", data.maxDevices);
       const atCap = data.totalOwned >= data.maxDevices;
       grid.innerHTML =
         '<p class="dim" style="grid-column:1/-1;margin-bottom:4px;">보유 기기 ' + data.totalOwned + " / " + data.maxDevices + "</p>" +
@@ -1829,8 +1858,11 @@
   }
   // 1초마다 각 티어 카운트다운만 갱신하고, 하나라도 0이 되면(추첨 시각 도달) 라파 탭이 보일
   // 때만 다시 조회한다(그 조회가 서버 쪽 정산도 같이 끝내놓음).
+  // ⚠️ 재조회가 끝나기 전까지는 DOM의 data-ends가 아직 옛 값(이미 지난 시각)이라, 가드가
+  // 없으면 응답이 늦는 동안 1초마다 같은 요청을 계속 쌓아 올린다 — inFlight 플래그로 막는다.
+  let raffleRefreshInFlight = false;
   setInterval(() => {
-    if (currentTab !== "raffle" || !raffleTiersCache) return;
+    if (currentTab !== "raffle" || !raffleTiersCache || raffleRefreshInFlight) return;
     const now = Date.now();
     let anyDue = false;
     document.querySelectorAll(".raffle-countdown").forEach((el) => {
@@ -1838,7 +1870,10 @@
       if (endsAt <= now) { anyDue = true; el.textContent = "정산 중..."; }
       else el.textContent = fmtCountdown(endsAt - now);
     });
-    if (anyDue) renderRaffleTab();
+    if (anyDue) {
+      raffleRefreshInFlight = true;
+      Promise.resolve(renderRaffleTab()).finally(() => { raffleRefreshInFlight = false; });
+    }
   }, 1000);
 
   // ── 증권거래소(Stock Exchange) — "주식 시스템" 요청 반영(다크넷 로또와 별개 기능). 가격은
@@ -1867,18 +1902,41 @@
       "</svg>"
     );
   }
+  // 주식 수량은 소수라서 toFixed(4)로 뭉뚱그리면 비싼 종목을 소액 매수했을 때 "0.0000주"로
+  // 보인다 — 값이 작을수록 자릿수를 늘려서 최소한 유효숫자가 보이게 한다.
+  function fmtShares(n) {
+    if (!(n > 0)) return "0";
+    if (n >= 1000) return fmt(Math.round(n));
+    if (n >= 1) return n.toFixed(2);
+    if (n >= 0.01) return n.toFixed(4);
+    return n.toFixed(8).replace(/0+$/, "");
+  }
   async function renderStockTab() {
     const grid = $("stockGrid");
     try {
       const data = await api("/stocks");
       setText("stockFeeNote", data.sellFeeRatePct);
+      // 10초마다 자동 갱신되는 탭이라, 그냥 innerHTML을 갈아끼우면 사용자가 입력 중이던
+      // 매수/매도 금액과 포커스가 매번 날아간다(실제로 겪는 버그) — 다시 그리기 전에 입력값과
+      // 포커스 위치를 기억해 뒀다가 그린 뒤 그대로 복원한다.
+      const savedInputs = {};
+      grid.querySelectorAll("input[data-buyinput], input[data-sellinput]").forEach((el) => {
+        const key = (el.dataset.buyinput ? "buy:" : "sell:") + (el.dataset.buyinput || el.dataset.sellinput);
+        savedInputs[key] = el.value;
+      });
+      const active = document.activeElement;
+      const focusedKey = active && grid.contains(active) && (active.dataset.buyinput || active.dataset.sellinput)
+        ? (active.dataset.buyinput ? "buy:" : "sell:") + (active.dataset.buyinput || active.dataset.sellinput)
+        : null;
+      const focusedSelStart = focusedKey ? active.selectionStart : null;
+
       grid.innerHTML = Object.keys(data.stocks).map((id) => {
         const s = data.stocks[id];
         const color = STOCK_COLORS[id] || "var(--text)";
         const dirCls = s.changePct > 0 ? "up" : s.changePct < 0 ? "down" : "flat";
         const dirArrow = s.changePct > 0 ? "▲" : s.changePct < 0 ? "▼" : "―";
         const holdingBlock = s.myShares > 0
-          ? '<div class="stock-card-row"><span>내 보유</span><b>' + s.myShares.toFixed(4) + "주</b></div>" +
+          ? '<div class="stock-card-row"><span>내 보유</span><b>' + fmtShares(s.myShares) + "주</b></div>" +
             '<div class="stock-card-row"><span>평가액</span><b>' + fmt(Math.round(s.myShares * s.price)) + "</b></div>" +
             '<div class="stock-card-row"><span>손익</span><b style="color:' + (s.price >= s.myAvgCost ? "var(--energy)" : "var(--danger)") + ';">' +
             (s.myAvgCost > 0 ? (((s.price - s.myAvgCost) / s.myAvgCost) * 100).toFixed(1) : "0.0") + "%</b></div>"
@@ -1909,6 +1967,16 @@
         );
       }).join("");
 
+      // 다시 그리기 전에 기억해 둔 입력값/포커스 복원 — 자동 갱신 때문에 입력이 끊기지 않게.
+      grid.querySelectorAll("input[data-buyinput], input[data-sellinput]").forEach((el) => {
+        const key = (el.dataset.buyinput ? "buy:" : "sell:") + (el.dataset.buyinput || el.dataset.sellinput);
+        if (savedInputs[key] !== undefined && savedInputs[key] !== "") el.value = savedInputs[key];
+        if (key === focusedKey) {
+          el.focus();
+          if (focusedSelStart != null) { try { el.setSelectionRange(focusedSelStart, focusedSelStart); } catch (e) {} }
+        }
+      });
+
       grid.querySelectorAll("button[data-buypct]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const id = btn.dataset.buypct, pct = Number(btn.dataset.pct);
@@ -1921,7 +1989,10 @@
           const id = btn.dataset.sellpct, pct = Number(btn.dataset.pct);
           const input = grid.querySelector('input[data-sellinput="' + id + '"]');
           const s = data.stocks[id];
-          if (input && s) input.value = s.myShares * (pct / 100);
+          if (!input || !s) return;
+          // 전량(100%)은 반올림으로 한 톨이라도 남지 않게 보유량을 그대로 넣는다(서버가
+          // 보유량으로 clamp하므로 넘겨도 안전). 부분 매도만 보기 좋게 자릿수를 줄인다.
+          input.value = pct === 100 ? String(s.myShares) : Number((s.myShares * (pct / 100)).toPrecision(8));
         });
       });
       grid.querySelectorAll("button[data-buystock]").forEach((btn) => {
@@ -1958,8 +2029,12 @@
   }
   // 가격이 10초마다 한 틱씩 움직이므로(요청 반영: "변화 간격이 최소 10초는") 탭이 보이는
   // 동안은 10초마다 조용히 다시 조회해서 그래프가 실제로 살아 움직이는 걸 보여준다.
+  // 응답이 10초보다 늦어지면 요청이 겹쳐 쌓이므로 라파와 같은 inFlight 가드를 둔다.
+  let stockRefreshInFlight = false;
   setInterval(() => {
-    if (currentTab === "stocks") renderStockTab();
+    if (currentTab !== "stocks" || stockRefreshInFlight) return;
+    stockRefreshInFlight = true;
+    Promise.resolve(renderStockTab()).finally(() => { stockRefreshInFlight = false; });
   }, 10000);
 
   // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
@@ -3131,6 +3206,17 @@
     $("activityModalClose").addEventListener("click", closeActivityModal);
     $("activityModalOkBtn").addEventListener("click", closeActivityModal);
     $("activityModal").addEventListener("click", (e) => { if (e.target.id === "activityModal") closeActivityModal(); });
+
+    // ESC로 모달 닫기 — 지금까지 X 버튼이나 바깥 클릭으로만 닫을 수 있었다. 공격 모달만
+    // 애니메이션 정리가 필요해서 전용 함수를 쓰고, 나머지는 그냥 숨기면 된다.
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if ($("attackModal").style.display === "flex") { closeAttackModal(); return; }
+      ["scanModal", "profileModal", "activityModal", "statModal"].forEach((id) => {
+        const el = $(id);
+        if (el && el.style.display === "flex") el.style.display = "none";
+      });
+    });
     // 로그인 전 화면의 큰 CTA 버튼 — auth-widget.js가 실제로 리스닝하는 loginNavBtn 클릭을 그대로 위임한다.
     const cta = $("loggedOutCta");
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());

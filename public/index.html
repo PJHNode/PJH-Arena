@@ -173,6 +173,14 @@
     padding: 14px 18px 4px; font-weight: bold;
   }
   .side-section-label:first-child { padding-top: 4px; }
+  /* 탭에 "지금 할 수 있는 게 있다"는 표시 — 무료 감청처럼 쿨타임이 다 찼는데 다른 탭에 있느라
+     모르고 지나치는 걸 막는다(renderHeader가 /state 갱신마다 켜고 끈다). */
+  .side-tab-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    margin-left: 6px; vertical-align: middle; box-shadow: 0 0 6px var(--accent);
+    animation: sideTabDotPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes sideTabDotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
   .content { flex: 1; padding: 20px; overflow-y: auto; }
   .tab-panel { display: none; }
@@ -681,6 +689,87 @@
   }
   .arena-toast.err { border-color: var(--danger); }
   .arena-toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ══════════════════════════════════════════════════════════
+     공통 마감 정리 — 색 팔레트는 절대 손대지 않고(예전 리뉴얼에서 "탁하다"고 반려된 이력),
+     제각각이던 입력창/스크롤바/포커스/빈 상태만 한 곳에서 통일한다.
+     ══════════════════════════════════════════════════════════ */
+  /* 입력창이 탭마다 따로 스타일링돼 있어서(은행/로또/주식/정찰) 굵기·높이가 미묘하게 달랐다 —
+     공통 기본값을 여기서 한 번에 주고, 기존 탭별 규칙은 그대로 위에 얹히게 둔다. */
+  /* 체크박스/라디오는 제외 — 그것까지 잡으면 네모난 상자로 뭉개진다(프로필 탭 토글 2개).
+     :where()로 감싸서 우선순위를 0으로 만든다 — 탭별로 이미 있는 .bank-form input 같은
+     규칙들이 계속 이기게 해서, 기존 화면이 하나도 안 틀어지고 "빠진 것만" 채워진다. */
+  input:where(:not([type="checkbox"]):not([type="radio"])), select, textarea {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+    font-family: inherit; font-size: 12px; padding: 8px 10px; border-radius: 4px;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  }
+  input:where(:not([type="checkbox"]):not([type="radio"])):focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+  /* 키보드 내비게이션 접근성 — 마우스 클릭 때는 안 뜨고 Tab 이동 때만 표시된다. */
+  button:focus-visible, .side-tab:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  /* 숫자 입력창의 브라우저 기본 스피너 제거 — 폭이 좁은 카드에서 자리만 잡아먹었다. */
+  input[type="number"] { -moz-appearance: textfield; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  /* 스크롤바도 어두운 테마에 맞춘다(기본 밝은 회색 스크롤바가 유일하게 튀던 요소). */
+  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--sub); }
+
+  /* ══════════════════════════════════════════════════════════
+     반응형 — 지금까지 미디어 쿼리가 하나도 없어서 좁은 화면에서는 190px 사이드바가 본문을
+     거의 다 잡아먹고, 6칸짜리 PvP 행이 짓눌려서 사실상 못 쓰는 상태였다.
+     ══════════════════════════════════════════════════════════ */
+  @media (max-width: 900px) {
+    /* 세로 사이드바 → 가로 스크롤 탭 바. 본문 폭을 온전히 돌려준다. */
+    .app-body { flex-direction: column; }
+    .sidebar {
+      width: 100%; flex-direction: row; padding: 0; overflow-x: auto;
+      border-right: none; border-bottom: 1px solid var(--border);
+    }
+    .side-section-label { display: none; }
+    .side-tab {
+      white-space: nowrap; border-left: none; border-bottom: 3px solid transparent; padding: 11px 14px;
+    }
+    .side-tab.active { border-bottom-color: var(--accent); box-shadow: none; }
+    .content { padding: 14px; }
+    /* 카드 그리드 최소폭을 낮춰서 한 줄에 어정쩡하게 잘리지 않게 한다. */
+    .job-grid, .shop-grid, .property-grid, .raffle-grid, .stock-grid {
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
+    }
+  }
+  @media (max-width: 560px) {
+    header .crumb { padding: 6px 12px 0; }
+    .profile-row { gap: 10px; padding: 8px 12px; }
+    .resource-bar-row { gap: 12px; padding: 10px 12px; }
+    .resource { min-width: 110px; }
+    .widget-bar { gap: 12px; padding: 6px 12px; }
+    .content { padding: 12px; }
+    .panel-title { margin-bottom: 10px; }
+
+    /* 여러 칸짜리 표 행들은 그리드를 풀고 흐르게 둔다 — 짓눌려서 글자가 겹치던 문제 해결. */
+    .pvp-row, .log-row, .inv-row, .lb-row {
+      display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+    }
+    .pvp-name, .log-row > span:nth-child(2), .inv-name { flex: 1 1 100%; }
+    .pvp-row button, .inv-row button { flex: 1 1 auto; min-width: 72px; }
+    .log-row > span:last-child { font-size: 10px; opacity: 0.8; }
+
+    /* 카드 한 장이 화면을 꽉 채우게 — 두 칸으로 쪼개면 글자가 너무 작아진다. */
+    .job-grid, .shop-grid, .property-grid, .raffle-grid, .stock-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+    .slot-card { max-width: none; padding: 14px; }
+    .slot-reel { font-size: 28px; }
+    .galaxy-starmap { max-width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -901,7 +990,7 @@
 
       <div class="tab-panel" id="panel-property">
         <p class="panel-title">🏭 PROPERTY</p>
-        <p class="dim" style="margin-bottom:14px;">오프라인에서도 수익이 쌓입니다(최대 24h치 · 가끔 수거하세요) · 기기 최대 6개.</p>
+        <p class="dim" style="margin-bottom:14px;">오프라인에서도 수익이 쌓입니다(최대 24h치 · 가끔 수거하세요) · 보유 슬롯 <b id="propertyMaxNote">6</b>개(연구·환생으로 확장 가능).</p>
         <div class="bank-cards">
           <div class="bank-card"><div class="label">시간당 수익</div><div class="value" id="propertyRate">0 / hr</div></div>
           <div class="bank-card"><div class="label">대기 중 수익 (최대 24h)</div><div class="value" id="propertyPending">0</div></div>
