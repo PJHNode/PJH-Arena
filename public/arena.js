@@ -185,7 +185,7 @@
       titleTag.style.display = "";
     } else titleTag.style.display = "none";
 
-    // 환생 — 회당 ATK/DEF 영구 +1%(최대 10회), 레벨 100부터 버튼이 활성화된다. 등급(브론즈~
+    // 환생 — 회당 ATK/DEF 영구 +1%(최대 250회 = CCL), 레벨 100부터 버튼이 활성화된다. 등급(브론즈~
     // 무지개)은 tier-N 클래스로 표시색을 바꾼다(rebirthTier 참고, 서버와 동일한 계단식).
     const rebirthTag = $("rebirthTag"), rebirthBtn = $("rebirthBtn");
     if (state.rebirthCount > 0) {
@@ -201,7 +201,7 @@
       const t = state.rebirthTier;
       const ratio = rebirthCountRatio(state.rebirthCount);
       rebirthTag.title = t > 0
-        ? "환생 특권(현재 " + tierName + " 등급 · 환생 " + state.rebirthCount + "/10회)\n" +
+        ? "환생 특권(현재 " + tierName + " 등급 · 환생 " + state.rebirthCount + "/250회)\n" +
           "· ATK/DEF +" + state.rebirthBonusPct.toFixed(0) + "%\n" +
           "· 인챈트 최대 레벨 +" + (t * 2) + "\n" +
           "· 봇 모집 한도 +" + t + "\n" +
@@ -570,7 +570,7 @@
         const titleHtml = titleBadgeHtml(t.title, t.titleColor, t.titleRarity);
         const rebirthNote = rebirthBadgeHtml(t.rebirthCount);
         return (
-        '<div class="pvp-row">' +
+        '<div class="pvp-row' + rowSkinClass(t.rowSkin) + '">' +
         '<div class="pvp-name">' + titleHtml + nameHtml + rebirthNote + '<span class="dim"> Lv.' + t.level + "</span> " +
         // 대기 수익(offlinePendingCoins) 노출을 없앴다(요청 반영: "arena p2p에서 시간당
         // 수익은 안 보이게") — 온라인 여부만 보여주고, 실제 공격 시 오프라인 보너스 획득
@@ -2247,31 +2247,62 @@
 
   // ── 환생 상점 — 환생석(환생할 때만 얻는 전용 화폐)으로 사는 1회성 소장품. 업적 카드와
   //    똑같은 그리드/카드 마크업을 재사용한다(디자인 일관성 + 새 CSS 불필요). ──
+  // 행 배경 스킨 — PvP 타겟 목록/리더보드에서 그 사람 칸의 배경을 바꾼다. 서버는 스킨 id만
+  // 내려주고 실제 그림은 CSS(.row-skin-*)가 담당한다(요청 반영: "ARENA P2P나 리더보드에서
+  // 보일 때 그 칸에 대한 배경 자체를 바꿀 수 있는거지 — DARKNESS 또는 황혼처럼").
+  const ROW_SKIN_IDS = ["skin_darkness", "skin_twilight", "skin_abyss", "skin_bloodmoon", "skin_aurora"];
+  function rowSkinClass(skinId) {
+    return skinId && ROW_SKIN_IDS.indexOf(skinId) !== -1 ? " row-skin " + skinId.replace("skin_", "row-skin-") : "";
+  }
+
   async function renderRebirthShopTab() {
     const grid = $("rebirthShopGrid");
     try {
-      const { stones, items, equippedTitleId } = await api("/rebirth-shop");
-      $("rebirthShopStones").textContent = "💠 " + stones;
-      const typeIcon = { frame: "🖼️ ", title: "🏷️ ", stat_boost: "⚡ ", diamond_grant: "💎 " };
+      const { stones, items, equippedTitleId, equippedRowSkin, rebirthCount } = await api("/rebirth-shop");
+      $("rebirthShopStones").textContent = "💠 " + fmt(stones);
+      const typeIcon = {
+        frame: "🖼️ ", title: "🏷️ ", stat_boost: "⚡ ", stat_boost2: "⚡ ", diamond_grant: "💎 ",
+        coin_grant: "💰 ", cap_bot: "🤖 ", cap_enchant: "🧬 ", cap_property: "🏭 ", row_skin: "🎨 ",
+      };
       grid.innerHTML = items.map((it) => {
-        const canAfford = stones >= it.cost;
         const isTitle = it.type === "title";
-        const isGrant = it.type === "diamond_grant";
-        const equipped = isTitle && equippedTitleId === it.id;
+        const isSkin = it.type === "row_skin";
+        const isGrant = it.type === "diamond_grant" || it.type === "coin_grant";
+        const locked = it.minRebirth && (rebirthCount || 0) < it.minRebirth;
+        const canAfford = stones >= it.cost;
         let btnHtml;
-        if (it.owned && isTitle) {
-          btnHtml = equipped
-            ? '<button class="btn-ghost" data-unequip-title="1" disabled>장착 중</button>'
+        if (locked) {
+          // 환생 횟수 조건이 걸린 품목(행 스킨) — 자격이 될 때까지 몇 회 남았는지 알려준다.
+          btnHtml = '<button class="btn-ghost" disabled>환생 ' + it.minRebirth + "회 필요 (현재 " + (rebirthCount || 0) + ")</button>";
+        } else if (it.repeatable) {
+          // 반복 구매(환전소) — 수량을 직접 넣고 한 번에 여러 개 살 수 있다.
+          const maxQty = Math.max(1, Math.floor(stones / it.cost));
+          btnHtml =
+            '<div class="stock-form">' +
+            '<input type="number" min="1" value="1" data-rebirth-qty="' + it.id + '" />' +
+            '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + ">교환</button>" +
+            "</div>" +
+            '<div class="dim" style="margin-top:6px;font-size:10px;">1회당 💠' + fmt(it.cost) + " · 지금 최대 " + fmt(maxQty) + "회</div>";
+        } else if (it.owned && isTitle) {
+          btnHtml = equippedTitleId === it.id
+            ? '<button class="btn-ghost" disabled>장착 중</button>'
             : '<button class="btn-primary" data-equip-title="' + it.id + '">칭호 장착</button>';
+        } else if (it.owned && isSkin) {
+          btnHtml = equippedRowSkin === it.id
+            ? '<button class="btn-ghost" data-unequip-skin="1">장착 해제</button>'
+            : '<button class="btn-primary" data-equip-skin="' + it.id + '">스킨 장착</button>';
         } else if (it.owned) {
-          btnHtml = '<button class="btn-ghost" disabled>' + (isGrant ? "수령 완료" : "보유 중") + '</button>';
+          btnHtml = '<button class="btn-ghost" disabled>' + (isGrant ? "수령 완료" : "보유 중") + "</button>";
         } else {
-          btnHtml = '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + '>' + (isGrant ? "수령" : "구매") + ' (💠' + it.cost + ")</button>";
+          btnHtml = '<button class="btn-primary" data-buy-rebirth-item="' + it.id + '"' + (canAfford ? "" : " disabled") + ">" + (isGrant ? "수령" : "구매") + " (💠" + fmt(it.cost) + ")</button>";
         }
+        // 스킨은 카드 안에서 실제 배경을 미리 볼 수 있게 견본 띠를 같이 보여준다.
+        const preview = isSkin ? '<div class="row-skin-preview' + rowSkinClass(it.id) + '">' + escapeHtml(it.name.replace("행 스킨: ", "")) + "</div>" : "";
         return (
           '<div class="achievement-card" style="border-left-color:' + (it.owned ? "var(--accent)" : "var(--border)") + '">' +
           '<div style="font-weight:bold;margin-bottom:4px;">' + (typeIcon[it.type] || "✨ ") + escapeHtml(it.name) + "</div>" +
           '<div class="dim" style="margin-bottom:10px;">' + escapeHtml(it.desc) + "</div>" +
+          preview +
           btnHtml +
           "</div>"
         );
@@ -2279,11 +2310,17 @@
 
       grid.querySelectorAll("button[data-buy-rebirth-item]").forEach((btn) => {
         btn.addEventListener("click", async () => {
+          const id = btn.dataset.buyRebirthItem;
+          const qtyInput = grid.querySelector('input[data-rebirth-qty="' + id + '"]');
+          const qty = qtyInput ? Math.max(1, parseInt(qtyInput.value, 10) || 1) : 1;
           btn.disabled = true;
           try {
-            const r = await api("/rebirth-shop/buy", { method: "POST", body: { itemId: btn.dataset.buyRebirthItem } });
-            const boughtItem = items.find((i) => i.id === r.itemId);
-            toast("✨ " + (boughtItem && boughtItem.type === "diamond_grant" ? "다이아 💎" + boughtItem.diamonds + " 수령!" : "구매 완료!"));
+            const r = await api("/rebirth-shop/buy", { method: "POST", body: { itemId: id, qty: qty } });
+            const bought = items.find((i) => i.id === r.itemId);
+            let msg = "✨ 구매 완료!";
+            if (bought && bought.type === "diamond_grant") msg = "💎 다이아 " + fmt(bought.diamonds * r.qty) + " 수령!";
+            else if (bought && bought.type === "coin_grant") msg = "💰 코인 " + fmt(bought.coins * r.qty) + " 수령!";
+            toast(msg);
             renderRebirthShopTab();
             refreshState();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
@@ -2297,6 +2334,26 @@
             toast("🏷️ 칭호를 장착했습니다.");
             renderRebirthShopTab();
             refreshState();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-equip-skin]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api("/rebirth-shop/set-skin", { method: "POST", body: { id: btn.dataset.equipSkin } });
+            toast("🎨 행 배경 스킨을 장착했습니다 — PvP 목록과 리더보드에서 남들에게 보입니다.");
+            renderRebirthShopTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-unequip-skin]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await api("/rebirth-shop/set-skin", { method: "POST", body: { id: null } });
+            toast("스킨을 해제했습니다.");
+            renderRebirthShopTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
       });
@@ -3099,7 +3156,7 @@
           lbType === "assets" ? fmt(r.pocket_coins + r.bank_coins) + " 코인" :
           r.plunder_wins + "승";
         const titleHtml = titleBadgeHtml(r.title, r.titleColor, r.titleRarity);
-        return '<div class="lb-row"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + titleHtml + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
+        return '<div class="lb-row' + rowSkinClass(r.rowSkin) + '"><span class="lb-rank">#' + (i + 1) + '</span><span class="lb-name-link" data-profile="' + escapeHtml(r.user_id) + '">' + titleHtml + escapeHtml(r.real_name) + rebirthBadgeHtml(r.rebirth_count) + '</span><span class="lb-value">' + valueLabel + "</span></div>";
       }).join("") || '<p class="dim">기록이 없습니다.</p>';
       list.querySelectorAll("[data-profile]").forEach((el) => {
         el.addEventListener("click", () => openProfileModal(el.dataset.profile));
@@ -3158,12 +3215,16 @@
     for (const [value, sym] of table) { while (num >= value) { out += sym; num -= value; } }
     return out;
   }
-  // 환생 등급(0~4, 브론즈/실버/골드/무지개) — 서버(arena-worker.js의 rebirthTier)와 완전히
-  // 동일한 계단식. 서버 응답에 이미 rebirthTier가 실려오지만(자기 자신), 리더보드/다른 사람
-  // 프로필처럼 rebirthCount만 오는 곳도 있어서 클라이언트에서도 똑같이 계산할 수 있게 둔다.
-  const REBIRTH_TIER_NAMES = ["", "브론즈", "실버", "골드", "무지개"];
+  // 환생 등급(0~7) — 서버(arena-worker.js의 rebirthTier)와 완전히 동일한 계단식. 서버 응답에
+  // 이미 rebirthTier가 실려오지만(자기 자신), 리더보드/다른 사람 프로필처럼 rebirthCount만
+  // 오는 곳도 있어서 클라이언트에서도 똑같이 계산할 수 있게 둔다. 환생 상한이 250회(CCL)로
+  // 늘면서 무지개(10회) 위로 프리즘/초신성/특이점 3단계가 추가됐다.
+  const REBIRTH_TIER_NAMES = ["", "브론즈", "실버", "골드", "무지개", "프리즘", "초신성", "특이점"];
   function rebirthTier(count) {
     const c = count || 0;
+    if (c >= 250) return 7;
+    if (c >= 75) return 6;
+    if (c >= 25) return 5;
     if (c >= 10) return 4;
     if (c >= 5) return 3;
     if (c >= 3) return 2;
@@ -3222,7 +3283,7 @@
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
     $("rebirthBtn").addEventListener("click", async () => {
       if (!state || !state.rebirthReady) return;
-      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF·인챈트 최대 레벨·봇 모집 한도·공격 쿨다운에 더해\nJobs 에너지/스탯 강화 비용 절감, 자원 회복 속도, Property 슬롯/수익, 레벨업 스탯 포인트까지 영구 혜택이 조금씩 쌓입니다(회당 증가폭은 작지만 환생 10회를 채우면 최댓값 — 헤더의 환생 태그에 마우스를 올리면 상세 확인 가능).\n또한 환생 직후 30분간 해킹 작업/PvP/행성 약탈의 XP·코인이 2배가 됩니다.")) return;
+      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF·인챈트 최대 레벨·봇 모집 한도·공격 쿨다운에 더해\nJobs 에너지/스탯 강화 비용 절감, 자원 회복 속도, Property 슬롯/수익, 레벨업 스탯 포인트까지 영구 혜택이 조금씩 쌓입니다(회당 증가폭은 작지만 환생 10회면 그 4개는 최댓값, ATK/DEF는 250회(CCL)까지 계속 오름 — 헤더의 환생 태그에 마우스를 올리면 상세 확인 가능).\n또한 환생 직후 30분간 해킹 작업/PvP/행성 약탈의 XP·코인이 2배가 됩니다.")) return;
       const btn = $("rebirthBtn");
       btn.disabled = true;
       try {

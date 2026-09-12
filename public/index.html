@@ -411,6 +411,26 @@
   /* 최고 등급(4, 무지개)은 고정 색 대신 색상환을 순환시킨다. */
   .profile-card.rebirth-glow.tier-4 { animation: profileGlowRainbow 3s linear infinite; }
   .profile-card-name .rebirth-badge.tier-4, .rebirth-name-badge.tier-4, .rebirth-tag.tier-4 { animation: rebirthRainbowText 3s linear infinite; border-color: #fff; }
+  /* 환생 상한이 250회(CCL)로 늘면서 추가된 상위 3단계 — 프리즘(25)/초신성(75)/특이점(250).
+     무지개(4)의 색상환 연출을 그대로 물려받되 속도와 광량만 단계적으로 더 세진다. */
+  .profile-card.rebirth-glow.tier-5 { animation: profileGlowRainbow 2s linear infinite; }
+  .profile-card.rebirth-glow.tier-6 { animation: profileGlowRainbow 1.3s linear infinite; }
+  .profile-card.rebirth-glow.tier-7 { animation: profileGlowSingularity 1.6s ease-in-out infinite; }
+  .profile-card-name .rebirth-badge.tier-5, .rebirth-name-badge.tier-5, .rebirth-tag.tier-5 { animation: rebirthRainbowText 2s linear infinite; border-color: #fff; }
+  .profile-card-name .rebirth-badge.tier-6, .rebirth-name-badge.tier-6, .rebirth-tag.tier-6 { animation: rebirthRainbowText 1.3s linear infinite; border-color: #fff; }
+  /* 최종 등급(7, 특이점)은 색상환 대신 흰빛으로 수렴하는 연출 — "끝까지 간 사람"만의 표식. */
+  .profile-card-name .rebirth-badge.tier-7, .rebirth-name-badge.tier-7, .rebirth-tag.tier-7 {
+    color: #fff; border-color: #fff; text-shadow: 0 0 8px #fff, 0 0 16px var(--accent);
+    animation: rebirthSingularityText 1.6s ease-in-out infinite;
+  }
+  @keyframes profileGlowSingularity {
+    0%, 100% { border-color: #fff; box-shadow: 0 0 12px #fff, 0 0 26px var(--accent); }
+    50% { border-color: var(--accent); box-shadow: 0 0 30px #fff, 0 0 60px var(--accent); }
+  }
+  @keyframes rebirthSingularityText {
+    0%, 100% { text-shadow: 0 0 6px #fff, 0 0 12px var(--accent); }
+    50% { text-shadow: 0 0 14px #fff, 0 0 28px var(--accent); }
+  }
   @keyframes profileGlowRainbow {
     0% { border-color: #ff3d68; box-shadow: 0 0 18px #ff3d68; } 25% { border-color: #ffd700; box-shadow: 0 0 18px #ffd700; }
     50% { border-color: #00ff9d; box-shadow: 0 0 18px #00ff9d; } 75% { border-color: #2b7fff; box-shadow: 0 0 18px #2b7fff; }
@@ -687,6 +707,46 @@
     background: var(--surface); border: 1px solid var(--accent); color: var(--text); font-size: 12px;
     padding: 10px 16px; opacity: 0; transform: translateY(8px); transition: opacity 0.3s, transform 0.3s;
   }
+  /* ══════════════════════════════════════════════════════════
+     행 배경 스킨 — 환생 상점에서 사서 장착하면 PvP 타겟 목록/리더보드에서 "그 사람 칸"의
+     배경이 바뀐다(요청 반영: "DARKNESS 또는 황혼처럼"). 성능엔 아무 영향 없는 과시용이라,
+     글자 가독성만 해치지 않도록 전부 어두운 쪽으로 깔고 왼쪽에 색 띠를 준다.
+     ══════════════════════════════════════════════════════════ */
+  /* 스킨 배경은 .row-skin.row-skin-X (클래스 2개 = 우선순위 0,2,0)로 건다 — 기존
+     .pvp-row:hover / .lb-row:hover(같은 0,2,0)와 동점이라 뒤에 오는 이 규칙이 이겨서,
+     마우스를 올려도 스킨이 회색으로 덮이지 않는다. 호버 표현은 배경을 갈아끼우는 대신
+     밝기만 올려서 오로라 같은 애니메이션 스킨도 그대로 유지된다. */
+  .row-skin { position: relative; border-left: 3px solid var(--skin-accent, transparent); }
+  .row-skin:hover { filter: brightness(1.35); }
+  .row-skin.row-skin-darkness {
+    --skin-accent: #6d4aff;
+    background: linear-gradient(90deg, #05040a 0%, #100a1f 55%, transparent 100%);
+  }
+  .row-skin.row-skin-twilight {
+    --skin-accent: #ff8a3d;
+    background: linear-gradient(90deg, #2a1206 0%, #3d1a3a 60%, transparent 100%);
+  }
+  .row-skin.row-skin-abyss {
+    --skin-accent: #00d4ff;
+    background: linear-gradient(90deg, #01121f 0%, #032b45 60%, transparent 100%);
+  }
+  .row-skin.row-skin-bloodmoon {
+    --skin-accent: #ff3d68;
+    background: linear-gradient(90deg, #1a0207 0%, #3d0713 60%, transparent 100%);
+  }
+  /* 최상위 스킨만 흐르는 애니메이션 — 배경 위치만 움직여서 리플로우 없이 가볍다. */
+  .row-skin.row-skin-aurora {
+    --skin-accent: #00ff9d;
+    background: linear-gradient(90deg, #04140f 0%, #06302a 30%, #0b2440 60%, #1b0e33 85%, transparent 100%);
+    background-size: 220% 100%;
+    animation: rowSkinAurora 8s ease-in-out infinite;
+  }
+  @keyframes rowSkinAurora { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+  .row-skin-preview {
+    padding: 8px 10px; margin-bottom: 10px; border-radius: 4px; font-size: 11px; font-weight: bold;
+    color: var(--text); border-left: 3px solid var(--skin-accent, var(--border));
+  }
+
   .arena-toast.err { border-color: var(--danger); }
   .arena-toast.show { opacity: 1; transform: translateY(0); }
 

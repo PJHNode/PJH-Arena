@@ -103,8 +103,18 @@ function baseDefFor(level) { return 10 + level * 2; }
 // 이어지도록(80→1배, 100→10배, 200→40배, 300→120배) 설계해 계단 없이 매끄럽게 커진다.
 // nextExpFor는 jobs뿐 아니라 PvP/행성/업적 등 모든 XP 획득의 공통 기준이라 여기 하나만
 // 바꾸면 어떤 수단으로도 각 구간을 순식간에 뚫을 수 없게 된다.
-function nextExpFor(level) {
-  const base = level * 100;
+// ── 레벨당 필요 경험치가 10%씩 복리로 늘어나도록 교체(요청 반영: "경험치 획득이 각 level
+// 당 10%씩 더 필요하게"). 예전엔 base가 level*100(선형)이라 레벨이 올라갈수록 "직전 레벨
+// 대비 증가율"이 오히려 줄었다(10→11레벨은 +10%인데 50→51레벨은 +2%) — 이제 1~100 구간은
+// 어느 레벨에서 봐도 정확히 직전 레벨의 1.1배다.
+//   · 1~100: 100 × 1.1^(레벨-1) — 환생 한 바퀴(1→100)가 88만 XP에서 1,250만 XP로 약 14배.
+//   · 100 초과: 1~100 구간을 복리로 갈아끼운 만큼 레벨 100 기준점만 올라가고, 그 위의
+//     증가율(기존 100/200/300 구간 곡선)은 예전 비율 그대로 이어붙인다. 이렇게 안 하면
+//     이미 레벨 200인 유저의 다음 레벨이 24,000배로 뛰어 사실상 성장이 영구 정지한다
+//     (실제 유저 데이터로 확인하고 이 방식으로 정했다 — 지금은 12.5배 벽으로 넘을 수 있다).
+const EXP_GEOMETRIC_RATE = 1.1;
+const EXP_GEOMETRIC_UNTIL = 100; // 이 레벨까지는 순수 복리, 그 위로는 기존 곡선 비율을 이어붙임
+function legacyExpCurveMult(level) {
   let mult = 1;
   if (level > 80) {
     const t = Math.min(1, (Math.min(level, 100) - 80) / 20); // 80→0, 100→1
@@ -122,7 +132,15 @@ function nextExpFor(level) {
     const over = level - 300;
     mult = 120 + over * over * 0.5; // 300 이후로는 제곱적으로 폭증(310→170배, 350→1370배, 400→5120배)
   }
-  return Math.round(base * mult);
+  return mult;
+}
+// 기존 곡선에서 "레벨 L의 요구량 / 레벨 100의 요구량" 비율만 뽑아 쓴다(절대값은 안 씀).
+function legacyExpAt(level) { return level * 100 * legacyExpCurveMult(level); }
+function nextExpFor(level) {
+  const lv = Math.max(1, level);
+  const geoAt100 = 100 * Math.pow(EXP_GEOMETRIC_RATE, EXP_GEOMETRIC_UNTIL - 1);
+  if (lv <= EXP_GEOMETRIC_UNTIL) return Math.round(100 * Math.pow(EXP_GEOMETRIC_RATE, lv - 1));
+  return Math.round(geoAt100 * (legacyExpAt(lv) / legacyExpAt(EXP_GEOMETRIC_UNTIL)));
 }
 
 // ── 환생(Rebirth) — 레벨 100에서 레벨/XP/스탯 포인트(HP·에너지·스태미나 최대치 포함)를
@@ -135,17 +153,32 @@ function nextExpFor(level) {
 // "작고 상한 있게" 원칙은 유지된다. ──
 const REBIRTH_LEVEL_REQUIREMENT = 100;
 const REBIRTH_BONUS_PER_COUNT = 0.01;
-const REBIRTH_BONUS_MAX_COUNT = 10;
+// "환생 횟수를 CCL(250)까지 가능하도록" 요청 반영 — ATK/DEF 보너스 상한을 10회 → 250회로
+// 늘린다(회당 +1%는 그대로라 250회에 +250%). 10회까지의 값은 예전과 완전히 동일하므로,
+// 이미 10회를 채운 유저(유제민/이윤규)가 잃는 건 하나도 없고 갈 길만 240회 더 생긴다.
+const REBIRTH_BONUS_MAX_COUNT = 250;
+// ⚠️ 자원 효율/회복 속도/패시브 수입/성장 가속 4개 버프는 여전히 10회에서 상한이다. 이걸
+// 250회 기준으로 늘리면(예: 비용 할인 -20%를 250회에 도달하게) 이미 10회를 채워 만렙 버프를
+// 받고 있던 유저가 하루아침에 -0.8%로 깎이는 소급 너프가 된다. 애초에 이 버프들은 "작고
+// 상한 있게"가 설계 의도(비용 할인이 100%를 넘으면 공짜가 되는 식으로 망가짐)라 상한을
+// 그대로 두는 게 맞다 — 250회짜리 장기 보상은 ATK/DEF와 아래 환생 등급/상점이 담당한다.
+const REBIRTH_BUFF_MAX_COUNT = 10;
 
 // ── 환생 등급(티어) — 환생 횟수를 브론즈/실버/골드/무지개 4단계로 묶어서 프로필 테두리·
 //    이름표가 환생할수록 단계적으로 화려해지게 한다. 순수 표시용 등급이라 클라이언트에서도
 //    (public/arena.js의 동일한 계단식으로) 그대로 다시 계산할 수 있다 — 서버는 신뢰 판정에만 쓴다.
+// 환생 상한이 250회로 늘면서 등급도 위로 3단계(프리즘/초신성/특이점) 더 얹었다. 기존
+// 1~4단계의 기준(1/3/5/10회)은 손대지 않았다 — 지금 무지개(10회)인 사람이 갑자기 낮은
+// 등급으로 떨어지면 인챈트 상한/봇 한도/공격 쿨다운까지 통째로 깎이는 소급 너프가 된다.
 function rebirthTier(count) {
   const c = count || 0;
-  if (c >= REBIRTH_BONUS_MAX_COUNT) return 4; // 무지개(최고 등급) — 전투력 보너스 상한(10회)과 일치
-  if (c >= 5) return 3; // 골드
-  if (c >= 3) return 2; // 실버
-  if (c >= 1) return 1; // 브론즈
+  if (c >= 250) return 7; // 특이점 — CCL(250회) 도달
+  if (c >= 75) return 6;  // 초신성
+  if (c >= 25) return 5;  // 프리즘
+  if (c >= 10) return 4;  // 무지개(예전 최고 등급)
+  if (c >= 5) return 3;   // 골드
+  if (c >= 3) return 2;   // 실버
+  if (c >= 1) return 1;   // 브론즈
   return 0;
 }
 
@@ -160,7 +193,9 @@ const PVP_AURA_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal",
 function pvpAuraTierFor(row) {
   const weaponItem = row.equipped_weapon ? SHOP_ITEMS[row.equipped_weapon] : null;
   const weaponIdx = weaponItem ? PVP_AURA_TIERS.indexOf(weaponItem.rarity) : -1;
-  const rebirthIdx = rebirthTier(row.rebirth_count) - 1; // 0(무환생)이면 -1이 되어 미반영
+  // 환생 등급이 7단계까지 늘어난 뒤로는 그대로 인덱스로 쓰면 PVP_AURA_TIERS(6개) 범위를
+  // 넘겨 undefined가 된다 — 최상위(apocalyptic)에서 잘라낸다("무한정 화려해지지 않는다" 원칙).
+  const rebirthIdx = Math.min(rebirthTier(row.rebirth_count) - 1, PVP_AURA_TIERS.length - 1); // 0(무환생)이면 -1이 되어 미반영
   let levelIdx = -1;
   // 레벨 200(신설 "초월적 해커" 업적과 동일 기준)은 최상위 abyssal로 바로 직행 — 환생 없이
   // 순수 레벨만으로 최고 등급 아우라를 볼 수 있는 유일한 경로다.
@@ -174,8 +209,13 @@ function pvpAuraTierFor(row) {
 }
 // 환생 등급별 전투/QoL 특권 — "작고 상한 있게" 원칙을 그대로 이어받아 인챈트 최대 레벨
 // +2/티어(최대 +8), 봇 모집 한도 +1/티어(최대 +4), 공격 쿨다운 -4초/티어(최소 14초)만 준다.
-function enchantMaxLevelFor(row) { return ENCHANT_MAX_LEVEL + rebirthTier(row.rebirth_count) * 2; }
-function botMaxCountFor(row) { return BOT_MAX_COUNT + rebirthTier(row.rebirth_count); }
+// 환생 상점의 "인챈트 매트릭스"(+3) / "확장 봇 격납고"(+2)는 환생 등급 보너스와 별개로 더해진다.
+function enchantMaxLevelFor(row) {
+  return ENCHANT_MAX_LEVEL + rebirthTier(row.rebirth_count) * 2 + (rebirthShopHas(row, "rebirth_enchant_matrix") ? 3 : 0);
+}
+function botMaxCountFor(row) {
+  return BOT_MAX_COUNT + rebirthTier(row.rebirth_count) + (rebirthShopHas(row, "rebirth_bot_bay") ? 2 : 0);
+}
 function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - rebirthTier(row.rebirth_count) * 4000); }
 
 // ── 환생 버프 확장 — "환생 버프가 너무 적다"는 요청으로 4가지 축을 추가했었는데, 곧바로
@@ -187,7 +227,7 @@ function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - 
 // 증가폭은 전부 "그 최댓값 나누기 10"이 되고(예: 자원 효율 최대 -20% → 회당 -2%), 10회를
 // 다 채워야 예전과 같은 최댓값에 도달한다. 인챈트/봇/쿨다운 3개 QoL 특권은 원래 있던 오래된
 // 기능이라 이번 요청 범위 밖으로 보고 그대로 rebirthTier 계단식을 유지했다.
-function rebirthCountRatio(count) { return Math.min(count || 0, REBIRTH_BONUS_MAX_COUNT) / REBIRTH_BONUS_MAX_COUNT; }
+function rebirthCountRatio(count) { return Math.min(count || 0, REBIRTH_BUFF_MAX_COUNT) / REBIRTH_BUFF_MAX_COUNT; }
 // (1) 자원 효율 — Jobs 에너지 소모/스탯 강화 비용 최대 -20%(회당 -2%).
 const REBIRTH_MAX_COST_DISCOUNT = 0.20;
 function rebirthCostMult(row) { return 1 - rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_COST_DISCOUNT; }
@@ -776,8 +816,13 @@ const PROPERTY_SLOTS_COSTS = [1000, 2000, 4000]; // 인덱스 = 현재 레벨(0�
 function propertySlotsUpgradeCost(level) { return level >= PROPERTY_SLOTS_MAX_LEVEL ? null : PROPERTY_SLOTS_COSTS[level]; }
 // 환생 버프(패시브 수입) — 티어당 +1개(최대 +4)까지 얹는다. rebirthCount를 안 넘기면(기존
 // 호출부 하위 호환) 환생 보너스 없이 그대로 동작한다.
-function effectivePropertyMaxDevices(level, rebirthCount) {
-  return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL) + Math.floor(rebirthCountRatio(rebirthCount) * REBIRTH_MAX_PROPERTY_SLOT_BONUS);
+// 기본 6칸 + 연구(최대 +3) + 환생 등급(최대 +4) + 환생 상점 "분산 전력망"(+2).
+// 호출부가 전부 유저 row를 갖고 있어서 인자를 row 하나로 통일했다(예전엔 값 2개를 따로 넘겼다).
+function effectivePropertyMaxDevices(row) {
+  return PROPERTY_MAX_DEVICES
+    + Math.min(row.research_property_slots_level || 0, PROPERTY_SLOTS_MAX_LEVEL)
+    + Math.floor(rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_PROPERTY_SLOT_BONUS)
+    + (rebirthShopHas(row, "rebirth_property_grid") ? 2 : 0);
 }
 
 // ── 자동 뽑기(Auto Roll) 연구 — 다이아 5000개 1회성 해금. 해금하면 (1) BOT 탭 가챠에서
@@ -1500,7 +1545,64 @@ const REBIRTH_SHOP_ITEMS = {
     name: "환생 보상 상자", type: "diamond_grant", cost: 10, diamonds: 800,
     desc: "구매(수령) 즉시 다이아 💎800 지급 — 1인당 1회 한정.",
   },
+
+  // ── 영구 능력 확장 — 환생 상한이 250회로 늘면서 "환생석을 오래 모을 이유"가 필요해졌다.
+  // 전부 계산으로만 적용되는 것들이라(DB 컬럼에 직접 얹지 않는다) 환생으로 레벨/스탯이
+  // 초기화돼도 절대 날아가지 않는다 — 환생 재화로 산 물건이 환생 때문에 사라지면 안 되니까.
+  rebirth_bot_bay: {
+    name: "확장 봇 격납고", type: "cap_bot", cost: 80,
+    desc: "봇 모집 한도 영구 +2 (환생 등급 보너스와 별개로 추가).",
+  },
+  rebirth_enchant_matrix: {
+    name: "인챈트 매트릭스", type: "cap_enchant", cost: 120,
+    desc: "장비 강화 최대 레벨 영구 +3 (환생 등급 보너스와 별개로 추가).",
+  },
+  rebirth_property_grid: {
+    name: "분산 전력망", type: "cap_property", cost: 150,
+    desc: "Property 보유 슬롯 영구 +2 (연구·환생 등급 보너스와 별개로 추가).",
+  },
+  rebirth_core_singularity: {
+    name: "환생 코어: 특이점", type: "stat_boost2", cost: 300,
+    desc: "ATK/DEF 영구 +5% (환생 코어 오버클럭과 중복 적용 — 둘 다 사면 곱연산).",
+  },
+
+  // ── 반복 구매 환전소 — 250회까지 환생하면 환생석이 16만 개 넘게 쌓이는데 1회성 소장품만
+  // 있으면 쓸 데가 없다. 유일하게 횟수 제한이 없는 소모처로, 남는 환생석을 실제 재화로 바꾼다.
+  rebirth_exchange_diamond: {
+    name: "환생석 → 다이아 환전", type: "diamond_grant", cost: 10, diamonds: 100, repeatable: true,
+    desc: "환생석 💠10 → 다이아 💎100. 횟수 제한 없이 반복 구매 가능.",
+  },
+  rebirth_exchange_coin: {
+    name: "환생석 → 코인 환전", type: "coin_grant", cost: 1, coins: 1000000, repeatable: true,
+    desc: "환생석 💠1 → 코인 100만. 횟수 제한 없이 반복 구매 가능.",
+  },
+
+  // ── 행 배경 스킨 — "환생 10번 하면 살짝 스킨을 살 수 있게, ARENA P2P나 리더보드에서 그
+  // 사람 칸의 배경 자체가 바뀌는" 요청 반영. 성능에는 전혀 영향이 없고 오직 남들 눈에만
+  // 보이는 과시용이라, 환생을 계속할 사회적 동기가 된다. 하나만 장착할 수 있다.
+  skin_darkness: {
+    name: "행 스킨: DARKNESS", type: "row_skin", cost: 30, minRebirth: 10,
+    desc: "PvP 타겟 목록·리더보드에서 내 칸 배경이 칠흑으로 물듭니다. (환생 10회 이상)",
+  },
+  skin_twilight: {
+    name: "행 스킨: 황혼", type: "row_skin", cost: 30, minRebirth: 10,
+    desc: "PvP 타겟 목록·리더보드에서 내 칸 배경이 황혼빛 그라데이션이 됩니다. (환생 10회 이상)",
+  },
+  skin_abyss: {
+    name: "행 스킨: 심연", type: "row_skin", cost: 60, minRebirth: 25,
+    desc: "내 칸 배경이 심해의 푸른 어둠으로 물듭니다. (환생 25회 이상)",
+  },
+  skin_bloodmoon: {
+    name: "행 스킨: 혈월", type: "row_skin", cost: 60, minRebirth: 25,
+    desc: "내 칸 배경이 핏빛 달무리로 물듭니다. (환생 25회 이상)",
+  },
+  skin_aurora: {
+    name: "행 스킨: 오로라", type: "row_skin", cost: 120, minRebirth: 75,
+    desc: "내 칸 배경에 흐르는 오로라가 깔립니다(애니메이션). (환생 75회 이상)",
+  },
 };
+// 이 유저가 환생 상점에서 그 아이템을 샀는지 — 영구 능력 확장 계산에서 반복해서 쓴다.
+function rebirthShopHas(row, id) { return rebirthShopOwnedSet(row).has(id); }
 function rebirthShopOwnedSet(row) {
   try { return new Set(JSON.parse(row.rebirth_shop_owned || "[]")); } catch (e) { return new Set(); }
 }
@@ -1884,6 +1986,9 @@ async function ensureSchema(env) {
   // 새로 읽어옴 — 나중에 이름을 바꿔도 안 꼬임), 실제 달성 여부는 매번 현재 상태(레벨/환생/
   // 보유 행성 수 등)로 다시 계산한다(별도 진행도 테이블 없이도 항상 정확함).
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN equipped_title_id TEXT"); } catch (e) {}
+  // 환생 상점에서 산 "행 배경 스킨"(PvP 타겟 목록·리더보드에서 내 칸 배경을 바꾼다) 중
+  // 지금 장착한 것 하나. 성능엔 전혀 영향이 없는 순수 과시용이라 값 검증도 가볍게 한다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN equipped_row_skin TEXT"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_achievement_claims (user_id TEXT NOT NULL, achievement_id TEXT NOT NULL, " +
     "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, achievement_id))"
@@ -2248,7 +2353,9 @@ async function totalCombatStats(env, row) {
   const rebirthMult = 1 + Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT;
   // 환생 상점의 "환생 코어 오버클럭"(1회 구매, 중복 불가) — 위 환생 등급 보너스와는 별개로
   // 딱 +3%만 추가 곱연산. 중복 구매가 안 되니 인플레 걱정 없이 고정값으로 둔다.
-  const statBoostMult = rebirthShopOwnedSet(row).has("rebirth_core_overclock") ? 1.03 : 1;
+  // 환생 코어 2종은 곱연산으로 중복 적용된다(오버클럭 +3%, 특이점 +5% → 둘 다 사면 x1.0815).
+  const shopBoostSet = rebirthShopOwnedSet(row);
+  const statBoostMult = (shopBoostSet.has("rebirth_core_overclock") ? 1.03 : 1) * (shopBoostSet.has("rebirth_core_singularity") ? 1.05 : 1);
   atk = Math.round(atk * rebirthMult * statBoostMult);
   def = Math.round(def * rebirthMult * statBoostMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
@@ -2890,6 +2997,7 @@ export default {
             attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
             attackCapped: attackCapped, shielded: shielded, downed: downed, levelGapHigh: levelGapHigh,
             attackable: !shielded && !downed && !attackCapped,
+            rowSkin: t.equipped_row_skin || null, // 환생 상점 행 배경 스킨 — 남들 목록에서 내 칸이 바뀐다
           });
         }
         return json({
@@ -4214,6 +4322,23 @@ export default {
         return json({ ok: true, equippedTitleId: id, equippedTitle: setTitleInfo.text, equippedTitleRarity: setTitleInfo.rarity, equippedTitleColor: setTitleInfo.color });
       }
 
+      // ── POST /rebirth-shop/set-skin { id|null } — 환생 상점에서 산 행 배경 스킨을 장착/해제.
+      //    장착한 스킨은 PvP 타겟 목록과 리더보드에서 "내 칸"의 배경으로 남들에게 보인다. ──
+      if (request.method === "POST" && path === "/rebirth-shop/set-skin") {
+        const body = await request.json().catch(function () { return {}; });
+        const id = body.id;
+        if (id === null || id === undefined || id === "") {
+          await env.DB.prepare("UPDATE arena_users SET equipped_row_skin = NULL WHERE user_id = ?").bind(user.userId).run();
+          return json({ ok: true, equippedRowSkin: null });
+        }
+        const item = REBIRTH_SHOP_ITEMS[id];
+        if (!item || item.type !== "row_skin") return json({ error: "존재하지 않는 스킨입니다." }, 404);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!rebirthShopOwnedSet(row).has(id)) return json({ error: "환생 상점에서 구매하지 않은 스킨입니다." }, 400);
+        await env.DB.prepare("UPDATE arena_users SET equipped_row_skin = ? WHERE user_id = ?").bind(id, user.userId).run();
+        return json({ ok: true, equippedRowSkin: id });
+      }
+
       // ══════════════════════════════════════════════════════════
       //  Rebirth Shop — 환생으로만 얻는 "환생석"을 소비하는 전용 상점. 코인/다이아 경제와
       //  완전히 분리된 명예/코스메틱 재화라 인플레이션 걱정 없이 계속 늘려도 안전하다.
@@ -4226,7 +4351,12 @@ export default {
         const items = Object.keys(REBIRTH_SHOP_ITEMS).map(function (id) {
           return Object.assign({ id: id, owned: owned.has(id) }, REBIRTH_SHOP_ITEMS[id]);
         });
-        return json({ stones: row.rebirth_stones || 0, items: items, equippedTitleId: row.equipped_title_id || null });
+        return json({
+          stones: row.rebirth_stones || 0, items: items,
+          equippedTitleId: row.equipped_title_id || null,
+          equippedRowSkin: row.equipped_row_skin || null,
+          rebirthCount: row.rebirth_count || 0, // minRebirth가 걸린 품목의 구매 가능 여부 표시용
+        });
       }
 
       // ── POST /rebirth-shop/buy { itemId } — 환생석으로 전용 소장품을 1회성으로 구매한다
@@ -4238,16 +4368,30 @@ export default {
         if (!item) return json({ error: "존재하지 않는 아이템입니다." }, 404);
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const owned = rebirthShopOwnedSet(row);
-        if (owned.has(itemId)) return json({ error: "이미 보유한 아이템입니다." }, 400);
-        if ((row.rebirth_stones || 0) < item.cost) return json({ error: "환생석이 부족합니다. (필요 💠" + item.cost + ")" }, 400);
-        owned.add(itemId);
-        row.rebirth_stones -= item.cost;
-        row.rebirth_shop_owned = JSON.stringify(Array.from(owned));
-        // diamond_grant 타입은 "소장품"이 아니라 1회성 즉시 보상 — owned 플래그로 중복 수령만 막는다.
-        if (item.type === "diamond_grant") row.diamonds += item.diamonds;
-        await env.DB.prepare("UPDATE arena_users SET rebirth_stones=?, rebirth_shop_owned=?, diamonds=? WHERE user_id=?")
-          .bind(row.rebirth_stones, row.rebirth_shop_owned, row.diamonds, row.user_id).run();
-        return json({ ok: true, stones: row.rebirth_stones, diamonds: row.diamonds, itemId: itemId });
+        // repeatable(환전소)만 예외로 중복 구매를 허용한다 — 나머지는 전부 1회성 소장품.
+        if (!item.repeatable && owned.has(itemId)) return json({ error: "이미 보유한 아이템입니다." }, 400);
+        // 행 스킨처럼 "환생 N회 이상"이 걸린 품목 — 자격 미달이면 아예 살 수 없다.
+        if (item.minRebirth && (row.rebirth_count || 0) < item.minRebirth) {
+          return json({ error: "환생 " + item.minRebirth + "회 이상부터 구매할 수 있습니다. (현재 " + (row.rebirth_count || 0) + "회)" }, 400);
+        }
+        // 반복 구매는 수량(qty)을 받아 한 번에 여러 번 살 수 있다 — 환생석이 16만 개까지
+        // 쌓이는데 한 번에 하나씩만 바꾸면 수백 번 눌러야 한다.
+        const qty = item.repeatable ? Math.max(1, Math.min(10000, parseInt(body.qty, 10) || 1)) : 1;
+        const totalCost = item.cost * qty;
+        if ((row.rebirth_stones || 0) < totalCost) return json({ error: "환생석이 부족합니다. (필요 💠" + fmtNum(totalCost) + ")" }, 400);
+
+        row.rebirth_stones -= totalCost;
+        if (!item.repeatable) {
+          owned.add(itemId);
+          row.rebirth_shop_owned = JSON.stringify(Array.from(owned));
+        }
+        // diamond_grant / coin_grant는 "소장품"이 아니라 즉시 보상 — 1회성이면 owned 플래그가
+        // 곧 "이미 수령함" 표시이고, repeatable이면 산 수량만큼 그 자리에서 지급된다.
+        if (item.type === "diamond_grant") row.diamonds += item.diamonds * qty;
+        if (item.type === "coin_grant") row.pocket_coins += item.coins * qty;
+        await env.DB.prepare("UPDATE arena_users SET rebirth_stones=?, rebirth_shop_owned=?, diamonds=?, pocket_coins=? WHERE user_id=?")
+          .bind(row.rebirth_stones, row.rebirth_shop_owned, row.diamonds, row.pocket_coins, row.user_id).run();
+        return json({ ok: true, stones: row.rebirth_stones, diamonds: row.diamonds, pocketCoins: row.pocket_coins, itemId: itemId, qty: qty });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -4290,7 +4434,7 @@ export default {
           // Property 슬롯 확장 — 딱 3단계, 다이아 1000/2000/4000. 레벨당 보유 가능 기기 +1개.
           propertySlotsLevel: row.research_property_slots_level || 0,
           propertySlotsMaxLevel: PROPERTY_SLOTS_MAX_LEVEL,
-          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count),
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row),
           propertySlotsUpgradeCost: propertySlotsUpgradeCost(row.research_property_slots_level || 0),
           // 자동 뽑기 — 다이아 5000개 1회성 해금. 해금하면 BOT 가챠/상점 리롤에 "원하는 등급
           // 나올 때까지 자동 반복" 옵션이 생긴다.
@@ -4391,7 +4535,7 @@ export default {
         await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_property_slots_level=? WHERE user_id=?").bind(row.diamonds, row.research_property_slots_level, row.user_id).run();
         return json({
           ok: true, diamonds: row.diamonds, propertySlotsLevel: row.research_property_slots_level,
-          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level, row.rebirth_count),
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row),
           nextCost: propertySlotsUpgradeCost(row.research_property_slots_level),
         });
       }
@@ -4735,7 +4879,7 @@ export default {
           .map(function (id) { return [id, PROPERTY_DEVICES[id]]; })
           .sort(function (a, b) { return a[1].price - b[1].price; })
           .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
-        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
+        const maxDevices = effectivePropertyMaxDevices(row);
         return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 
@@ -4745,7 +4889,7 @@ export default {
         if (!device) return json({ error: "알 수 없는 기기입니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
+        const maxDevices = effectivePropertyMaxDevices(row);
         const ownedRes = await env.DB.prepare("SELECT qty FROM arena_devices WHERE user_id = ?").bind(user.userId).all();
         const totalOwned = ownedRes.results.reduce(function (sum, r) { return sum + r.qty; }, 0);
         if (totalOwned >= maxDevices) return json({ error: "기기는 최대 " + maxDevices + "개까지만 보유할 수 있습니다." }, 400);
@@ -5112,11 +5256,14 @@ export default {
         else orderBy = "level DESC, xp DESC";
         // 관리자 테스트 계정은 치트로 쌓인 수치가 랭킹을 오염시키지 않도록 항상 제외한다.
         const res = await env.DB.prepare(
-          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count, equipped_title_id FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
+          "SELECT user_id, real_name, level, pocket_coins, bank_coins, plunder_wins, rebirth_count, equipped_title_id, equipped_row_skin FROM arena_users WHERE user_id != ? ORDER BY " + orderBy + " LIMIT 50"
         ).bind(ADMIN_USER_ID).all();
         const rows = res.results.map(function (r) {
           const titleInfo = lookupTitleInfo(r.equipped_title_id);
-          return Object.assign({}, r, { title: titleInfo.text, titleRarity: titleInfo.rarity, titleColor: titleInfo.color });
+          return Object.assign({}, r, {
+            title: titleInfo.text, titleRarity: titleInfo.rarity, titleColor: titleInfo.color,
+            rowSkin: r.equipped_row_skin || null, // 환생 상점 행 배경 스킨
+          });
         });
         return json({ type: type, rows: rows });
       }
