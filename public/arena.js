@@ -504,7 +504,10 @@
         return (
         '<div class="pvp-row">' +
         '<div class="pvp-name">' + titleHtml + nameHtml + rebirthNote + '<span class="dim"> Lv.' + t.level + "</span> " +
-        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE' + (t.offlinePendingCoins > 0 ? ' <span style="color:var(--stamina);">(+' + fmt(t.offlinePendingCoins) + ' 대기수익)</span>' : '') + "</span>") + statusNote + "</div>" +
+        // 대기 수익(offlinePendingCoins) 노출을 없앴다(요청 반영: "arena p2p에서 시간당
+        // 수익은 안 보이게") — 온라인 여부만 보여주고, 실제 공격 시 오프라인 보너스 획득
+        // 로직(POST /arena/attack의 collectProperty)은 그대로 유지된다.
+        (t.online ? '<span style="color:var(--energy);">● ONLINE</span>' : '<span class="dim">○ OFFLINE</span>') + statusNote + "</div>" +
         '<div class="pvp-stat">DEF ' + t.def + "</div>" +
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
@@ -543,7 +546,6 @@
       $("scanModalBody").innerHTML =
         "<h3>🔎 PRACTICE SCAN — " + scanTitleHtml + scanNameHtml + " (Lv." + r.level + ")" + rebirthBadgeHtml(r.rebirthCount) + "</h3>" +
         '<div class="scan-row">상태 <b>' + (r.online ? "🟢 온라인" : "⚪ 오프라인") + "</b></div>" +
-        (r.online ? "" : '<div class="scan-row">대기 중인 Property 수익 <b style="color:var(--stamina);">+' + fmt(r.offlinePendingCoins) + "</b></div>") +
         '<div class="scan-row">최근 태세 <b>' + (r.lastStanceLabel || "정보 없음") + "</b></div>" +
         '<div class="scan-row">내 ATK <b>' + r.myAtk + "</b></div>" +
         '<div class="scan-row">상대 DEF <b>' + r.def + "</b></div>" +
