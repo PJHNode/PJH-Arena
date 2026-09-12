@@ -22,26 +22,51 @@ function json(data, status = 200) {
 // 이 계정은 리더보드에서도 제외한다(치트로 쌓인 수치가 랭킹을 오염시키지 않게).
 const ADMIN_USER_ID = "pjhg0605i";
 
+// ── KV 읽기 절약용 인메모리 캐시 — Cloudflare Workers KV 무료 한도(계정 전체 하루 10만
+// 읽기)에 계속 근접해(90% 도달 경고 메일) 최적화가 필요해졌다. 요청마다 무조건 2회(세션+
+// 유저)씩 나가던 verifyUser의 KV 읽기와, PvP 목록(/arena/targets)이 대상 최대 20명마다
+// 한 번씩 돌리던 isTargetOnline의 KV 읽기가 압도적인 비중을 차지했다. 아이솔레이트가
+// 살아있는 동안만 유효한 짧은 TTL 캐시라(로그아웃/정지 반영이나 온라인 상태가 최대 15~60초
+// 늦게 반영될 수 있는 정도의 트레이드오프) 서버 재배포 없이도 동작하고, 15초 간격으로
+// 폴링하는 프론트(refreshState)의 반복 요청 상당수가 KV를 아예 안 타게 된다. ──
+const VERIFY_CACHE_TTL_MS = 20 * 1000;
+const verifyCache = new Map(); // token -> { result, expiresAt }
+const ONLINE_CACHE_TTL_MS = 60 * 1000;
+const onlineCache = new Map(); // userId -> { online, expiresAt }
+// 캐시가 무한히 자라지 않도록(오래 사는 아이솔레이트 대비) 커지면 만료분만 한 번 쓸어낸다.
+function sweepIfLarge(map, maxSize) {
+  if (map.size <= maxSize) return;
+  const now = Date.now();
+  for (const [key, entry] of map) { if (entry.expiresAt <= now) map.delete(key); }
+}
+
 // ── 계정 검증 — board-worker.js의 verifyUser와 동일한 계약(SESSIONS/USERS KV를
 //    pjh-auth와 공유). 여기서는 읽기만 하고 절대 쓰지 않는다. ──
 async function verifyUser(request, env) {
   const authHeader = request.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
   if (!token) return null;
+  const cached = verifyCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+  function remember(result) {
+    sweepIfLarge(verifyCache, 500);
+    verifyCache.set(token, { result: result, expiresAt: Date.now() + VERIFY_CACHE_TTL_MS });
+    return result;
+  }
   try {
     const raw = await env.SESSIONS.get("session:" + token);
-    if (!raw) return null;
+    if (!raw) return remember(null);
     const session = JSON.parse(raw);
-    if (!session || !session.userId) return null;
+    if (!session || !session.userId) return remember(null);
 
     const userRaw = await env.USERS.get("user:" + session.userId);
     let avatar = null;
     if (userRaw) {
       const userData = JSON.parse(userRaw);
-      if (userData.banned) return { _error: "정지된 계정입니다.", _status: 403 };
+      if (userData.banned) return remember({ _error: "정지된 계정입니다.", _status: 403 });
       avatar = userData.avatar || null; // PJH-Hub에서 산 아바타 id(neon/gold/prism/galaxy) — 읽기만
     }
-    return { userId: session.userId, realName: session.realName || session.userId, avatar: avatar };
+    return remember({ userId: session.userId, realName: session.realName || session.userId, avatar: avatar });
   } catch (e) {
     return null;
   }
@@ -1935,14 +1960,19 @@ async function insertLog(env, userId, kind, opponentId, opponentName, result, co
 }
 
 async function isTargetOnline(env, userId) {
+  const cached = onlineCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.online;
+  let online = false;
   try {
     const raw = await env.USERS.get("user:" + userId);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    return !!(data.lastSeen && Date.now() - data.lastSeen < ONLINE_THRESHOLD_MS);
-  } catch (e) {
-    return false;
-  }
+    if (raw) {
+      const data = JSON.parse(raw);
+      online = !!(data.lastSeen && Date.now() - data.lastSeen < ONLINE_THRESHOLD_MS);
+    }
+  } catch (e) {}
+  sweepIfLarge(onlineCache, 500);
+  onlineCache.set(userId, { online: online, expiresAt: Date.now() + ONLINE_CACHE_TTL_MS });
+  return online;
 }
 
 // ── 같은 (공격자, 방어자) 쌍이 최근 8시간(지금부터 ATTACK_LIMIT_RESET_MS 전까지) 안에 몇 번
@@ -2365,8 +2395,11 @@ export default {
         // 공격 불가능한 상대(자가 보호막 중, 다운 상태, 오늘 공격 한도 초과, 레벨 차이 초과)라도
         // 목록에서 아예 사라지진 않는다 — 그냥 ATTACK 버튼만 비활성화되고 사유가 표시된다.
         // 관리자 테스트 계정은 치트 수치로 실제 유저 대전을 왜곡할 수 있어 애초에 목록에서 뺀다.
+        // 20 → 12로 줄였다 — 이 목록 하나가 대상마다 isTargetOnline(KV 읽기)을 돌리는 게
+        // KV 무료 한도(하루 10만 읽기) 소모의 큰 축이었다(90% 도달 경고 반영, 캐싱과 별개로
+        // 목록 자체 크기도 줄임).
         const res = await env.DB.prepare(
-          "SELECT * FROM arena_users WHERE user_id != ? AND user_id != ? ORDER BY RANDOM() LIMIT 20"
+          "SELECT * FROM arena_users WHERE user_id != ? AND user_id != ? ORDER BY RANDOM() LIMIT 12"
         ).bind(user.userId, ADMIN_USER_ID).all();
 
         const targets = [];
