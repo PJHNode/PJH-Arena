@@ -169,6 +169,7 @@
     hpFullAt = state.hpFullInMs <= 0 ? 0 : now + state.hpFullInMs; // HP도 이제 다운 상태에서 자연 회복됨
     energyFullAt = state.energyFullInMs <= 0 ? 0 : now + state.energyFullInMs;
     staminaFullAt = state.staminaFullInMs <= 0 ? 0 : now + state.staminaFullInMs;
+    signalInterceptReadyAt = state.signalInterceptReadyAt || 0; // 서버가 이미 절대 시각(ms)으로 내려줌
     renderResourceEtas();
 
     $("atkText").textContent = state.atk;
@@ -415,6 +416,23 @@
       });
     });
     renderMiningGraph();
+  }
+
+  // ── 신호 감청 — 자원(에너지/스태미나) 소모 없이 10분 쿨다운만으로 도는 수입원("hacking
+  // jobs/property 말고는 돈 벌 수단이 없다" 요청 반영). 버튼은 index.html에 고정 마크업으로
+  // 있고(#panel-jobs 안, .job-grid 밖) renderJobsTab처럼 매번 다시 그리지 않으므로 리스너는
+  // 한 번만 건다 — 버튼 자체의 텍스트/활성화 상태는 renderResourceEtas가 1초마다 갱신한다. ──
+  function initSignalInterceptButton() {
+    const btn = $("signalInterceptBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const r = await api("/signal-intercept", { method: "POST" });
+        toast("📡 신호 감청 성공! +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
+        state = r.state; renderHeader();
+      } catch (e) { toast(e.message, true); btn.disabled = false; }
+    });
   }
 
   // ── 오늘의 출석/미션 — Hacking Jobs 탭 맨 위에 둬서(가장 먼저 보는 탭) 매일 들어올 이유를
@@ -791,8 +809,10 @@
           '<circle cx="' + (fx.r + 4.5).toFixed(1) + '" cy="0" r="1.1" fill="' + fx.color + '"/></g>';
       }
       const dotCls = "starmap-dot" + (fx.breathe ? " starmap-breathe" : "");
+      // 보상 코인도 호버 툴팁에 같이 보여준다(요청 반영: "돈벌기 수단이 안 보인다" — 이겨야만
+      // 알 수 있던 보상을 미리 확인할 수 있게).
       inner += '<circle class="' + dotCls + '" data-planet="' + p.id + '" r="' + fx.r + '" fill="' + fx.color +
-        '"><title>' + escapeHtml(p.name) + " (" + (p.botTierLabel || "") + ")</title></circle>";
+        '"><title>' + escapeHtml(p.name) + " (" + (p.botTierLabel || "") + ") — 승리 시 +" + fmt(p.rewardCoins || 0) + " 코인</title></circle>";
       return '<g transform="translate(' + px + "," + py + ')">' + inner + "</g>";
     }).join("");
 
@@ -954,8 +974,10 @@
 
   function openPlanetAttackSequence(planet) {
     $("attackModal").style.display = "flex";
+    // 승리 보상을 미리 보여준다(요청 반영: "돈벌기 수단이 안 보인다" — 이겨야만 토스트로
+    // 알려주던 것을 공격 전에도 확인할 수 있게 해서 이게 실제 수입원이라는 걸 알린다).
     const hint = planet.botTier
-      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이겨도 소유권은 안 넘어가고 그 자리에서 약탈만 합니다."
+      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이겨도 소유권은 안 넘어가고 그 자리에서 <b style=\"color:var(--stamina);\">+" + fmt(planet.rewardCoins) + " 코인</b> 약탈만 합니다(스태미나 1 소모)."
       : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 공격력/방어력이 실전의 1.1배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다(행성은 뺏지 않음).";
     renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
   }
@@ -1120,7 +1142,7 @@
 
   // ── HP/Energy/Stamina 완전 회복까지 남은 시간 표시 — renderHeader가 절대 시각을 세팅해두면
   // 1초마다 그 시각까지 남은 시간만 다시 계산해서 보여준다(다음 /state 폴링을 기다릴 필요 없음). ──
-  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, boostUntilAt = 0, globalEventEndAt = 0;
+  let hpFullAt = 0, energyFullAt = 0, staminaFullAt = 0, boostUntilAt = 0, globalEventEndAt = 0, signalInterceptReadyAt = 0;
   function renderResourceEtas() {
     const now = Date.now();
     const hpEl = $("hpEta"), energyEl = $("energyEta"), staminaEl = $("staminaEta");
@@ -1145,6 +1167,19 @@
     const bountyCountdownEl = $("bountyRefreshCountdown");
     if (bountyCountdownEl) {
       bountyCountdownEl.textContent = bountyRefreshAt > now ? fmtLongCountdown(bountyRefreshAt - now) : "갱신 중...";
+    }
+
+    // 신호 감청 — 자원 소모 없이 10분 쿨다운만으로 도는 수입원. 예상 보상도 버튼에 같이 보여준다.
+    const interceptBtn = $("signalInterceptBtn");
+    if (interceptBtn && state) {
+      if (signalInterceptReadyAt > now) {
+        interceptBtn.disabled = true;
+        interceptBtn.textContent = "대기 중 " + fmtCountdown(signalInterceptReadyAt - now);
+      } else {
+        interceptBtn.disabled = false;
+        const r = state.signalInterceptNextReward;
+        interceptBtn.textContent = "감청하기" + (r ? " (+" + fmt(r.coins) + " 코인)" : "");
+      }
     }
   }
   setInterval(renderResourceEtas, 1000);
@@ -2826,6 +2861,7 @@
     initTradeButtons();
     initClubButtons();
     initDailyButtons();
+    initSignalInterceptButton();
     initAdminButtons();
     initProfileButtons();
     initPropertyButtons();

@@ -740,6 +740,15 @@
 
     <div class="content">
       <div class="tab-panel" id="panel-jobs">
+        <div class="daily-widget" id="signalInterceptWidget" style="border-left-color:var(--accent);">
+          <div class="daily-widget-row">
+            <div>
+              <div style="font-weight:bold;">📡 신호 감청 <span class="dim">(에너지·스태미나 소모 없음)</span></div>
+              <p class="dim" style="margin:4px 0 0;">자원이 바닥나도 10분마다 한 번, 소액 코인을 주울 수 있습니다.</p>
+            </div>
+            <button class="btn-primary" id="signalInterceptBtn">감청하기</button>
+          </div>
+        </div>
         <div class="daily-widget" id="dailyWidget"><p class="dim">불러오는 중...</p></div>
         <p class="panel-title">⚡ ACTIVE HACKING JOBS</p>
         <div class="job-grid"></div>
@@ -752,7 +761,7 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">🤖 봇 구역은 영원히 PVE — 이겨도 소유권은 절대 안 넘어가고, 그 자리에서 즉시 약탈 후 새 난이도로 리롤됩니다(⚡2). 내 홈 행성 근처(반경 <b id="galaxyNearbyRadius">250</b>) 행성은 그냥 보이고, 더 먼 행성은 🛸 정찰 탐사선으로 등급을 지정해서 찾아야 합니다. 👤 사람 구역(홈 행성)은 먼저 정찰해야만 보이고 공격할 수 있습니다(⚡1) — 이기면 포켓 코인 20%를 몰수합니다(뺏지는 않음).</p>
+        <p class="dim" style="margin-bottom:14px;">🤖 봇 구역은 영원히 PVE — 이겨도 소유권은 절대 안 넘어가고, 그 자리에서 즉시 약탈 후 새 난이도로 리롤됩니다(⚡1). 내 홈 행성 근처(반경 <b id="galaxyNearbyRadius">250</b>) 행성은 그냥 보이고, 더 먼 행성은 🛸 정찰 탐사선으로 등급을 지정해서 찾아야 합니다. 👤 사람 구역(홈 행성)은 먼저 정찰해야만 보이고 공격할 수 있습니다(⚡1) — 이기면 포켓 코인 20%를 몰수합니다(뺏지는 않음).</p>
 
         <div class="galaxy-empire">
           <div class="galaxy-empire-header">

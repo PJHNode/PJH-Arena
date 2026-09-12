@@ -80,7 +80,10 @@ async function verifyUser(request, env) {
 // 로만 쓰인다(DB 컬럼 기본값과 반드시 맞춰둘 것).
 const BASE_MAX_HP = 100, BASE_MAX_ENERGY = 50, BASE_MAX_STAMINA = 10;
 const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 30 * 1000;   // 30초당 +5
-const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 2 * 60 * 1000; // 2분당 +1
+// 2분당 +1 → 1분당 +1로 2배 빠르게(요청 반영: 봇 구역 전투를 진짜 쓸만한 3번째 수입원으로
+// 만들려면 에너지 대비 지나치게 느린 회복 속도부터 고쳐야 했다). PvP도 같은 자원을 쓰므로
+// 덤으로 더 자주 싸울 수 있게 됐다.
+const STAMINA_REGEN_PER_TICK = 1, STAMINA_TICK_MS = 1 * 60 * 1000;
 const HP_REGEN_PER_TICK = 10, HP_TICK_MS = 5 * 60 * 1000; // 5분당 +10(최대치와 무관한 고정량)
 
 // 기본 ATK/DEF — 기획서에 레벨별 성장 수식이 명시돼 있지 않아, 장비 없이도 레벨업이
@@ -248,6 +251,16 @@ const JOB_TIERS = {
   omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 4582500,  coinMax: 6345000,  xp: 21600 },
   genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 8167500,  coinMax: 11295000, xp: 38400 },
 };
+
+// ── 신호 감청(Signal Intercept) — "hacking jobs/property 말고는 돈 벌 수단이 없다"는 요청
+// 반영. 에너지/스태미나 둘 다 안 쓰고 순수 쿨다운(10분)만으로 도는 세 번째 축의 수입원 —
+// 다른 자원이 바닥난 상태에서도 뭔가 클릭할 거리를 준다. 보상은 레벨에 비례하되 시간당으로
+// 환산하면(6회/시간) Jobs 최저 등급보다도 한참 낮게 잡아서(레벨1 기준 시간당 약 3,300코인)
+// 기존 수입원을 대체하지 않고 "무자원 상태의 최저 생계선" 정도로만 보완한다.
+const SIGNAL_INTERCEPT_COOLDOWN_MS = 10 * 60 * 1000;
+function signalInterceptReward(level) {
+  return { coins: Math.round(500 + (level || 1) * 60), xp: Math.round(15 + (level || 1) * 1.5) };
+}
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
 //    그 구간의 레벨업 자체가 필요 XP도 커서 더 힘들어지므로 밸런스가 맞는다는 게 기획 의도). ──
@@ -950,9 +963,20 @@ const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무�
 // 8종 포함) 중 어떤 6개를 채울지 고르는 게 진짜 선택이 된다.
 // ── "property 종류를 더 많이 추가해줘 고렙까지 커버 가능하도록" 요청 반영 — von_neumann_
 // swarm 이후 8종을 더 얹어 stellar_engine(3600만) 위로 2187억까지 이어지게 했다(계속 x3
-// 성장). 처음엔 "코인 양을 1/10으로"로 낮췄었는데, 계산해보니 최상위 기기(The Last
-// Server)가 시간당 2187만 코인이 나와서 액티브로 Genesis Job을 계속 돌릴 때(시간당 약
-// 342만 코인)의 6.4배나 되는 "혜자" 비율이었다 — 그래서 1/50로 다시 낮췄다: 최상위 기기가
+// 성장). 코인 비율은 두 번 잘못 잡았었다 — 1/10일 때 최상위 기기(The Last Server)가 시간당
+// "2187만 코인"이라고 계산했는데 실제로는 자릿수 계산 실수로 시간당 218억 7000만 코인이었고
+// (2187억÷10), 이어서 "1/50이면 437만 코인"이라며 다시 낮췄을 때도 같은 실수가 반복돼 실제로는
+// 43억 7400만 코인이었다(2187억÷50) — 액티브 Genesis Job 최고 효율(시간당 약 342만 코인)의
+// 약 1279배나 되는 값이 라이브에 나가 있었다(요청 반영: "stellar 엔진은 현재 비정상적으로
+// 600만을 가지고 있어 — 다른 것들보다 높아", 실은 신규 저티어 2종이 오히려 그보다 낮아서
+// 생긴 역전 현상이었다). 그래서 비율(가격의 N분의 1) 방식 자체를 버리고, stellar_engine
+// (600만)보다 확실히 높은 900만에서 시작해 8단계 동안 정확히 2배씩만 늘어나는 절대값으로
+// 다시 짰다 — 가격은 여전히 3배씩 뛰므로 효율(회수 기간)은 11시간→190시간으로 계속
+// 나빠지지만(요청한 "화력은 세도 효율은 떨어지는" 의도 유지), 최소한 가격이 비싼 기기가
+// 가격이 싼 기기보다 수익이 낮아지는 역전은 다시는 없다. 최상위 기기(11.52억/시간)도 여전히
+// 액티브 최고 효율의 약 337배로 높긴 하지만, 이는 stellar_engine(이미 액티브의 1.75배)보다
+// 낮게 만들 수는 없다는 수학적 한계(단조 증가 유지) 때문이며, 액티브 플레이가 저티어
+// 기기보다는 항상 낫다는 원칙은 유지된다.
 // 시간당 437만 코인으로, 액티브 최고 효율의 약 1.3배 정도로만 맞춰서 "화력은 세지만
 // 액티브 플레이가 여전히 밑지지 않는" 선을 지켰다(위 17종의 기존 1/6 비율은 그대로 둠 —
 // 이 신규 8종만 별도 비율).
@@ -975,14 +999,14 @@ const PROPERTY_DEVICES = {
   quantum_nexus:   { name: "Quantum Nexus",        price: 4050000,  coinsPerHour: 675000 },
   galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
   stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
-  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,   coinsPerHour: 2000000 },
-  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,   coinsPerHour: 6000000 },
-  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,   coinsPerHour: 18000000 },
-  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,  coinsPerHour: 54000000 },
-  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,  coinsPerHour: 162000000 },
-  reality_compiler:   { name: "Reality Compiler",      price: 24300000000, coinsPerHour: 486000000 },
-  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000, coinsPerHour: 1458000000 },
-  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 4374000000 },
+  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,    coinsPerHour: 9000000 },
+  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,    coinsPerHour: 18000000 },
+  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,    coinsPerHour: 36000000 },
+  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,   coinsPerHour: 72000000 },
+  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,   coinsPerHour: 144000000 },
+  reality_compiler:   { name: "Reality Compiler",      price: 24300000000,  coinsPerHour: 288000000 },
+  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000,  coinsPerHour: 576000000 },
+  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 1152000000 },
 };
 // 아이템처럼 별도 rarity 필드는 없지만, 25종을 가격 순으로 7단계(4개씩 묶고 마지막만 1개)로
 // 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
@@ -1012,7 +1036,12 @@ function propertyTierColor(deviceId) {
 //    기존 PvP 정찰(/arena/scan)과 완전히 같은 발상.
 // ══════════════════════════════════════════════════════════
 const PLANET_COUNT = 48;
-const PLANET_ATTACK_STAMINA_COST = 2;
+// "hacking jobs/property 말고는 딱히 돈 벌 수단이 없다"는 요청 반영 — 사실 봇 구역 전투가
+// 세 번째 반복 수입원이긴 한데(승리 시 그 난이도 coinsPerHour의 절반을 즉시 획득), 스태미나
+// 회복이 에너지보다 훨씬 느려서(기본 2분당 +1 vs 30초당 +5, 아래 STAMINA_TICK_MS 참고)
+// 물량 자체가 안 나왔다 — 공격 비용을 2 → 1로 반으로 줄여서 같은 스태미나로 2배 더 많이
+// 시도할 수 있게 했다.
+const PLANET_ATTACK_STAMINA_COST = 1;
 const PLANET_SCOUT_STAMINA_COST = 1;
 // ── 은하 좌표계 — "각 행성에 좌표/거리를 진짜로 부여하고 싶다" 요청 반영. 0~1000 정사각형
 // 안에 홈 행성(유저별로 하나씩)과 봇 구역 48슬롯 전부가 흩뿌려진다(생성 시 한 번만 랜덤
@@ -1488,6 +1517,7 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shield_breaker_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_breaker_used_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_block_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_signal_intercept_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -2109,6 +2139,10 @@ function publicState(row, combat) {
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
     // 보호막 파쇄기에 당한 직후 — 이 시간까지는 새 보호막 아이템을 못 쓴다(POST /inventory/use 참고).
     shieldBlockUntil: row.shield_block_until || 0, shieldBlocked: (row.shield_block_until || 0) > Date.now(),
+    // 신호 감청 — 쿨다운(10분)만으로 도는 무자원 수입원. 다음에 받을 보상도 미리 계산해서
+    // 같이 내려준다(프론트가 버튼에 예상 금액을 바로 보여줄 수 있게).
+    signalInterceptReadyAt: (row.last_signal_intercept_at || 0) + SIGNAL_INTERCEPT_COOLDOWN_MS,
+    signalInterceptNextReward: signalInterceptReward(row.level),
     plunderWins: row.plunder_wins,
     rebirthCount: row.rebirth_count || 0,
     rebirthBonusPct: Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT * 100,
@@ -2580,6 +2614,29 @@ export default {
 
         const combat = await totalCombatStats(env, row);
         return json({ ok: true, coinsGained: coinsGained, xpGained: xpGained, leveledUp: leveledUp, boosted: boostMult > 1, state: publicState(row, combat) });
+      }
+
+      // ── 신호 감청(Signal Intercept) — "hacking jobs/property 말고는 돈 벌 수단이 없다"는
+      //    요청 반영. 에너지도 스태미나도 전혀 안 쓰는 완전히 새로운 수입원이다 — 둘 다
+      //    바닥나도 10분에 한 번씩은 클릭할 수 있는 "그래도 뭔가 할 거리"를 만드는 게 목적.
+      //    보상은 레벨에 비례해서 완만하게 늘지만, 시간당으로 환산해도 Jobs/Property보다는
+      //    훨씬 낮게 잡아서(쿨다운 10분이 상한 역할) 기존 수입원을 대체하지 않고 보완만 한다. ──
+      if (request.method === "POST" && path === "/signal-intercept") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const cooldownLeft = (row.last_signal_intercept_at || 0) + SIGNAL_INTERCEPT_COOLDOWN_MS - Date.now();
+        if (cooldownLeft > 0) return json({ error: "아직 감청할 신호가 없습니다. (" + Math.ceil(cooldownLeft / 1000) + "초 남음)" }, 400);
+
+        const reward = signalInterceptReward(row.level);
+        row.pocket_coins += reward.coins;
+        row.last_signal_intercept_at = Date.now();
+        const leveledUp = applyXpAndLevel(row, reward.xp);
+
+        await env.DB.prepare(
+          "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_signal_intercept_at=? WHERE user_id=?"
+        ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.last_signal_intercept_at, row.user_id).run();
+
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, coinsGained: reward.coins, xpGained: reward.xp, leveledUp: leveledUp, state: publicState(row, combat) });
       }
 
       if (request.method === "GET" && path === "/arena/targets") {
