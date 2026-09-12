@@ -231,11 +231,10 @@
     { key: "energy",  label: "ENERGY",  current: (s) => s.maxEnergy,  increment: 10, base: 50 },
     { key: "stamina", label: "STAMINA", current: (s) => s.maxStamina, increment: 2,  base: 10 },
   ];
+  // 서버 statUpgradeCost와 동일한 공식(상한 없이 계속 증가) — 예전엔 5에서 상한이 걸려서
+  // 5배를 넘긴 뒤로는 여기서도 계속 "5P"라고만 떴었다(요청 반영: 그 표기 수정).
   function statUpgradeCostPreview(base, current) {
-    if (current >= base * 5) return 5;
-    if (current >= base * 4) return 4;
-    if (current >= base * 3) return 3;
-    return 2;
+    return Math.max(2, Math.floor(current / base));
   }
 
   function renderStatModal() {
