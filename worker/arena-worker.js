@@ -991,23 +991,12 @@ const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무�
 // 8종 포함) 중 어떤 6개를 채울지 고르는 게 진짜 선택이 된다.
 // ── "property 종류를 더 많이 추가해줘 고렙까지 커버 가능하도록" 요청 반영 — von_neumann_
 // swarm 이후 8종을 더 얹어 stellar_engine(3600만) 위로 2187억까지 이어지게 했다(계속 x3
-// 성장). 코인 비율은 두 번 잘못 잡았었다 — 1/10일 때 최상위 기기(The Last Server)가 시간당
-// "2187만 코인"이라고 계산했는데 실제로는 자릿수 계산 실수로 시간당 218억 7000만 코인이었고
-// (2187억÷10), 이어서 "1/50이면 437만 코인"이라며 다시 낮췄을 때도 같은 실수가 반복돼 실제로는
-// 43억 7400만 코인이었다(2187억÷50) — 액티브 Genesis Job 최고 효율(시간당 약 342만 코인)의
-// 약 1279배나 되는 값이 라이브에 나가 있었다(요청 반영: "stellar 엔진은 현재 비정상적으로
-// 600만을 가지고 있어 — 다른 것들보다 높아", 실은 신규 저티어 2종이 오히려 그보다 낮아서
-// 생긴 역전 현상이었다). 그래서 비율(가격의 N분의 1) 방식 자체를 버리고, stellar_engine
-// (600만)보다 확실히 높은 900만에서 시작해 8단계 동안 정확히 2배씩만 늘어나는 절대값으로
-// 다시 짰다 — 가격은 여전히 3배씩 뛰므로 효율(회수 기간)은 11시간→190시간으로 계속
-// 나빠지지만(요청한 "화력은 세도 효율은 떨어지는" 의도 유지), 최소한 가격이 비싼 기기가
-// 가격이 싼 기기보다 수익이 낮아지는 역전은 다시는 없다. 최상위 기기(11.52억/시간)도 여전히
-// 액티브 최고 효율의 약 337배로 높긴 하지만, 이는 stellar_engine(이미 액티브의 1.75배)보다
-// 낮게 만들 수는 없다는 수학적 한계(단조 증가 유지) 때문이며, 액티브 플레이가 저티어
-// 기기보다는 항상 낫다는 원칙은 유지된다.
-// 시간당 437만 코인으로, 액티브 최고 효율의 약 1.3배 정도로만 맞춰서 "화력은 세지만
-// 액티브 플레이가 여전히 밑지지 않는" 선을 지켰다(위 17종의 기존 1/6 비율은 그대로 둠 —
-// 이 신규 8종만 별도 비율).
+// 성장). 이 신규 8종의 coinsPerHour는 "그냥 1/30으로" 요청 반영 — 가격의 정확히 1/30(위
+// 17종의 1/6보다 낮은 효율, 회수 기간 30시간). 예전엔 이 개별 비율 하나로 "액티브를
+// 못 넘어야 한다"는 조건까지 맞추려다 두 번이나 자릿수 계산을 잘못했었는데(1/10→시간당
+// 218억, 1/50→43억, 둘 다 의도한 값의 1000배), 이제는 그 역할을 아래 PROPERTY_ACTIVE_CAP_RATIO
+// (기기를 몇 대를 사든 총수익은 액티브 잠재 효율의 70%를 못 넘음)가 대신하므로, 여기 개별
+// 기기 비율은 실수해도 경제가 안 깨지는 단순한 숫자로만 정하면 된다.
 
 const PROPERTY_DEVICES = {
   proxy_relay:     { name: "Proxy Relay",          price: 200,      coinsPerHour: 33 },
@@ -1027,14 +1016,14 @@ const PROPERTY_DEVICES = {
   quantum_nexus:   { name: "Quantum Nexus",        price: 4050000,  coinsPerHour: 675000 },
   galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
   stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
-  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,    coinsPerHour: 9000000 },
-  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,    coinsPerHour: 18000000 },
-  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,    coinsPerHour: 36000000 },
-  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,   coinsPerHour: 72000000 },
-  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,   coinsPerHour: 144000000 },
-  reality_compiler:   { name: "Reality Compiler",      price: 24300000000,  coinsPerHour: 288000000 },
-  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000,  coinsPerHour: 576000000 },
-  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 1152000000 },
+  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,    coinsPerHour: 3333333 },
+  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,    coinsPerHour: 10000000 },
+  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,    coinsPerHour: 30000000 },
+  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,   coinsPerHour: 90000000 },
+  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,   coinsPerHour: 270000000 },
+  reality_compiler:   { name: "Reality Compiler",      price: 24300000000,  coinsPerHour: 810000000 },
+  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000,  coinsPerHour: 2430000000 },
+  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 7290000000 },
 };
 // 아이템처럼 별도 rarity 필드는 없지만, 25종을 가격 순으로 7단계(4개씩 묶고 마지막만 1개)로
 // 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
