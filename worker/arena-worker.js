@@ -859,6 +859,15 @@ function propertyTierColor(deviceId) {
 const PLANET_COUNT = 48;
 const PLANET_ATTACK_STAMINA_COST = 2;
 const PLANET_SCOUT_STAMINA_COST = 1;
+// ── 은하 좌표계 — "각 행성에 좌표/거리를 진짜로 부여하고 싶다" 요청 반영. 0~1000 정사각형
+// 안에 홈 행성(유저별로 하나씩)과 봇 구역 48슬롯 전부가 흩뿌려진다(생성 시 한 번만 랜덤
+// 배정, 이후 고정). "내 홈 행성 근처는 그냥 보이고, 먼 곳은 정찰 탐사선으로 찾는다"는
+// 요청대로, PLANET_NEARBY_RADIUS 안의 봇 구역 슬롯은 GET /planets에 항상 뜨고 그 밖은
+// 탐사선(POST /planets/probe/*)으로만 찾을 수 있다.
+const PLANET_GALAXY_SIZE = 1000;
+const PLANET_NEARBY_RADIUS = 250;
+function randomGalaxyCoord() { return Math.round(Math.random() * PLANET_GALAXY_SIZE * 100) / 100; }
+function planetDistance(ax, ay, bx, by) { return Math.hypot((ax || 0) - (bx || 0), (ay || 0) - (by || 0)); }
 // ── 홈 행성 특수 규칙 ──
 // (1) 레벨 20 미만이면 무적 — 막 시작한 유저의 홈 행성이 접속하자마자 털리는 걸 막는다.
 // (2) 그 이후엔 공격 가능하지만, 공격력/방어력이 실전 전투력의 1.1배로 소폭 뻥튀기된
@@ -892,6 +901,38 @@ const PLANET_BOT_TIERS = {
   nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 375000,  weight: 0.015 },
   apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 1050000, weight: 0.005 },
 };
+const PLANET_TIER_ORDER = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
+
+// ── 정찰 탐사선(Scout Probe) — "코인 에너지를 내고 보내면 일정 시간 뒤 결과를 알려주는
+// 액션, 탐사선 자체를 연구로 업그레이드해야 더 좋고 많은 행성을 찾을 수 있다" 요청 반영.
+// 레벨 0(기본)은 strong까지만 노릴 수 있고, 연구(다이아)로 레벨을 올릴 때마다 한 단계
+// 위 등급을 노릴 수 있게 되며 도착 시간도 짧아진다 — 레벨 3(최대)에서는 극한까지 노릴 수
+// 있고 한 번에 2개를 찾아온다("더 많은" 요청 반영). 한 번에 탐사선 하나만 보낼 수 있다
+// (probe_target_tier가 있으면 새로 못 보냄) — "작고 상한 있게" 원칙과 동일.
+const PROBE_MAX_LEVEL = 4; // 레벨 0~3
+const PROBE_LEVELS = [
+  { unlockTier: "strong",    waitMs: 30 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "elite",     waitMs: 25 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "nightmare", waitMs: 20 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "apex",      waitMs: 15 * 60 * 1000, resultCount: 2 },
+];
+const PROBE_UPGRADE_COSTS = [2000, 8000, 30000]; // 인덱스 = 현재 레벨(0→1, 1→2, 2→3 비용), 다이아
+function probeUpgradeCost(level) { return level >= PROBE_MAX_LEVEL - 1 ? null : PROBE_UPGRADE_COSTS[level]; }
+function probeLevelInfo(level) { return PROBE_LEVELS[Math.min(Math.max(level || 0, 0), PROBE_MAX_LEVEL - 1)]; }
+function probeUnlockedTiers(level) {
+  const maxTier = probeLevelInfo(level).unlockTier;
+  return PLANET_TIER_ORDER.slice(0, PLANET_TIER_ORDER.indexOf(maxTier) + 1);
+}
+// 노릴 등급이 높을수록 탐사 비용(코인+에너지)도 커진다.
+const PROBE_LAUNCH_COST = {
+  weak:      { coins: 1000,   energy: 10 },
+  medium:    { coins: 3000,   energy: 12 },
+  strong:    { coins: 8000,   energy: 15 },
+  elite:     { coins: 30000,  energy: 20 },
+  nightmare: { coins: 100000, energy: 28 },
+  apex:      { coins: 350000, energy: 35 },
+};
+
 // ── 경비병(행성 배치 봇) — 봇 구역/사람 구역 개편으로 야생 행성을 아예 소유할 수 없어지면서
 // (항상 봇 소유, PVE 전용) 배치 대상 자체가 사라졌다. /bots/station 엔드포인트와 관련 DB
 // 컬럼(stationed_planet_id)은 남겨뒀지만(제거 범위 밖 — 되돌릴 여지도 남겨둠), 이제 "내가
@@ -1323,6 +1364,22 @@ async function ensureSchema(env) {
   try {
     await env.DB.exec("UPDATE arena_bots SET stationed_planet_id=NULL WHERE stationed_planet_id IN (SELECT id FROM arena_planets WHERE is_home = 0)");
   } catch (e) {}
+  // ── 은하 좌표(x,y) — "각 행성에 좌표/거리를 진짜로 부여하고 싶다" 요청 반영. 새로 만드는
+  // 행성(ensurePlanetSeed/ensureHomePlanet)은 INSERT 시점에 바로 랜덤 좌표를 받지만, 이미
+  // 만들어져 있던 기존 행성들은 컬럼이 없었으므로 여기서 한 번만 소급 배정한다 — 둘 다
+  // 기본값 0인 행을 대상으로만 매칭되므로(진짜 좌표가 (0,0)일 확률은 무시할 만큼 낮음)
+  // 이후 재실행돼도 조용한 no-op이 된다.
+  try { await env.DB.exec("ALTER TABLE arena_planets ADD COLUMN x REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_planets ADD COLUMN y REAL NOT NULL DEFAULT 0"); } catch (e) {}
+  try {
+    const needCoords = await env.DB.prepare("SELECT id FROM arena_planets WHERE x = 0 AND y = 0").all();
+    if (needCoords.results.length) {
+      const writes = needCoords.results.map(function (p) {
+        return env.DB.prepare("UPDATE arena_planets SET x=?, y=? WHERE id=?").bind(randomGalaxyCoord(), randomGalaxyCoord(), p.id);
+      });
+      await env.DB.batch(writes);
+    }
+  } catch (e) {}
   // arena_shop_stock2 — 상점이 유저별 로컬 로테이션이 되면서 재고 테이블도 (user_id, item_id,
   // bucket) 3중 키로 바뀌었다. SQLite는 PRIMARY KEY를 ALTER로 못 바꾸므로 예전 arena_shop_stock
   // (item_id, bucket) 2중 키 테이블은 그냥 버려두고(용량 미미, 4분짜리 휘발성 카운터) 새 이름으로
@@ -1415,6 +1472,13 @@ async function ensureSchema(env) {
   // 영구 EXP 부스터 연구 레벨(0~3) — "환생 가속 연구" 대체. research_rebirth_level은 그대로
   // 남겨두되(이미 투자한 유저 보호) 더 이상 이 컬럼을 새로 올릴 방법은 없다.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_exp_booster_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 정찰 탐사선(Scout Probe) — research_probe_level(0~3, 다이아 연구)은 노릴 수 있는 최고
+  // 등급/도착 시간/결과 개수를 정하고, probe_target_tier/probe_ready_at은 "지금 출발해 있는
+  // 탐사선"의 상태(무엇을 찾으러 갔는지, 언제 도착하는지) 하나뿐이다 — 한 번에 하나만 보낼
+  // 수 있다(작고 상한 있게). 도착하면 POST /planets/probe/collect로 수령하고 둘 다 비운다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_probe_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN probe_target_tier TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN probe_ready_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 현상금 게시판 — 진행도는 arena_logs를 그대로 세서 계산하므로(카운터 테이블 불필요),
   // "이 회차(bucket)에 이 현상금을 이미 청구했는지"만 여기 남긴다.
   await env.DB.exec(
@@ -1513,8 +1577,8 @@ async function ensurePlanetSeed(env) {
     const tier = rollPlanetTier();
     const name = PLANET_NAME_PREFIXES[randInt(0, PLANET_NAME_PREFIXES.length - 1)] + "-" + (100 + i);
     inserts.push(env.DB.prepare(
-      "INSERT INTO arena_planets (slot_index, name, owner_user_id, owner_name, is_home, bot_tier, coins_per_hour, last_collect, created_at) VALUES (?,?,NULL,NULL,0,?,?,?,?)"
-    ).bind(i, name, tier, PLANET_BOT_TIERS[tier].coinsPerHour, now, now));
+      "INSERT INTO arena_planets (slot_index, name, owner_user_id, owner_name, is_home, bot_tier, coins_per_hour, x, y, last_collect, created_at) VALUES (?,?,NULL,NULL,0,?,?,?,?,?,?)"
+    ).bind(i, name, tier, PLANET_BOT_TIERS[tier].coinsPerHour, randomGalaxyCoord(), randomGalaxyCoord(), now, now));
   }
   await env.DB.batch(inserts);
 }
@@ -1525,8 +1589,8 @@ async function ensureHomePlanet(env, userId, realName) {
   if (home) return home;
   const now = Date.now();
   await env.DB.prepare(
-    "INSERT INTO arena_planets (slot_index, name, owner_user_id, owner_name, is_home, bot_tier, coins_per_hour, last_collect, created_at) VALUES (-1, ?, ?, ?, 1, NULL, 0, ?, ?)"
-  ).bind(realName + "의 홈행성", userId, realName, now, now).run();
+    "INSERT INTO arena_planets (slot_index, name, owner_user_id, owner_name, is_home, bot_tier, coins_per_hour, x, y, last_collect, created_at) VALUES (-1, ?, ?, ?, 1, NULL, 0, ?, ?, ?, ?)"
+  ).bind(realName + "의 홈행성", userId, realName, randomGalaxyCoord(), randomGalaxyCoord(), now, now).run();
   return env.DB.prepare("SELECT * FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(userId).first();
 }
 
@@ -3631,6 +3695,15 @@ export default {
           expBoosterMult: expBoosterMult(row),
           expBoosterNextMult: EXP_BOOSTER_MULTS[Math.min((row.research_exp_booster_level || 0) + 1, EXP_BOOSTER_MAX_LEVEL)],
           expBoosterUpgradeCost: expBoosterUpgradeCost(row.research_exp_booster_level || 0),
+          // 정찰 탐사선 — 레벨이 오를수록 노릴 수 있는 최고 등급이 풀리고 도착 시간이 짧아지며
+          // 최고 레벨에서 한 번에 2개를 찾아온다(자세한 발사/수령은 Galaxy Map 탭에서).
+          probeLevel: row.research_probe_level || 0,
+          probeMaxLevel: PROBE_MAX_LEVEL,
+          probeUnlockedTiers: probeUnlockedTiers(row.research_probe_level || 0),
+          probeCurrentWaitMs: probeLevelInfo(row.research_probe_level).waitMs,
+          probeCurrentResultCount: probeLevelInfo(row.research_probe_level).resultCount,
+          probeNextTier: (row.research_probe_level || 0) >= PROBE_MAX_LEVEL - 1 ? null : PLANET_BOT_TIERS[probeLevelInfo((row.research_probe_level || 0) + 1).unlockTier].label,
+          probeUpgradeCost: probeUpgradeCost(row.research_probe_level || 0),
         });
       }
 
@@ -3693,6 +3766,27 @@ export default {
           ok: true, diamonds: row.diamonds, expBoosterLevel: row.research_exp_booster_level,
           expBoosterMult: expBoosterMult(row),
           nextCost: expBoosterUpgradeCost(row.research_exp_booster_level),
+        });
+      }
+
+      // ── POST /research/probe-upgrade — 다이아를 써서 정찰 탐사선 레벨을 1 올린다(최대
+      //    PROBE_MAX_LEVEL-1). 레벨이 오를 때마다 노릴 수 있는 최고 등급이 한 단계 위로
+      //    풀리고 도착 시간도 짧아지며, 최고 레벨에서는 결과가 2개로 늘어난다. ──
+      if (request.method === "POST" && path === "/research/probe-upgrade") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const level = row.research_probe_level || 0;
+        if (level >= PROBE_MAX_LEVEL - 1) return json({ error: "이미 최대 레벨입니다." }, 400);
+        const cost = probeUpgradeCost(level);
+        if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
+        row.diamonds -= cost;
+        row.research_probe_level = level + 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_probe_level=? WHERE user_id=?").bind(row.diamonds, row.research_probe_level, row.user_id).run();
+        const info = probeLevelInfo(row.research_probe_level);
+        return json({
+          ok: true, diamonds: row.diamonds, probeLevel: row.research_probe_level,
+          probeUnlockedTiers: probeUnlockedTiers(row.research_probe_level),
+          probeWaitMs: info.waitMs, probeResultCount: info.resultCount,
+          nextCost: probeUpgradeCost(row.research_probe_level),
         });
       }
 
@@ -3909,18 +4003,26 @@ export default {
 
       // ── GET /planets — 은하 지도 전체 목록(홈 행성들 + 야생 행성 PLANET_COUNT개). 내가 가진
       //    야생 행성엔 대기 수익(pendingCoins)을 같이 계산해 보여준다. ──
-      // ── GET /planets — 봇 구역(48개 슬롯, 항상 전부 봇 소유·PVE)과 내 홈 행성만 내려준다.
-      //    다른 유저의 홈 행성은 더 이상 여기 안 보인다 — POST /planets/scout로 그 사람을
-      //    정찰해야만 그 순간 정보가 드러난다(사람 구역 개편). ──
+      // ── GET /planets — 봇 구역 중 "내 홈 행성 근처"(PLANET_NEARBY_RADIUS 이내)에 있는
+      //    슬롯과 내 홈 행성만 내려준다(요청 반영: "홈행성 주변에 있는것들은 그냥 보이고").
+      //    더 먼 슬롯은 여기 안 뜨고, 정찰 탐사선(POST /planets/probe/*)으로 특정 등급을
+      //    콕 집어 찾아야만 드러난다 — 다른 유저의 홈 행성도 마찬가지로 POST /planets/scout로
+      //    정찰해야만 그 순간 정보가 드러난다(사람 구역 개편, 기존 그대로). ──
       if (request.method === "GET" && path === "/planets") {
         await ensurePlanetSeed(env);
-        await ensureHomePlanet(env, user.userId, user.realName);
+        const myHome = await ensureHomePlanet(env, user.userId, user.realName);
         const now = Date.now();
         const rerollBucket = planetRerollBucket(now);
         const nextRerollAt = (rerollBucket + 1) * PLANET_REROLL_MS;
         const res = await env.DB.prepare("SELECT * FROM arena_planets WHERE is_home = 0 OR owner_user_id = ? ORDER BY is_home DESC, slot_index ASC").bind(user.userId).all();
-        const myCombat = await totalCombatStats(env, await loadOrCreateUser(env, user.userId, user.realName));
-        const planets = res.results.map(function (p) {
+        const meRow = await loadOrCreateUser(env, user.userId, user.realName);
+        const myCombat = await totalCombatStats(env, meRow);
+        const planets = res.results
+          .filter(function (p) {
+            if (p.is_home) return true; // 내 홈 행성은 항상 포함(쿼리 조건상 항상 "내" 것)
+            return planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS;
+          })
+          .map(function (p) {
           const mine = p.owner_user_id === user.userId;
           // 봇 구역은 절대 정복되지 않으므로 is_home이 아니면 무조건 미정복 상태다 — 15분마다
           // 리롤되는 "현재" 난이도를 그때그때 계산한다(저장된 bot_tier는 최초 시드값이라 신뢰하지 않음).
@@ -3962,10 +4064,112 @@ export default {
             atk: t.atk, def: t.def, crit: t.crit, rewardCoins: Math.round(t.coinsPerHour * 0.5),
           };
         }
+        // 정찰 탐사선 현재 상태 — 연구 레벨이 정하는 해금 등급/도착시간/결과개수 + 지금 출발해
+        // 있는 탐사선이 있다면 그 목표 등급/도착 시각(프론트가 카운트다운 표시용으로 씀).
+        const probeLevel = meRow.research_probe_level || 0;
+        const probeInfo = probeLevelInfo(probeLevel);
+        const probe = {
+          level: probeLevel, maxLevel: PROBE_MAX_LEVEL,
+          unlockedTiers: probeUnlockedTiers(probeLevel),
+          waitMs: probeInfo.waitMs, resultCount: probeInfo.resultCount,
+          launchCosts: PROBE_LAUNCH_COST,
+          targetTier: meRow.probe_target_tier || null,
+          targetTierLabel: meRow.probe_target_tier ? PLANET_BOT_TIERS[meRow.probe_target_tier].label : null,
+          readyAt: meRow.probe_ready_at || 0,
+        };
         return json({
           planets: planets, stances: STANCES,
           tierMeta: tierMeta, nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
           homeInvulnerableLevel: HOME_PLANET_INVULNERABLE_UNTIL_LEVEL,
+          nearbyRadius: PLANET_NEARBY_RADIUS, galaxySize: PLANET_GALAXY_SIZE,
+          probe: probe,
+        });
+      }
+
+      // ── POST /planets/probe/launch { targetTier } — 탐사선을 보낸다. 노릴 등급은 지금
+      //    연구 레벨로 해금한 범위 안이어야 하고, 코인+에너지를 그 자리에서 낸다(요청 반영:
+      //    "코인 에너지를 내고 보내면"). 한 번에 하나만 보낼 수 있다. ──
+      if (request.method === "POST" && path === "/planets/probe/launch") {
+        const body = await request.json().catch(function () { return {}; });
+        const targetTier = String(body.targetTier || "");
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.probe_target_tier) return json({ error: "이미 탐사선이 출발한 상태입니다. 도착을 기다리거나 결과를 수령하세요." }, 400);
+        const unlocked = probeUnlockedTiers(row.research_probe_level || 0);
+        if (unlocked.indexOf(targetTier) === -1) {
+          return json({ error: "아직 해금하지 않은 등급입니다. 연구에서 탐사선을 업그레이드하세요. (현재 최고: " + PLANET_BOT_TIERS[unlocked[unlocked.length - 1]].label + ")" }, 400);
+        }
+        const cost = PROBE_LAUNCH_COST[targetTier];
+        if (row.pocket_coins < cost.coins) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost.coins) + ")" }, 400);
+        if (row.energy < cost.energy) return json({ error: "에너지가 부족합니다. (필요 " + cost.energy + ")" }, 400);
+
+        row.pocket_coins -= cost.coins;
+        row.energy -= cost.energy;
+        const waitMs = probeLevelInfo(row.research_probe_level).waitMs;
+        const readyAt = Date.now() + waitMs;
+        await env.DB.prepare(
+          "UPDATE arena_users SET pocket_coins=?, energy=?, last_energy_tick=?, probe_target_tier=?, probe_ready_at=? WHERE user_id=?"
+        ).bind(row.pocket_coins, row.energy, row.last_energy_tick, targetTier, readyAt, row.user_id).run();
+
+        const combat = await totalCombatStats(env, row);
+        return json({ ok: true, targetTier: targetTier, targetTierLabel: PLANET_BOT_TIERS[targetTier].label, readyAt: readyAt, state: publicState(row, combat) });
+      }
+
+      // ── POST /planets/probe/collect — 도착한 탐사선의 결과를 수령한다. 봇 구역 전체(내
+      //    "근처"에 있어 이미 GET /planets에 뜨는 슬롯은 찾아줄 이유가 없으므로 제외)에서
+      //    목표 등급과 일치하는 슬롯을 무작위로 골라 반환한다(요청 반영: "이 탐사선이 찾아내는
+      //    거야 사용자가 원하는 것을"). 연구 레벨의 resultCount만큼 한 번에 여러 개도 가능
+      //    (요청 반영: "더 좋고 많은 행성을 찾을 수 있는거지"). 하필 그 등급의 유일한(또는
+      //    전부 근처에 있는) 슬롯이 이미 다 보이는 상태라 찾을 게 없으면 — 순전히 운이라 낸
+      //    비용을 그대로 환불한다. ──
+      if (request.method === "POST" && path === "/planets/probe/collect") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!row.probe_target_tier) return json({ error: "출발한 탐사선이 없습니다." }, 400);
+        if (Date.now() < row.probe_ready_at) {
+          return json({ error: "아직 도착하지 않았습니다. (" + Math.ceil((row.probe_ready_at - Date.now()) / 1000) + "초 남음)" }, 400);
+        }
+        const targetTier = row.probe_target_tier;
+        const now = Date.now();
+        const myHome = await env.DB.prepare("SELECT x, y FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(user.userId).first();
+        const allSlots = await env.DB.prepare("SELECT id, name, slot_index, x, y FROM arena_planets WHERE is_home = 0").all();
+        const matches = [];
+        for (const p of allSlots.results) {
+          if (effectivePlanetTier(user.userId, p.slot_index, now) !== targetTier) continue;
+          if (myHome && planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS) continue; // 이미 그냥 보이는 건 패스
+          matches.push(p);
+        }
+        for (let i = matches.length - 1; i > 0; i--) { // Fisher-Yates로 무작위 추출
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = matches[i]; matches[i] = matches[j]; matches[j] = tmp;
+        }
+        const resultCount = probeLevelInfo(row.research_probe_level).resultCount;
+        const found = matches.slice(0, resultCount);
+        const t = PLANET_BOT_TIERS[targetTier];
+
+        row.probe_target_tier = null;
+        row.probe_ready_at = 0;
+        if (!found.length) {
+          // 아무것도 못 찾았으면(운 나쁘게 그 등급이 이미 다 근처에 있었던 경우) 비용을 돌려준다.
+          const cost = PROBE_LAUNCH_COST[targetTier];
+          row.pocket_coins += cost.coins;
+          row.energy = Math.min(row.max_energy, row.energy + cost.energy);
+        }
+        await env.DB.prepare(
+          "UPDATE arena_users SET probe_target_tier=NULL, probe_ready_at=0, pocket_coins=?, energy=? WHERE user_id=?"
+        ).bind(row.pocket_coins, row.energy, row.user_id).run();
+
+        const combat = await totalCombatStats(env, row);
+        return json({
+          ok: true, foundTier: targetTier, foundTierLabel: t.label,
+          refunded: !found.length,
+          planets: found.map(function (p) {
+            return {
+              id: p.id, name: p.name, isHome: false, botTier: targetTier, botTierLabel: t.label,
+              combatStats: { atk: t.atk, def: t.def, crit: t.crit },
+              rewardCoins: Math.round(t.coinsPerHour * 0.5),
+              attackable: true, expeditionEligible: ["elite", "nightmare", "apex"].indexOf(targetTier) !== -1,
+            };
+          }),
+          state: publicState(row, combat),
         });
       }
 

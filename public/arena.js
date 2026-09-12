@@ -543,6 +543,7 @@
   let galaxyTierFilter = "all", galaxyShowCount = 12;
   const GALAXY_PAGE_SIZE = 12;
   const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
+  const PLANET_TIER_LABELS = { weak: "약함", medium: "보통", strong: "강함", elite: "정예", nightmare: "악몽", apex: "극한" };
 
   async function renderGalaxyTab() {
     if (!state) return;
@@ -569,6 +570,9 @@
   let galaxyScoutResult = null;
   // 정찰할 아이디를 몰라도 되도록 보여주는 "정찰 후보" 플레이어 목록(요청 반영).
   let galaxyTargetsCache = null;
+  // 정찰 탐사선 — 도착 시각(진행 중일 때만 0이 아님)과 지금까지 찾아온 결과(세션 동안만 유지).
+  let galaxyProbeReadyAt = 0;
+  let galaxyProbeResults = [];
 
   function renderGalaxyContent() {
     const data = galaxyCache;
@@ -578,6 +582,7 @@
     const moreBtn = $("galaxyShowMoreBtn");
 
     galaxyNextRerollAt = data.nextRerollAt;
+    setText("galaxyNearbyRadius", data.nearbyRadius);
 
     // 난이도별 등장 개수(48슬롯 중 보장된 수량) + 다음 리롤까지 남은 시간 — 필터 바로 위에
     // 작은 범례로 보여준다. 예전엔 "확률 %"였는데, 이제 매 리롤마다 정확히 이 개수만큼
@@ -644,6 +649,44 @@
       });
     }
 
+    // ── 정찰 탐사선 — 홈 근처가 아닌 먼 행성을 등급 지정해서 찾아온다(요청 반영: "정찰
+    // 탐사선을 만들어서 얘가 찾아내는거야 사용자가 원하는거를"). 진행 중인 탐사선이 있으면
+    // 카운트다운(도착하면 수령 버튼)을, 없으면 등급 선택 + 발사 폼을 보여준다. ──
+    const probe = data.probe || {};
+    galaxyProbeReadyAt = probe.targetTier ? probe.readyAt : 0;
+    const probeIdleEl = $("galaxyProbeIdle"), probeFlightEl = $("galaxyProbeInFlight");
+    if (probe.targetTier) {
+      if (probeIdleEl) probeIdleEl.style.display = "none";
+      if (probeFlightEl) probeFlightEl.style.display = "block";
+      setText("galaxyProbeTargetLabel", probe.targetTierLabel || probe.targetTier);
+    } else {
+      if (probeIdleEl) probeIdleEl.style.display = "block";
+      if (probeFlightEl) probeFlightEl.style.display = "none";
+      const tierSelect = $("galaxyProbeTierSelect");
+      const costNote = $("galaxyProbeCostNote");
+      if (tierSelect) {
+        const unlocked = probe.unlockedTiers || ["weak"];
+        tierSelect.innerHTML = unlocked.map((key) => '<option value="' + key + '">' + PLANET_TIER_LABELS[key] + "</option>").join("");
+        const updateCostNote = () => {
+          const cost = (probe.launchCosts || {})[tierSelect.value];
+          if (costNote && cost) costNote.textContent = "비용: 💰" + fmt(cost.coins) + " · ⚡" + cost.energy + " · 도착까지 " + fmtCountdown(probe.waitMs) + " · 결과 " + probe.resultCount + "개";
+        };
+        tierSelect.onchange = updateCostNote;
+        updateCostNote();
+      }
+    }
+    // 탐사선 결과 — 세션 동안만 들고 있는다(정찰 결과와 같은 방식).
+    const probeResultEl = $("galaxyProbeResult");
+    if (probeResultEl) {
+      probeResultEl.innerHTML = galaxyProbeResults.length
+        ? galaxyProbeResults.map((p) => planetCard(p, true)).join("")
+        : '<p class="galaxy-empire-empty">아직 탐사선으로 찾은 행성이 없습니다.</p>';
+      probeResultEl.querySelectorAll("button[data-planet]").forEach((btn) => {
+        const planet = galaxyProbeResults.find((p) => String(p.id) === btn.dataset.planet);
+        if (planet) btn.addEventListener("click", () => openPlanetAttackSequence(planet));
+      });
+    }
+
     // 봇 구역 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출. 내 홈 행성(mine)은 애초에
     // 공격 대상이 아니므로 제외.
     const targets = data.planets.filter((p) => {
@@ -692,6 +735,21 @@
     el.textContent = "다음 난이도 리롤까지 " + fmtCountdown(remain);
   }, 1000);
 
+  // 정찰 탐사선 도착 카운트다운 — 도착하면 카운트다운 자리에 "수령하기" 버튼을 보여준다.
+  setInterval(() => {
+    if (!galaxyProbeReadyAt) return;
+    const el = $("galaxyProbeCountdown"), btn = $("galaxyProbeCollectBtn");
+    if (!el) return;
+    const remain = galaxyProbeReadyAt - Date.now();
+    if (remain <= 0) {
+      el.textContent = "도착!";
+      if (btn) btn.style.display = "block";
+    } else {
+      el.textContent = fmtCountdown(remain);
+      if (btn) btn.style.display = "none";
+    }
+  }, 1000);
+
   function initGalaxyFilters() {
     document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -733,9 +791,43 @@
     btn.addEventListener("click", () => scoutTarget($("galaxyScoutInput").value.trim()));
   }
 
+  // ── 정찰 탐사선 발사/수령 — 코인+에너지를 내고 보내면 일정 시간 뒤 지정한 등급의 먼
+  //    행성을 찾아온다(요청 반영). 결과는 GET /planets를 다시 안 불러도 되게 세션 캐시에
+  //    쌓아서 보여준다(정찰 결과와 같은 방식). ──
+  function initGalaxyProbe() {
+    const launchBtn = $("galaxyProbeLaunchBtn");
+    if (launchBtn) launchBtn.addEventListener("click", async () => {
+      const targetTier = $("galaxyProbeTierSelect").value;
+      if (!targetTier) return;
+      launchBtn.disabled = true;
+      try {
+        const r = await api("/planets/probe/launch", { method: "POST", body: { targetTier } });
+        toast("🛸 " + (r.targetTierLabel || targetTier) + " 등급을 찾아 탐사선을 발사했습니다.");
+        state = r.state; renderHeader();
+        galaxyCache = null; renderGalaxyTab();
+      } catch (e) { toast(e.message, true); launchBtn.disabled = false; }
+    });
+    const collectBtn = $("galaxyProbeCollectBtn");
+    if (collectBtn) collectBtn.addEventListener("click", async () => {
+      collectBtn.disabled = true;
+      try {
+        const r = await api("/planets/probe/collect", { method: "POST" });
+        if (r.refunded || !r.planets.length) {
+          toast("🛸 탐사선이 " + (r.foundTierLabel || "") + " 등급을 못 찾고 돌아왔습니다 — 비용은 환불됐습니다.", true);
+        } else {
+          galaxyProbeResults = r.planets.concat(galaxyProbeResults);
+          toast("🛸 " + (r.foundTierLabel || "") + " 등급 행성 " + r.planets.length + "개를 찾았습니다!");
+        }
+        state = r.state; renderHeader();
+        galaxyCache = null; renderGalaxyTab();
+      } catch (e) { toast(e.message, true); collectBtn.disabled = false; }
+    });
+  }
+
   function initGalaxyButtons() {
     initGalaxyFilters();
     initGalaxyScout();
+    initGalaxyProbe();
   }
 
   // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
@@ -769,7 +861,7 @@
     $("attackModal").style.display = "flex";
     const hint = planet.botTier
       ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이겨도 소유권은 안 넘어가고 그 자리에서 약탈만 합니다."
-      : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 방어력이 실전의 2배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다(행성은 뺏지 않음).";
+      : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 공격력/방어력이 실전의 1.1배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다(행성은 뺏지 않음).";
     renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
   }
 
@@ -1429,6 +1521,21 @@
         expBoosterBtn.innerHTML = "연구하기 → x" + r.expBoosterNextMult + " (💎 <span>" + fmt(r.expBoosterUpgradeCost) + "</span>)";
         expBoosterBtn.disabled = r.diamonds < r.expBoosterUpgradeCost;
       }
+
+      // 정찰 탐사선 — 레벨이 오를수록 노릴 수 있는 최고 등급이 풀리고 도착 시간이 짧아지며
+      // 최고 레벨에서 결과 개수가 2개로 늘어난다.
+      setText("researchProbeLevelTag", "Lv." + r.probeLevel);
+      const unlockedTiers = r.probeUnlockedTiers || [];
+      setText("researchProbeUnlockedTier", PLANET_TIER_LABELS[unlockedTiers[unlockedTiers.length - 1]] || "약함");
+      setText("researchProbeResultCount", r.probeCurrentResultCount);
+      const probeBtn = $("researchProbeUpgradeBtn");
+      if (r.probeUpgradeCost == null) {
+        probeBtn.disabled = true;
+        probeBtn.textContent = "최대 레벨 (극한까지 · 결과 " + r.probeCurrentResultCount + "개)";
+      } else {
+        probeBtn.innerHTML = "연구하기 → " + escapeHtml(r.probeNextTier || "") + " 해금 (💎 <span>" + fmt(r.probeUpgradeCost) + "</span>)";
+        probeBtn.disabled = r.diamonds < r.probeUpgradeCost;
+      }
     } catch (e) { panel.querySelector(".research-node").insertAdjacentHTML("afterend", '<p class="dim">' + escapeHtml(e.message) + "</p>"); }
   }
 
@@ -1468,6 +1575,15 @@
         toast("🧪 영구 EXP 부스터 Lv." + r.expBoosterLevel + " 달성! (모든 경험치 x" + r.expBoosterMult + ")");
         renderResearchTab();
       } catch (e) { toast(e.message, true); expBoosterBtn.disabled = false; }
+    });
+    const probeBtn = $("researchProbeUpgradeBtn");
+    if (probeBtn) probeBtn.addEventListener("click", async () => {
+      probeBtn.disabled = true;
+      try {
+        const r = await api("/research/probe-upgrade", { method: "POST" });
+        toast("🛸 정찰 탐사선 Lv." + r.probeLevel + " 달성!");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); probeBtn.disabled = false; }
     });
   }
 

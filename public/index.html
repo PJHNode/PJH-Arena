@@ -466,7 +466,7 @@
   .galaxy-empire-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .galaxy-empire-empty { font-size: 11px; color: var(--sub); grid-column: 1/-1; }
   .galaxy-scout-form { display: flex; gap: 8px; margin-bottom: 12px; }
-  .galaxy-scout-form input { flex: 1; }
+  .galaxy-scout-form input, .galaxy-scout-form select { flex: 1; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; padding: 8px 10px; }
   .galaxy-target-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .galaxy-target-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: var(--font-mono); }
   .galaxy-target-chip:hover { border-color: var(--accent); color: var(--accent); }
@@ -722,7 +722,7 @@
 
       <div class="tab-panel" id="panel-galaxy">
         <p class="panel-title">🌌 GALAXY MAP</p>
-        <p class="dim" style="margin-bottom:14px;">🤖 봇 구역은 영원히 PVE — 이겨도 소유권은 절대 안 넘어가고, 그 자리에서 즉시 약탈 후 새 난이도로 리롤됩니다(⚡2). 👤 사람 구역(홈 행성)은 먼저 정찰해야만 보이고 공격할 수 있습니다(⚡1) — 이기면 포켓 코인 20%를 몰수합니다(뺏지는 않음).</p>
+        <p class="dim" style="margin-bottom:14px;">🤖 봇 구역은 영원히 PVE — 이겨도 소유권은 절대 안 넘어가고, 그 자리에서 즉시 약탈 후 새 난이도로 리롤됩니다(⚡2). 내 홈 행성 근처(반경 <b id="galaxyNearbyRadius">250</b>) 행성은 그냥 보이고, 더 먼 행성은 🛸 정찰 탐사선으로 등급을 지정해서 찾아야 합니다. 👤 사람 구역(홈 행성)은 먼저 정찰해야만 보이고 공격할 수 있습니다(⚡1) — 이기면 포켓 코인 20%를 몰수합니다(뺏지는 않음).</p>
 
         <div class="galaxy-empire">
           <div class="galaxy-empire-header">
@@ -736,12 +736,30 @@
           <div class="galaxy-empire-grid" id="galaxyScoutResult"></div>
         </div>
 
+        <div class="galaxy-empire">
+          <div class="galaxy-empire-header">
+            <span>🛸 정찰 탐사선 — 먼 행성을 등급 지정해서 찾아오기</span>
+          </div>
+          <div id="galaxyProbeIdle">
+            <div class="galaxy-scout-form">
+              <select id="galaxyProbeTierSelect"></select>
+              <button class="btn-primary" id="galaxyProbeLaunchBtn">탐사선 발사</button>
+            </div>
+            <p class="dim" id="galaxyProbeCostNote"></p>
+          </div>
+          <div id="galaxyProbeInFlight" style="display:none;">
+            <p>🛸 <b id="galaxyProbeTargetLabel"></b> 등급을 찾아 출발했습니다 — 도착까지 <b id="galaxyProbeCountdown">-</b></p>
+            <button class="btn-primary" id="galaxyProbeCollectBtn" style="display:none;width:100%;">결과 수령하기</button>
+          </div>
+          <div class="galaxy-empire-grid" id="galaxyProbeResult"></div>
+        </div>
+
         <div class="galaxy-legend-row">
           <div class="galaxy-tier-legend" id="galaxyTierLegend"></div>
           <div class="galaxy-reroll-countdown" id="galaxyRerollCountdown"></div>
         </div>
 
-        <p class="panel-subtitle">🤖 봇 구역 (PVE 전용, 절대 고갈되지 않음)</p>
+        <p class="panel-subtitle">🤖 봇 구역 — 내 홈 행성 근처(PVE 전용, 절대 고갈되지 않음)</p>
         <div class="galaxy-filter-bar">
           <div class="galaxy-filter-group" data-filter-group="tier">
             <button class="galaxy-filter-btn active" data-tier="all">전체 난이도</button>
@@ -864,6 +882,13 @@
           <div class="research-node-title">🧪 영구 EXP 부스터 <span class="research-level-tag" id="researchExpBoosterLevelTag">Lv.0</span></div>
           <p class="dim">모든 경험치 획득에 영구 배율 적용(현재 <b id="researchExpBoosterCurrent">x1</b>) · 최대 3레벨(x1.2 → x1.5 → x2).</p>
           <button class="btn-primary" id="researchExpBoosterUpgradeBtn">연구하기 (💎 <span id="researchExpBoosterCost">500</span>)</button>
+        </div>
+        <div class="research-node" id="researchProbeNode">
+          <div class="research-node-title">🛸 정찰 탐사선 연구 <span class="research-level-tag" id="researchProbeLevelTag">Lv.0</span></div>
+          <p class="dim">Galaxy Map에서 홈 행성 근처가 아닌 먼 행성을 등급 지정해서 찾아오는 탐사선을 업그레이드한다.
+            레벨이 오를수록 노릴 수 있는 최고 등급이 풀리고(현재 <b id="researchProbeUnlockedTier">약함</b>까지),
+            도착 시간도 짧아지며 최고 레벨에서는 한 번에 <b id="researchProbeResultCount">1</b>개를 찾아온다.</p>
+          <button class="btn-primary" id="researchProbeUpgradeBtn">연구하기 (💎 <span id="researchProbeCost">2000</span>)</button>
         </div>
       </div>
 
