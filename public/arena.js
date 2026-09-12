@@ -345,6 +345,7 @@
     property: renderPropertyTab,
     bank: renderBankTab,
     raffle: renderRaffleTab,
+    stocks: renderStockTab,
     research: renderResearchTab,
     enchant: renderEnchantTab,
     rebirthshop: renderRebirthShopTab,
@@ -1786,6 +1787,133 @@
     if (anyDue) renderRaffleTab();
   }, 1000);
 
+  // ── 증권거래소(Stock Exchange) — "주식 시스템" 요청 반영(다크넷 로또와 별개 기능). 가격은
+  //    장기적으로 항상 기준가 근처로 되돌아오고(무조건 우상향 아님), 매수는 언제든 자유롭지만
+  //    매수할 때마다 매도 가능 시각이 뒤로 밀려서 "사자마자 되팔기"가 안 된다. 매도 수수료
+  //    5% 고정. 카드에 작은 스파크라인(최근 24틱 가격)을 그려서 흐름이 한눈에 보이게 했다. ──
+  const STOCK_COLORS = { neocorp: "var(--cyan)", obsidian: "#2b7fff", quantumleap: "#b060e8", ghostwire: "#ff3d9e", singularity: "var(--stamina)" };
+  function sparklineSvg(history, color) {
+    if (!history || history.length < 2) return "";
+    const w = 100, h = 32, pad = 2;
+    const min = Math.min(...history), max = Math.max(...history);
+    const range = max - min || 1;
+    const points = history.map((v, i) => {
+      const x = (i / (history.length - 1)) * (w - pad * 2) + pad;
+      const y = h - pad - ((v - min) / range) * (h - pad * 2);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return '<svg class="stock-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="1.5"/></svg>';
+  }
+  async function renderStockTab() {
+    const grid = $("stockGrid");
+    try {
+      const data = await api("/stocks");
+      setText("stockFeeNote", data.sellFeeRatePct);
+      setText("stockDelayNote", Math.round(data.sellDelayMs / 60000));
+      const now = Date.now();
+      grid.innerHTML = Object.keys(data.stocks).map((id) => {
+        const s = data.stocks[id];
+        const color = STOCK_COLORS[id] || "var(--text)";
+        const dirCls = s.changePct > 0 ? "up" : s.changePct < 0 ? "down" : "flat";
+        const dirArrow = s.changePct > 0 ? "▲" : s.changePct < 0 ? "▼" : "―";
+        const holdingBlock = s.myShares > 0
+          ? '<div class="stock-card-row"><span>내 보유</span><b>' + s.myShares.toFixed(4) + "주</b></div>" +
+            '<div class="stock-card-row"><span>평가액</span><b>' + fmt(Math.round(s.myShares * s.price)) + "</b></div>" +
+            '<div class="stock-card-row"><span>손익</span><b style="color:' + (s.price >= s.myAvgCost ? "var(--energy)" : "var(--danger)") + ';">' +
+            (s.myAvgCost > 0 ? (((s.price - s.myAvgCost) / s.myAvgCost) * 100).toFixed(1) : "0.0") + "%</b></div>"
+          : "";
+        const locked = s.sellLockedUntil > now;
+        return (
+          '<div class="stock-card" style="border-left-color:' + color + ';">' +
+          '<div class="stock-card-title">' + escapeHtml(s.name) + "</div>" +
+          '<div class="stock-price ' + dirCls + '">' + dirArrow + " " + fmt(s.price) + '<span class="dim" style="font-size:10px;"> (' + (s.changePct > 0 ? "+" : "") + s.changePct + "%)</span></div>" +
+          sparklineSvg(s.history, color) +
+          holdingBlock +
+          '<div class="stock-form">' +
+          '<input type="number" min="1" placeholder="투자 코인" data-buyinput="' + id + '" />' +
+          '<button class="btn-primary" data-buystock="' + id + '">매수</button>' +
+          "</div>" +
+          '<div class="stock-quick-row">' +
+          [10, 25, 50, 100].map((pct) => '<button data-buypct="' + id + '" data-pct="' + pct + '">' + (pct === 100 ? "MAX" : pct + "%") + "</button>").join("") +
+          "</div>" +
+          (s.myShares > 0 ? (
+            '<div class="stock-form" style="margin-top:12px;">' +
+            '<input type="number" min="0" step="any" placeholder="매도 수량" data-sellinput="' + id + '"' + (locked ? " disabled" : "") + " />" +
+            '<button class="btn-ghost" data-sellstock="' + id + '"' + (locked ? " disabled" : "") + ">" + (locked ? "잠김" : "매도") + "</button>" +
+            "</div>" +
+            '<div class="stock-quick-row">' +
+            [25, 50, 100].map((pct) => '<button data-sellpct="' + id + '" data-pct="' + pct + '"' + (locked ? " disabled" : "") + ">" + (pct === 100 ? "전량" : pct + "%") + "</button>").join("") +
+            "</div>" +
+            (locked ? '<p class="dim stock-lock-note" data-locked="' + s.sellLockedUntil + '" style="margin:6px 0 0;font-size:10px;">🔒 ' + fmtCountdown(s.sellLockedUntil - now) + " 후 매도 가능</p>" : "")
+          ) : "") +
+          "</div>"
+        );
+      }).join("");
+
+      grid.querySelectorAll("button[data-buypct]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.buypct, pct = Number(btn.dataset.pct);
+          const input = grid.querySelector('input[data-buyinput="' + id + '"]');
+          if (input && state) input.value = Math.max(1, Math.floor(state.pocketCoins * (pct / 100)));
+        });
+      });
+      grid.querySelectorAll("button[data-sellpct]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.sellpct, pct = Number(btn.dataset.pct);
+          const input = grid.querySelector('input[data-sellinput="' + id + '"]');
+          const s = data.stocks[id];
+          if (input && s) input.value = s.myShares * (pct / 100);
+        });
+      });
+      grid.querySelectorAll("button[data-buystock]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.buystock;
+          const input = grid.querySelector('input[data-buyinput="' + id + '"]');
+          const coins = Math.floor(Number(input.value) || 0);
+          if (coins <= 0) { toast("투자할 코인을 입력하세요.", true); return; }
+          btn.disabled = true;
+          try {
+            const r = await api("/stocks/buy", { method: "POST", body: { stockId: id, coins: coins } });
+            toast("📈 " + escapeHtml(data.stocks[id].name) + "에 " + fmt(coins) + " 코인 투자 완료!");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderStockTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      grid.querySelectorAll("button[data-sellstock]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.sellstock;
+          const input = grid.querySelector('input[data-sellinput="' + id + '"]');
+          const shares = Number(input.value);
+          if (!(shares > 0)) { toast("매도할 수량을 입력하세요.", true); return; }
+          btn.disabled = true;
+          try {
+            const r = await api("/stocks/sell", { method: "POST", body: { stockId: id, shares: shares } });
+            toast("📈 매도 완료! +" + fmt(r.payout) + " 코인 (수수료 " + fmt(r.fee) + " 차감)");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderStockTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+    } catch (e) {
+      grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+  // 매도 잠금 카운트다운(1초) + 가격 자체는 5분마다 한 틱이라 30초마다 조용히 다시 조회
+  // (탭이 보일 때만) — 둘 다 다른 탭들과 같은 "보일 때만 갱신" 패턴.
+  let stockPriceRefreshCounter = 0;
+  setInterval(() => {
+    if (currentTab !== "stocks") return;
+    const now = Date.now();
+    let anyUnlocked = false;
+    document.querySelectorAll(".stock-lock-note").forEach((el) => {
+      const lockedUntil = Number(el.dataset.locked);
+      if (lockedUntil <= now) { anyUnlocked = true; }
+      else el.textContent = "🔒 " + fmtCountdown(lockedUntil - now) + " 후 매도 가능";
+    });
+    if (anyUnlocked) { renderStockTab(); return; }
+    stockPriceRefreshCounter++;
+    if (stockPriceRefreshCounter >= 30) { stockPriceRefreshCounter = 0; renderStockTab(); }
+  }, 1000);
+
   // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
   //    삭제됨 — 요청 반영: "원정 연구를 없애줘"). ──
   // $(id)가 null이어도 조용히 무시한다 — 이 탭의 여러 버튼이 "한 번 해금/맥스가 되면
@@ -2887,6 +3015,7 @@
         else if (l.kind === "planet_expedition") { icon = attackWon ? "🛰️" : "🛰️"; desc = (attackWon ? "원정 성공: " : "원정 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "raffle_win") { icon = "🎫"; desc = escapeHtml(l.opponent_name || "") + " 등급 다크넷 로또 당첨!"; }
+        else if (l.kind === "stock_sell") { icon = "📈"; desc = escapeHtml(l.opponent_name || "") + " 주식 매도"; }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
           '<div class="log-row"><span>' + icon + "</span><span>" + desc + '</span><span class="' + coinCls + '">' +

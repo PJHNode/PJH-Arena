@@ -490,6 +490,20 @@
   .raffle-winners { background: var(--surface); border: 1px solid var(--border); padding: 4px 14px; }
   .raffle-winner-row { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .raffle-winner-row:last-child { border-bottom: none; }
+  /* 증권거래소 — 종목 5개 카드(현재가/스파크라인/보유 현황/매수·매도 폼). */
+  .stock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .stock-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 16px; }
+  .stock-card-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
+  .stock-price { font-size: 20px; font-weight: bold; margin: 4px 0; }
+  .stock-price.up { color: var(--energy); } .stock-price.down { color: var(--danger); } .stock-price.flat { color: var(--text); }
+  .stock-spark { width: 100%; height: 36px; display: block; margin: 6px 0 10px; }
+  .stock-card-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--sub); margin-bottom: 5px; }
+  .stock-card-row b { color: var(--text); }
+  .stock-form { display: flex; gap: 6px; margin-top: 8px; }
+  .stock-form input { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; padding: 8px; }
+  .stock-form button { flex: 0 0 auto; }
+  .stock-quick-row { display: flex; gap: 4px; margin-top: 6px; }
+  .stock-quick-row button { flex: 1; font-size: 9px; padding: 5px 2px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
 
   /* Galaxy Map */
   .galaxy-empire { background: var(--surface); border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; }
@@ -737,6 +751,7 @@
       <button class="side-tab" data-tab="property">🏭 Property</button>
       <button class="side-tab" data-tab="bank">🏦 Secure Bank</button>
       <button class="side-tab" data-tab="raffle">🎫 다크넷 로또</button>
+      <button class="side-tab" data-tab="stocks">📈 증권거래소</button>
       <button class="side-tab" data-tab="research">🔬 Research</button>
       <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
       <button class="side-tab" data-tab="trade">🤝 Trade</button>
@@ -912,6 +927,12 @@
         <div class="raffle-grid" id="raffleGrid"><p class="dim">불러오는 중...</p></div>
         <p class="panel-title" style="margin-top:22px;">최근 당첨자</p>
         <div class="raffle-winners" id="raffleWinners"><p class="dim">불러오는 중...</p></div>
+      </div>
+
+      <div class="tab-panel" id="panel-stocks">
+        <p class="panel-title">📈 STOCK EXCHANGE</p>
+        <p class="dim" style="margin-bottom:14px;">매수는 언제든 자유롭지만, 매수할 때마다 그 종목의 매도 가능 시각이 <b id="stockDelayNote">30</b>분 뒤로 밀립니다. 매도 수수료는 <b id="stockFeeNote">5</b>% 고정이며, 가격은 장기적으로 항상 기준가 근처로 되돌아옵니다(무조건 우상향 아님).</p>
+        <div class="stock-grid" id="stockGrid"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-research">

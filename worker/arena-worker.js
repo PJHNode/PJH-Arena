@@ -927,6 +927,78 @@ async function resolveRaffleRound(env, round) {
     .bind(round.tier, now + tierDef.periodMs, now).run();
 }
 
+// ══════════════════════════════════════════════════════════
+//  증권거래소(Stock Exchange) — "주식 시스템까지 넣어보자" 요청 반영(다크넷 로또와는 완전히
+//  별개 기능이라 이름도 겹치지 않게 지었다). 코인으로 종목에 투자하고 나중에 되팔아 회수하는
+//  구조지만, 아래 세 가지로 "이걸로 갑자기 큰 이익을 못 보게" 확실히 막았다:
+//   (1) 가격이 평균회귀(mean-reversion)한다 — 매 틱마다 기준가(basePrice) 쪽으로 일정
+//       비율(STOCK_MEAN_REVERSION_RATE)만큼 당겨지고, 그 위에 작은 무작위 충격만 더해진다.
+//       그래서 "무조건 우상향"이 아니라 장기적으로는 항상 기준가 근처로 돌아온다(요청 반영:
+//       "주식이 항상 오르지만 못하게, 무조건 평균값 정도로"). 가격 자체도 기준가의
+//       STOCK_PRICE_MIN/MAX_MULT 배 안으로 항상 clamp돼서 폭등/폭락 자체가 막혀 있다.
+//   (2) 매도 지연(SELL_DELAY_MS) — 매수는 언제든 제한 없이 가능하지만(요청 반영: "살 때는
+//       제한이 없지만"), 매수할 때마다 그 종목의 매도 가능 시각이 지금부터 다시
+//       SELL_DELAY_MS 뒤로 밀린다(요청 반영: "팔 때는 바로바로 팔지 못하게, 약간의 딜레이").
+//       그래서 "지금 사서 순간적으로 오른 값에 바로 되팔기"가 원천적으로 불가능하다.
+//   (3) 매도 수수료(STOCK_SELL_FEE_RATE) 5% 고정 — 팔 때마다 판돈의 5%가 그대로 사라진다
+//       (요청 반영: "수수료는 5%가 필수"). 코인 총량을 깎는 순수 소모처 역할도 겸한다.
+//
+//  가격은 실제 크론 없이 "누군가 조회/거래하는 시점"에 지난 틱 수만큼 한 번에 계산해
+//  따라잡는 지연 평가 방식(다크넷 로또 라운드와 같은 발상) — 각 틱은 (종목id+틱번호)로 시드된
+//  결정론적 난수라 언제 누가 계산해도 같은 결과가 나온다. 실제 코인이 오가는 매매 자체는
+//  아니라서(가격 계산일 뿐) 동시 요청끼리 경쟁해도 위험하지 않지만, 그래도 이중 적용을
+//  막기 위해 상점 재고/로또 라운드와 같은 조건부 UPDATE(CAS) 패턴을 그대로 썼다.
+// ══════════════════════════════════════════════════════════
+const STOCK_TICK_MS = 5 * 60 * 1000; // 5분마다 한 틱
+const STOCK_MEAN_REVERSION_RATE = 0.08; // 틱마다 기준가 쪽으로 8%씩 당겨짐
+const STOCK_PRICE_MIN_MULT = 0.4, STOCK_PRICE_MAX_MULT = 2.5; // 기준가의 0.4~2.5배 안으로 항상 clamp
+const STOCK_HISTORY_LEN = 24; // 프론트 스파크라인용 — 최근 24틱(2시간)
+const SELL_DELAY_MS = 30 * 60 * 1000; // 매수할 때마다 매도 가능 시각이 30분 뒤로 밀림
+const STOCK_SELL_FEE_RATE = 0.05; // 매도 시 5% 고정 수수료(코인 소모처)
+const STOCKS = {
+  neocorp:     { name: "NeoCorp",              basePrice: 10000,    maxShockPct: 0.015 },
+  obsidian:    { name: "Obsidian Dynamics",    basePrice: 50000,    maxShockPct: 0.025 },
+  quantumleap: { name: "QuantumLeap Systems",  basePrice: 200000,   maxShockPct: 0.04 },
+  ghostwire:   { name: "Ghostwire Networks",   basePrice: 500000,   maxShockPct: 0.06 },
+  singularity: { name: "Singularity Holdings", basePrice: 2000000,  maxShockPct: 0.09 },
+};
+
+async function ensureStockPrice(env, stockId) {
+  const stock = STOCKS[stockId];
+  const now = Date.now();
+  let row = await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first();
+  if (!row) {
+    await env.DB.prepare("INSERT INTO arena_stocks (id, price, history, last_tick_at) VALUES (?, ?, ?, ?)")
+      .bind(stockId, stock.basePrice, JSON.stringify([stock.basePrice]), now).run();
+    row = await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first();
+  }
+  const ticks = Math.min(2000, Math.floor((now - row.last_tick_at) / STOCK_TICK_MS)); // 2000틱(~7일) 안전 상한
+  if (ticks <= 0) return row;
+
+  let price = row.price;
+  const baseTickIndex = Math.floor(row.last_tick_at / STOCK_TICK_MS);
+  const history = JSON.parse(row.history || "[]");
+  for (let i = 1; i <= ticks; i++) {
+    const rng = mulberry32((hashStr(stockId + ":" + (baseTickIndex + i)) | 0));
+    const reversion = (stock.basePrice - price) * STOCK_MEAN_REVERSION_RATE;
+    const shockPct = (rng() - 0.5) * 2 * stock.maxShockPct;
+    price = clamp(price + reversion + price * shockPct, stock.basePrice * STOCK_PRICE_MIN_MULT, stock.basePrice * STOCK_PRICE_MAX_MULT);
+    history.push(Math.round(price));
+  }
+  price = Math.round(price);
+  while (history.length > STOCK_HISTORY_LEN) history.shift();
+  const newLastTick = row.last_tick_at + ticks * STOCK_TICK_MS;
+
+  // 조건부 UPDATE(CAS) — 동시에 여러 요청이 같은 구간을 계산해도 딱 하나만 실제로 반영된다.
+  const claim = await env.DB.prepare("UPDATE arena_stocks SET price=?, history=?, last_tick_at=? WHERE id=? AND last_tick_at=?")
+    .bind(price, JSON.stringify(history), newLastTick, stockId, row.last_tick_at).run();
+  if (!claim.meta || !claim.meta.changes) {
+    return await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first(); // 이미 다른 요청이 갱신함 — 최신값 재조회
+  }
+  row.price = price; row.history = JSON.stringify(history); row.last_tick_at = newLastTick;
+  return row;
+}
+
 async function clubIdOf(env, userId) {
   const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
   return row ? row.club_id : null;
@@ -1599,6 +1671,17 @@ async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS arena_raffle_tickets (round_id INTEGER NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL, " +
     "qty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (round_id, user_id))"
   );
+
+  // ── 증권거래소(Stock Exchange) — 종목당 딱 한 행(현재가/최근 24틱 이력), 보유는 유저당
+  // 종목당 한 행(ensureStockPrice/POST /stocks/buy,sell 참고). ──
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_stocks (id TEXT PRIMARY KEY, price INTEGER NOT NULL, history TEXT NOT NULL DEFAULT '[]', last_tick_at INTEGER NOT NULL)"
+  );
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_stock_holdings (user_id TEXT NOT NULL, stock_id TEXT NOT NULL, shares REAL NOT NULL DEFAULT 0, " +
+    "avg_cost REAL NOT NULL DEFAULT 0, sell_locked_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, stock_id))"
+  );
+
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -4497,6 +4580,95 @@ export default {
           env.DB.prepare("UPDATE arena_raffle_rounds SET pot = pot + ?, ticket_count = ticket_count + ? WHERE id=?").bind(cost, qty, round.id),
         ]);
         return json({ ok: true, pocketCoins: row.pocket_coins, tier: tier, qtyBought: qty });
+      }
+
+      // ── GET /stocks — 5개 종목 전부 현재가(조회 시점까지 밀린 틱을 즉시 따라잡은 값) +
+      //    내 보유 현황(주식 수/평균단가/매도 가능 시각)을 내려준다. ──
+      if (request.method === "GET" && path === "/stocks") {
+        const stocks = {};
+        for (const stockId in STOCKS) {
+          const def = STOCKS[stockId];
+          const priceRow = await ensureStockPrice(env, stockId);
+          const holding = await env.DB.prepare("SELECT shares, avg_cost, sell_locked_until FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
+          stocks[stockId] = {
+            name: def.name, basePrice: def.basePrice, price: priceRow.price,
+            changePct: Math.round(((priceRow.price - def.basePrice) / def.basePrice) * 10000) / 100,
+            history: JSON.parse(priceRow.history || "[]"),
+            myShares: holding ? holding.shares : 0, myAvgCost: holding ? holding.avg_cost : 0,
+            sellLockedUntil: holding ? holding.sell_locked_until : 0,
+          };
+        }
+        return json({ stocks: stocks, sellFeeRatePct: STOCK_SELL_FEE_RATE * 100, sellDelayMs: SELL_DELAY_MS });
+      }
+
+      // ── POST /stocks/buy { stockId, coins } — 코인을 원하는 만큼 투자해서(제한 없음) 그
+      //    시점 가격으로 주식(소수 가능)을 산다. 살 때마다 이 종목의 매도 가능 시각이 지금부터
+      //    다시 SELL_DELAY_MS 뒤로 밀린다 — "사자마자 바로 되팔기" 방지. ──
+      if (request.method === "POST" && path === "/stocks/buy") {
+        const body = await request.json().catch(function () { return {}; });
+        const stockId = String(body.stockId || "");
+        if (!STOCKS[stockId]) return json({ error: "알 수 없는 종목입니다." }, 400);
+        const coins = Math.floor(Number(body.coins) || 0);
+        if (coins <= 0) return json({ error: "투자할 코인을 입력하세요." }, 400);
+
+        const priceRow = await ensureStockPrice(env, stockId);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.pocket_coins < coins) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(coins) + ")" }, 400);
+
+        const boughtShares = coins / priceRow.price;
+        const existing = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
+        const oldShares = existing ? existing.shares : 0;
+        const oldCostTotal = existing ? existing.shares * existing.avg_cost : 0;
+        const newShares = oldShares + boughtShares;
+        const newAvgCost = (oldCostTotal + coins) / newShares;
+        const now = Date.now();
+
+        row.pocket_coins -= coins;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare(
+            "INSERT INTO arena_stock_holdings (user_id, stock_id, shares, avg_cost, sell_locked_until) VALUES (?, ?, ?, ?, ?) " +
+            "ON CONFLICT(user_id, stock_id) DO UPDATE SET shares=?, avg_cost=?, sell_locked_until=?"
+          ).bind(user.userId, stockId, newShares, newAvgCost, now + SELL_DELAY_MS, newShares, newAvgCost, now + SELL_DELAY_MS),
+        ]);
+        return json({ ok: true, pocketCoins: row.pocket_coins, boughtShares: boughtShares, sellLockedUntil: now + SELL_DELAY_MS });
+      }
+
+      // ── POST /stocks/sell { stockId, shares } — 매도 가능 시각(sell_locked_until)이
+      //    지나야만 팔 수 있다. 판돈의 STOCK_SELL_FEE_RATE(5%)는 수수료로 그대로 사라진다. ──
+      if (request.method === "POST" && path === "/stocks/sell") {
+        const body = await request.json().catch(function () { return {}; });
+        const stockId = String(body.stockId || "");
+        if (!STOCKS[stockId]) return json({ error: "알 수 없는 종목입니다." }, 400);
+
+        const holding = await env.DB.prepare("SELECT shares, avg_cost, sell_locked_until FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
+        if (!holding || holding.shares <= 0) return json({ error: "보유하지 않은 종목입니다." }, 400);
+        const cooldownLeft = holding.sell_locked_until - Date.now();
+        if (cooldownLeft > 0) return json({ error: "매도 대기 중입니다. (" + Math.ceil(cooldownLeft / 60000) + "분 남음)" }, 400);
+
+        const sharesReq = Number(body.shares);
+        if (!(sharesReq > 0)) return json({ error: "매도할 수량을 입력하세요." }, 400);
+        const sharesSold = Math.min(sharesReq, holding.shares);
+
+        const priceRow = await ensureStockPrice(env, stockId);
+        const gross = sharesSold * priceRow.price;
+        const fee = Math.round(gross * STOCK_SELL_FEE_RATE);
+        const payout = Math.round(gross) - fee;
+        const remainingShares = holding.shares - sharesSold;
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        row.pocket_coins += payout;
+        const writes = [
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+        ];
+        if (remainingShares > 0.000001) {
+          writes.push(env.DB.prepare("UPDATE arena_stock_holdings SET shares=? WHERE user_id=? AND stock_id=?").bind(remainingShares, user.userId, stockId));
+        } else {
+          writes.push(env.DB.prepare("DELETE FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId));
+        }
+        await env.DB.batch(writes);
+        await insertLog(env, user.userId, "stock_sell", null, STOCKS[stockId].name, "success", payout, 0);
+        return json({ ok: true, pocketCoins: row.pocket_coins, sharesSold: sharesSold, gross: Math.round(gross), fee: fee, payout: payout });
       }
 
       if (request.method === "GET" && path === "/property") {
