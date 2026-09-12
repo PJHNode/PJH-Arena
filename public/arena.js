@@ -1788,29 +1788,36 @@
   }, 1000);
 
   // ── 증권거래소(Stock Exchange) — "주식 시스템" 요청 반영(다크넷 로또와 별개 기능). 가격은
-  //    장기적으로 항상 기준가 근처로 되돌아오고(무조건 우상향 아님), 매수는 언제든 자유롭지만
-  //    매수할 때마다 매도 가능 시각이 뒤로 밀려서 "사자마자 되팔기"가 안 된다. 매도 수수료
-  //    5% 고정. 카드에 작은 스파크라인(최근 24틱 가격)을 그려서 흐름이 한눈에 보이게 했다. ──
+  //    10초마다 한 틱씩 움직이고 장기적으로 항상 기준가 근처로 되돌아온다(무조건 우상향
+  //    아님). 매수/매도 둘 다 언제든 바로 가능하고(요청 반영: "그냥 매도하기 버튼 누르면
+  //    매도 가능해지도록" — 예전에 있던 매수 후 30분 매도 지연을 없앰), 매도 수수료 5%
+  //    고정만 과도한 차익거래를 억제한다. 카드마다 최근 30분(180틱) 가격을 영역 채우기
+  //    그래프로 그려서 흐름이 한눈에 보이게 했다(요청 반영: "각 주식에 대해 그래프가"). ──
   const STOCK_COLORS = { neocorp: "var(--cyan)", obsidian: "#2b7fff", quantumleap: "#b060e8", ghostwire: "#ff3d9e", singularity: "var(--stamina)" };
-  function sparklineSvg(history, color) {
+  function stockChartSvg(history, color) {
     if (!history || history.length < 2) return "";
-    const w = 100, h = 32, pad = 2;
+    const w = 300, h = 70, pad = 3;
     const min = Math.min(...history), max = Math.max(...history);
     const range = max - min || 1;
-    const points = history.map((v, i) => {
+    const coords = history.map((v, i) => {
       const x = (i / (history.length - 1)) * (w - pad * 2) + pad;
       const y = h - pad - ((v - min) / range) * (h - pad * 2);
-      return x.toFixed(1) + "," + y.toFixed(1);
-    }).join(" ");
-    return '<svg class="stock-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><polyline points="' + points + '" fill="none" stroke="' + color + '" stroke-width="1.5"/></svg>';
+      return [x, y];
+    });
+    const linePoints = coords.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    const areaPoints = linePoints + " " + (w - pad).toFixed(1) + "," + (h - pad).toFixed(1) + " " + pad.toFixed(1) + "," + (h - pad).toFixed(1);
+    return (
+      '<svg class="stock-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      '<polygon points="' + areaPoints + '" fill="' + color + '" opacity="0.12"/>' +
+      '<polyline points="' + linePoints + '" fill="none" stroke="' + color + '" stroke-width="1.8"/>' +
+      "</svg>"
+    );
   }
   async function renderStockTab() {
     const grid = $("stockGrid");
     try {
       const data = await api("/stocks");
       setText("stockFeeNote", data.sellFeeRatePct);
-      setText("stockDelayNote", Math.round(data.sellDelayMs / 60000));
-      const now = Date.now();
       grid.innerHTML = Object.keys(data.stocks).map((id) => {
         const s = data.stocks[id];
         const color = STOCK_COLORS[id] || "var(--text)";
@@ -1822,12 +1829,11 @@
             '<div class="stock-card-row"><span>손익</span><b style="color:' + (s.price >= s.myAvgCost ? "var(--energy)" : "var(--danger)") + ';">' +
             (s.myAvgCost > 0 ? (((s.price - s.myAvgCost) / s.myAvgCost) * 100).toFixed(1) : "0.0") + "%</b></div>"
           : "";
-        const locked = s.sellLockedUntil > now;
         return (
           '<div class="stock-card" style="border-left-color:' + color + ';">' +
           '<div class="stock-card-title">' + escapeHtml(s.name) + "</div>" +
           '<div class="stock-price ' + dirCls + '">' + dirArrow + " " + fmt(s.price) + '<span class="dim" style="font-size:10px;"> (' + (s.changePct > 0 ? "+" : "") + s.changePct + "%)</span></div>" +
-          sparklineSvg(s.history, color) +
+          stockChartSvg(s.history, color) +
           holdingBlock +
           '<div class="stock-form">' +
           '<input type="number" min="1" placeholder="투자 코인" data-buyinput="' + id + '" />' +
@@ -1838,13 +1844,12 @@
           "</div>" +
           (s.myShares > 0 ? (
             '<div class="stock-form" style="margin-top:12px;">' +
-            '<input type="number" min="0" step="any" placeholder="매도 수량" data-sellinput="' + id + '"' + (locked ? " disabled" : "") + " />" +
-            '<button class="btn-ghost" data-sellstock="' + id + '"' + (locked ? " disabled" : "") + ">" + (locked ? "잠김" : "매도") + "</button>" +
+            '<input type="number" min="0" step="any" placeholder="매도 수량" data-sellinput="' + id + '" />' +
+            '<button class="btn-ghost" data-sellstock="' + id + '">매도</button>' +
             "</div>" +
             '<div class="stock-quick-row">' +
-            [25, 50, 100].map((pct) => '<button data-sellpct="' + id + '" data-pct="' + pct + '"' + (locked ? " disabled" : "") + ">" + (pct === 100 ? "전량" : pct + "%") + "</button>").join("") +
-            "</div>" +
-            (locked ? '<p class="dim stock-lock-note" data-locked="' + s.sellLockedUntil + '" style="margin:6px 0 0;font-size:10px;">🔒 ' + fmtCountdown(s.sellLockedUntil - now) + " 후 매도 가능</p>" : "")
+            [25, 50, 100].map((pct) => '<button data-sellpct="' + id + '" data-pct="' + pct + '">' + (pct === 100 ? "전량" : pct + "%") + "</button>").join("") +
+            "</div>"
           ) : "") +
           "</div>"
         );
@@ -1897,22 +1902,11 @@
       grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
     }
   }
-  // 매도 잠금 카운트다운(1초) + 가격 자체는 5분마다 한 틱이라 30초마다 조용히 다시 조회
-  // (탭이 보일 때만) — 둘 다 다른 탭들과 같은 "보일 때만 갱신" 패턴.
-  let stockPriceRefreshCounter = 0;
+  // 가격이 10초마다 한 틱씩 움직이므로(요청 반영: "변화 간격이 최소 10초는") 탭이 보이는
+  // 동안은 10초마다 조용히 다시 조회해서 그래프가 실제로 살아 움직이는 걸 보여준다.
   setInterval(() => {
-    if (currentTab !== "stocks") return;
-    const now = Date.now();
-    let anyUnlocked = false;
-    document.querySelectorAll(".stock-lock-note").forEach((el) => {
-      const lockedUntil = Number(el.dataset.locked);
-      if (lockedUntil <= now) { anyUnlocked = true; }
-      else el.textContent = "🔒 " + fmtCountdown(lockedUntil - now) + " 후 매도 가능";
-    });
-    if (anyUnlocked) { renderStockTab(); return; }
-    stockPriceRefreshCounter++;
-    if (stockPriceRefreshCounter >= 30) { stockPriceRefreshCounter = 0; renderStockTab(); }
-  }, 1000);
+    if (currentTab === "stocks") renderStockTab();
+  }, 10000);
 
   // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
   //    삭제됨 — 요청 반영: "원정 연구를 없애줘"). ──

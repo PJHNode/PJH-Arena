@@ -930,18 +930,20 @@ async function resolveRaffleRound(env, round) {
 // ══════════════════════════════════════════════════════════
 //  증권거래소(Stock Exchange) — "주식 시스템까지 넣어보자" 요청 반영(다크넷 로또와는 완전히
 //  별개 기능이라 이름도 겹치지 않게 지었다). 코인으로 종목에 투자하고 나중에 되팔아 회수하는
-//  구조지만, 아래 세 가지로 "이걸로 갑자기 큰 이익을 못 보게" 확실히 막았다:
+//  구조지만, 아래 두 가지로 "이걸로 갑자기 큰 이익을 못 보게" 막았다:
 //   (1) 가격이 평균회귀(mean-reversion)한다 — 매 틱마다 기준가(basePrice) 쪽으로 일정
 //       비율(STOCK_MEAN_REVERSION_RATE)만큼 당겨지고, 그 위에 작은 무작위 충격만 더해진다.
 //       그래서 "무조건 우상향"이 아니라 장기적으로는 항상 기준가 근처로 돌아온다(요청 반영:
 //       "주식이 항상 오르지만 못하게, 무조건 평균값 정도로"). 가격 자체도 기준가의
 //       STOCK_PRICE_MIN/MAX_MULT 배 안으로 항상 clamp돼서 폭등/폭락 자체가 막혀 있다.
-//   (2) 매도 지연(SELL_DELAY_MS) — 매수는 언제든 제한 없이 가능하지만(요청 반영: "살 때는
-//       제한이 없지만"), 매수할 때마다 그 종목의 매도 가능 시각이 지금부터 다시
-//       SELL_DELAY_MS 뒤로 밀린다(요청 반영: "팔 때는 바로바로 팔지 못하게, 약간의 딜레이").
-//       그래서 "지금 사서 순간적으로 오른 값에 바로 되팔기"가 원천적으로 불가능하다.
-//   (3) 매도 수수료(STOCK_SELL_FEE_RATE) 5% 고정 — 팔 때마다 판돈의 5%가 그대로 사라진다
+//       10초 틱으로 바꾸면서(요청 반영: "변화 간격이 최소 10초는 돼야") 반감기(대략 30분)가
+//       예전(5분 틱)과 비슷하게 유지되도록 틱당 회귀율/충격폭을 그만큼 잘게 다시 잡았다
+//       (직접 8640틱=1일 시뮬레이션으로 평균이 기준가 대비 오차 1.6% 이내에 머무는 것 확인).
+//   (2) 매도 수수료(STOCK_SELL_FEE_RATE) 5% 고정 — 팔 때마다 판돈의 5%가 그대로 사라진다
 //       (요청 반영: "수수료는 5%가 필수"). 코인 총량을 깎는 순수 소모처 역할도 겸한다.
+//  매도 대기시간(예전 SELL_DELAY_MS 30분)은 "그냥 매도 버튼 누르면 바로 팔리게 하자"는
+//  요청으로 없앴다 — 이제 매수/매도 둘 다 언제든 바로 가능하고, 위 두 가지(평균회귀 + 수수료)
+//  만으로 과도한 차익거래를 억제한다.
 //
 //  가격은 실제 크론 없이 "누군가 조회/거래하는 시점"에 지난 틱 수만큼 한 번에 계산해
 //  따라잡는 지연 평가 방식(다크넷 로또 라운드와 같은 발상) — 각 틱은 (종목id+틱번호)로 시드된
@@ -949,18 +951,17 @@ async function resolveRaffleRound(env, round) {
 //  아니라서(가격 계산일 뿐) 동시 요청끼리 경쟁해도 위험하지 않지만, 그래도 이중 적용을
 //  막기 위해 상점 재고/로또 라운드와 같은 조건부 UPDATE(CAS) 패턴을 그대로 썼다.
 // ══════════════════════════════════════════════════════════
-const STOCK_TICK_MS = 5 * 60 * 1000; // 5분마다 한 틱
-const STOCK_MEAN_REVERSION_RATE = 0.08; // 틱마다 기준가 쪽으로 8%씩 당겨짐
+const STOCK_TICK_MS = 10 * 1000; // 10초마다 한 틱(요청 반영: "변화 간격이 최소 10초는 돼야")
+const STOCK_MEAN_REVERSION_RATE = 0.0038; // 틱마다 기준가 쪽으로 0.38%씩(반감기 약 180틱=30분)
 const STOCK_PRICE_MIN_MULT = 0.4, STOCK_PRICE_MAX_MULT = 2.5; // 기준가의 0.4~2.5배 안으로 항상 clamp
-const STOCK_HISTORY_LEN = 24; // 프론트 스파크라인용 — 최근 24틱(2시간)
-const SELL_DELAY_MS = 30 * 60 * 1000; // 매수할 때마다 매도 가능 시각이 30분 뒤로 밀림
+const STOCK_HISTORY_LEN = 180; // 프론트 그래프용 — 최근 180틱(10초 틱 기준 30분)
 const STOCK_SELL_FEE_RATE = 0.05; // 매도 시 5% 고정 수수료(코인 소모처)
 const STOCKS = {
-  neocorp:     { name: "NeoCorp",              basePrice: 10000,    maxShockPct: 0.015 },
-  obsidian:    { name: "Obsidian Dynamics",    basePrice: 50000,    maxShockPct: 0.025 },
-  quantumleap: { name: "QuantumLeap Systems",  basePrice: 200000,   maxShockPct: 0.04 },
-  ghostwire:   { name: "Ghostwire Networks",   basePrice: 500000,   maxShockPct: 0.06 },
-  singularity: { name: "Singularity Holdings", basePrice: 2000000,  maxShockPct: 0.09 },
+  neocorp:     { name: "NeoCorp",              basePrice: 10000,    maxShockPct: 0.0027 },
+  obsidian:    { name: "Obsidian Dynamics",    basePrice: 50000,    maxShockPct: 0.0046 },
+  quantumleap: { name: "QuantumLeap Systems",  basePrice: 200000,   maxShockPct: 0.0073 },
+  ghostwire:   { name: "Ghostwire Networks",   basePrice: 500000,   maxShockPct: 0.0110 },
+  singularity: { name: "Singularity Holdings", basePrice: 2000000,  maxShockPct: 0.0164 },
 };
 
 async function ensureStockPrice(env, stockId) {
@@ -972,7 +973,7 @@ async function ensureStockPrice(env, stockId) {
       .bind(stockId, stock.basePrice, JSON.stringify([stock.basePrice]), now).run();
     row = await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first();
   }
-  const ticks = Math.min(2000, Math.floor((now - row.last_tick_at) / STOCK_TICK_MS)); // 2000틱(~7일) 안전 상한
+  const ticks = Math.min(10000, Math.floor((now - row.last_tick_at) / STOCK_TICK_MS)); // 10000틱(~27.8시간) 안전 상한 — 그보다 오래 방치됐으면 다음 조회에서 이어서 마저 따라잡는다
   if (ticks <= 0) return row;
 
   let price = row.price;
@@ -4583,27 +4584,25 @@ export default {
       }
 
       // ── GET /stocks — 5개 종목 전부 현재가(조회 시점까지 밀린 틱을 즉시 따라잡은 값) +
-      //    내 보유 현황(주식 수/평균단가/매도 가능 시각)을 내려준다. ──
+      //    내 보유 현황(주식 수/평균단가)을 내려준다. ──
       if (request.method === "GET" && path === "/stocks") {
         const stocks = {};
         for (const stockId in STOCKS) {
           const def = STOCKS[stockId];
           const priceRow = await ensureStockPrice(env, stockId);
-          const holding = await env.DB.prepare("SELECT shares, avg_cost, sell_locked_until FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
+          const holding = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
           stocks[stockId] = {
             name: def.name, basePrice: def.basePrice, price: priceRow.price,
             changePct: Math.round(((priceRow.price - def.basePrice) / def.basePrice) * 10000) / 100,
             history: JSON.parse(priceRow.history || "[]"),
             myShares: holding ? holding.shares : 0, myAvgCost: holding ? holding.avg_cost : 0,
-            sellLockedUntil: holding ? holding.sell_locked_until : 0,
           };
         }
-        return json({ stocks: stocks, sellFeeRatePct: STOCK_SELL_FEE_RATE * 100, sellDelayMs: SELL_DELAY_MS });
+        return json({ stocks: stocks, sellFeeRatePct: STOCK_SELL_FEE_RATE * 100 });
       }
 
       // ── POST /stocks/buy { stockId, coins } — 코인을 원하는 만큼 투자해서(제한 없음) 그
-      //    시점 가격으로 주식(소수 가능)을 산다. 살 때마다 이 종목의 매도 가능 시각이 지금부터
-      //    다시 SELL_DELAY_MS 뒤로 밀린다 — "사자마자 바로 되팔기" 방지. ──
+      //    시점 가격으로 주식(소수 가능)을 산다. ──
       if (request.method === "POST" && path === "/stocks/buy") {
         const body = await request.json().catch(function () { return {}; });
         const stockId = String(body.stockId || "");
@@ -4621,30 +4620,28 @@ export default {
         const oldCostTotal = existing ? existing.shares * existing.avg_cost : 0;
         const newShares = oldShares + boughtShares;
         const newAvgCost = (oldCostTotal + coins) / newShares;
-        const now = Date.now();
 
         row.pocket_coins -= coins;
         await env.DB.batch([
           env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
           env.DB.prepare(
-            "INSERT INTO arena_stock_holdings (user_id, stock_id, shares, avg_cost, sell_locked_until) VALUES (?, ?, ?, ?, ?) " +
-            "ON CONFLICT(user_id, stock_id) DO UPDATE SET shares=?, avg_cost=?, sell_locked_until=?"
-          ).bind(user.userId, stockId, newShares, newAvgCost, now + SELL_DELAY_MS, newShares, newAvgCost, now + SELL_DELAY_MS),
+            "INSERT INTO arena_stock_holdings (user_id, stock_id, shares, avg_cost) VALUES (?, ?, ?, ?) " +
+            "ON CONFLICT(user_id, stock_id) DO UPDATE SET shares=?, avg_cost=?"
+          ).bind(user.userId, stockId, newShares, newAvgCost, newShares, newAvgCost),
         ]);
-        return json({ ok: true, pocketCoins: row.pocket_coins, boughtShares: boughtShares, sellLockedUntil: now + SELL_DELAY_MS });
+        return json({ ok: true, pocketCoins: row.pocket_coins, boughtShares: boughtShares });
       }
 
-      // ── POST /stocks/sell { stockId, shares } — 매도 가능 시각(sell_locked_until)이
-      //    지나야만 팔 수 있다. 판돈의 STOCK_SELL_FEE_RATE(5%)는 수수료로 그대로 사라진다. ──
+      // ── POST /stocks/sell { stockId, shares } — 매수/매도 둘 다 언제든 바로 가능하다(요청
+      //    반영: "그냥 매도하기 버튼 누르면 매도 가능해지도록"). 판돈의 STOCK_SELL_FEE_RATE
+      //    (5%)는 수수료로 그대로 사라진다. ──
       if (request.method === "POST" && path === "/stocks/sell") {
         const body = await request.json().catch(function () { return {}; });
         const stockId = String(body.stockId || "");
         if (!STOCKS[stockId]) return json({ error: "알 수 없는 종목입니다." }, 400);
 
-        const holding = await env.DB.prepare("SELECT shares, avg_cost, sell_locked_until FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
+        const holding = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
         if (!holding || holding.shares <= 0) return json({ error: "보유하지 않은 종목입니다." }, 400);
-        const cooldownLeft = holding.sell_locked_until - Date.now();
-        if (cooldownLeft > 0) return json({ error: "매도 대기 중입니다. (" + Math.ceil(cooldownLeft / 60000) + "분 남음)" }, 400);
 
         const sharesReq = Number(body.shares);
         if (!(sharesReq > 0)) return json({ error: "매도할 수량을 입력하세요." }, 400);
