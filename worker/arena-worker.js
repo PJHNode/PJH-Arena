@@ -353,13 +353,12 @@ const ATTACK_COOLDOWN_MS = 30 * 1000;
 function attackCooldownRemainingMs(row) {
   return row.last_attack_at ? Math.max(0, attackCooldownMsFor(row) - (Date.now() - row.last_attack_at)) : 0;
 }
-// Hacking Jobs 쿨다운 — 에너지만 있으면 몇 초에 몇 번이든 반복 가능했던 게, 레벨업 시 에너지
-// 전액 회복 보상과 맞물려 "레벨업→에너지 완전 충전→즉시 재실행"을 무한 반복할 수 있는 구멍이
-// 됐다(요청 반영). 에너지 잔량과 무관하게 최소 이 간격은 지나야 다음 작업을 실행할 수 있다.
-const JOB_COOLDOWN_MS = 5 * 1000;
-function jobCooldownRemainingMs(row) {
-  return row.last_job_at ? Math.max(0, JOB_COOLDOWN_MS - (Date.now() - row.last_job_at)) : 0;
-}
+// Hacking Jobs에는 더 이상 전용 쿨다운이 없다("hacking jobs 시간제한 풀어줘" 요청 반영) —
+// 한때 레벨업 시 자원 전액 회복 보상과 맞물린 무한 반복 악용을 막으려고 5초 쿨다운을 뒀었는데,
+// nextExpFor 자체가 100~300 구간에서 계속 가팔라지고 300 이후 제곱적으로 폭증하도록 고쳐져
+// 근본 원인이 해결됐으므로 여기 있던 인위적 제한(JOB_COOLDOWN_MS/jobCooldownRemainingMs/
+// last_job_at 컬럼)은 제거했다. PvP 공격 쿨다운(ATTACK_COOLDOWN_MS, 바로 위)은 그대로 유지
+// — 그건 레벨링 속도가 아니라 "다른 유저를 매크로로 연타하는 것" 자체를 막는 별개의 목적이다.
 const PVP_PLUNDER_RATE = 0.10;
 const PVP_WIN_ATK_HP_LOSS = 10, PVP_WIN_DEF_HP_LOSS = 40;
 const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
@@ -1228,6 +1227,26 @@ async function ensureSchema(env) {
   // 반영하되(equipStats), "등급"만큼은 가챠를 통해서만 오른다.
   try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_rarity TEXT"); } catch (e) {}
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_stationed ON arena_bots(stationed_planet_id)"); } catch (e) {}
+  // 가챠로 채워진 슬롯인지 표시 — "봇 뽑기가 인벤토리를 절대 안 건드린다"로 고친 뒤에도
+  // equippedCountMap이 여전히 이 슬롯들을 "장착 중"으로 세고 있어서, 실제로는 안 가진
+  // 아이템이 다른 곳(내 장착/다른 봇)에서는 "여분 없음"으로 막히는 문제가 남아있었다
+  // ("여전히 아이템 바뀌는 문제 계속 있어" 신고 반영). 가챠로 채운 슬롯은 이 플래그를
+  // 세워서 equippedCountMap 집계에서 아예 제외한다 — 인벤토리와 완전히 무관해진다.
+  // 수동 장착(/bots/equip)이 그 슬롯을 다시 채우면 그 즉시 0으로 내려간다(그때부턴 진짜
+  // 인벤토리 재고를 쓰는 것이므로 정상적으로 집계돼야 함).
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN weapon_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN armor_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN core_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 이미 가챠를 돌려본 적 있는 기존 봇들은 지금 장착된 3슬롯이 곧 그 가챠 결과일 가능성이
+  // 가장 높으므로(가챠는 항상 3슬롯을 통째로 교체하고, 그 뒤로 굳이 한 슬롯만 수동으로
+  // 다시 바꾸는 경우는 드묾) 한 번만 소급 적용한다 — 위 세 플래그가 전부 기본값(0)일
+  // 때만 매칭되므로 이후 재실행돼도 이미 처리된 행은 다시 안 건드린다.
+  try {
+    await env.DB.exec(
+      "UPDATE arena_bots SET weapon_from_gacha=1, armor_from_gacha=1, core_from_gacha=1 " +
+      "WHERE gacha_rarity IS NOT NULL AND weapon_from_gacha=0 AND armor_from_gacha=0 AND core_from_gacha=0"
+    );
+  } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_devices (user_id TEXT NOT NULL, device_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -1327,12 +1346,10 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_activity_summary_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 공격 쿨다운(30초) — 마지막으로 공격(PvP/행성/원정 무엇이든)한 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
-  // Hacking Jobs 쿨다운 — 마지막으로 /hack-job을 실행한 시각. 원래 Hacking Jobs는 에너지만
-  // 있으면 바로바로 반복 가능했는데, "레벨업 시 에너지 전액 회복" 보상과 겹치면(특히 코인/EXP
-  // 2배 이벤트 중처럼 레벨업이 잦아질 때) 매 작업이 레벨업 → 에너지 완전 충전 → 다시 작업을
-  // 무한 반복할 수 있는 구멍이 됐다(실제로 이 방식으로 초당 여러 번씩 하루 종일 쉬지 않고
-  // 작업을 돌려 비정상적으로 빠르게 레벨업하는 계정이 발견됨). 에너지가 얼마나 남아있든
-  // 상관없이 최소 간격을 둬서 막는다(요청 반영: "jobs 무한 반복으로 레벨업하는 걸 막아줘").
+  // last_job_at — 한때 Hacking Jobs 쿨다운(무한 반복 레벨업 악용 방지)에 쓰였던 컬럼인데,
+  // nextExpFor 자체가 훨씬 가팔라지면서 그 쿨다운을 없앴다("hacking jobs 시간제한 풀어줘"
+  // 요청 반영, 위 JOB_COOLDOWN_MS 삭제 코멘트 참고). 더 이상 어디서도 읽지 않지만 컬럼 자체는
+  // 그냥 둔다(제거해도 득 될 게 없고, DB 컬럼 삭제는 되돌리기 번거로움).
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_job_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   // 출석 + 오늘의 미션 3종을 전부 끝내면 20분간 켜지는 코인/XP 2배 부스트의 만료 시각.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN daily_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
@@ -1805,8 +1822,17 @@ async function equippedCountMap(env, userId) {
   function bump(id) { if (id) counts[id] = (counts[id] || 0) + 1; }
   const player = await env.DB.prepare("SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_users WHERE user_id = ?").bind(userId).first();
   if (player) { bump(player.equipped_weapon); bump(player.equipped_armor); bump(player.equipped_core); }
-  const botsRes = await env.DB.prepare("SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ?").bind(userId).all();
-  for (const b of botsRes.results) { bump(b.equipped_weapon); bump(b.equipped_armor); bump(b.equipped_core); }
+  // 가챠로 채워진 슬롯(weapon_from_gacha 등)은 인벤토리와 완전히 무관하므로 여기 집계에서
+  // 제외한다 — 안 그러면 실제로는 안 가진 아이템이 "이미 장착 중"으로 잡혀서 그 아이템을
+  // 다른 곳(본인/다른 봇)에 진짜로 장착하려 할 때 "여분 없음"으로 막히는 문제가 생긴다.
+  const botsRes = await env.DB.prepare(
+    "SELECT equipped_weapon, equipped_armor, equipped_core, weapon_from_gacha, armor_from_gacha, core_from_gacha FROM arena_bots WHERE user_id = ?"
+  ).bind(userId).all();
+  for (const b of botsRes.results) {
+    if (!b.weapon_from_gacha) bump(b.equipped_weapon);
+    if (!b.armor_from_gacha) bump(b.equipped_armor);
+    if (!b.core_from_gacha) bump(b.equipped_core);
+  }
   return counts;
 }
 
@@ -2138,12 +2164,14 @@ export default {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
         if (row.level < tier.minLevel) return json({ error: "레벨이 부족합니다. (필요 Lv." + tier.minLevel + ")" }, 400);
-        const jobCooldownLeft = jobCooldownRemainingMs(row);
-        if (jobCooldownLeft > 0) return json({ error: "작업 후 " + Math.ceil(jobCooldownLeft / 1000) + "초 동안은 다시 실행할 수 없습니다." }, 400);
+        // 쿨다운 제거(요청 반영: "hacking jobs 시간제한 풀어줘") — 원래 이 쿨다운은 "레벨업
+        // 시 자원 전액 회복" 보상과 겹쳐 무한 반복 레벨업이 가능했던 구멍을 막으려고 넣은
+        // 것이었는데, 이제 nextExpFor가 레벨 100~300 구간에서 계속 더 가팔라지고 300 이후론
+        // 아예 제곱적으로 폭증하므로 아무리 빨리 반복해도 레벨업 자체가 충분히 어려워졌다 —
+        // 즉 근본 원인(경험치 곡선)이 해결됐으니 여기 있던 인위적 제한은 더 이상 필요 없다.
         if (row.energy < tier.energyCost) return json({ error: "에너지가 부족합니다." }, 400);
 
         row.energy -= tier.energyCost;
-        row.last_job_at = Date.now();
         const clubBonus = await clubCoinBonusMult(env, user.userId);
         const boostMult = activityBoostMult(row);
         const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
@@ -2153,9 +2181,9 @@ export default {
 
         await env.DB.prepare(
           "UPDATE arena_users SET energy=?, stamina=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
-          "pocket_coins=?, xp=?, level=?, stat_points=?, last_job_at=? WHERE user_id=?"
+          "pocket_coins=?, xp=?, level=?, stat_points=? WHERE user_id=?"
         ).bind(row.energy, row.stamina, row.hp, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick,
-               row.pocket_coins, row.xp, row.level, row.stat_points, row.last_job_at, row.user_id).run();
+               row.pocket_coins, row.xp, row.level, row.stat_points, row.user_id).run();
         await insertLog(env, user.userId, "job", null, tier.label, "success", coinsGained, 0);
         await bumpDailyProgress(env, user.userId, "jobs");
 
@@ -3234,7 +3262,10 @@ export default {
 
         await env.DB.batch([
           env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id),
-          env.DB.prepare("UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=? WHERE id=?").bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
+          env.DB.prepare(
+            "UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=?, " +
+            "weapon_from_gacha=1, armor_from_gacha=1, core_from_gacha=1 WHERE id=?"
+          ).bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
         ]);
 
         return json({
@@ -3282,7 +3313,9 @@ export default {
           const botId = parseInt(target, 10);
           const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
           if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
-          await env.DB.prepare("UPDATE arena_bots SET " + col + " = ? WHERE id = ?").bind(itemId, botId).run();
+          // 이제 진짜 인벤토리 재고로 채우는 슬롯이므로 가챠 플래그를 내린다 — 안 그러면
+          // equippedCountMap이 계속 이 슬롯을 무시해서 실제로 소모된 재고가 반영 안 된다.
+          await env.DB.prepare("UPDATE arena_bots SET " + col + " = ?, " + slot + "_from_gacha = 0 WHERE id = ?").bind(itemId, botId).run();
         }
         return json({ ok: true });
       }
@@ -3297,7 +3330,7 @@ export default {
           await env.DB.prepare("UPDATE arena_users SET " + col + " = NULL WHERE user_id = ?").bind(user.userId).run();
         } else {
           const botId = parseInt(target, 10);
-          await env.DB.prepare("UPDATE arena_bots SET " + col + " = NULL WHERE id = ? AND user_id = ?").bind(botId, user.userId).run();
+          await env.DB.prepare("UPDATE arena_bots SET " + col + " = NULL, " + slot + "_from_gacha = 0 WHERE id = ? AND user_id = ?").bind(botId, user.userId).run();
         }
         return json({ ok: true });
       }
