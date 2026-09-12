@@ -187,6 +187,10 @@ function rebirthStonesForCount(newCount) { return 15 + Math.max(1, newCount) * 5
 // 완전히 비례(늘어난 배수 그대로)는 아니고, 그 배수의 제곱근만큼만 coinMin/coinMax/xp를
 // 올렸다(예: Genesis는 에너지가 10.6배 늘었지만 보상은 √10.6 ≈ 3.26배만). 에너지가
 // 오히려 줄어든 등급(apex 이하)은 이미 효율이 좋아졌으니 보상은 그대로 둔다.
+//
+// "고렙 hacking jobs로 얻을 수 있는 exp/코인 양도 증가시켜줘" 요청 반영 — secret 이상
+// 고레벨 등급(에너지가 늘어난 것과 같은 구간)에 한 번 더 x1.5를 곱했다. energyCost는 이번엔
+// 손대지 않았다(이미 위에서 재조정 끝) — 순수하게 "더 많이 준다"만 추가된 것.
 const JOB_TIERS = {
   trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 1,    coinMin: 600,   coinMax: 900,   xp: 8 },
   low:       { label: "Low",       minLevel: 1,  energyCost: 1,    coinMin: 1500,  coinMax: 2250,  xp: 15 },
@@ -203,18 +207,19 @@ const JOB_TIERS = {
   apex:      { label: "Apex",      minLevel: 28, energyCost: 32,   coinMin: 22500, coinMax: 30000, xp: 180 },
   legendary: { label: "Legendary", minLevel: 35, energyCost: 44,   coinMin: 37500,  coinMax: 51000,  xp: 260 },
   mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 64,  coinMin: 60000,  coinMax: 82500,  xp: 380 },
-  secret:    { label: "Secret",    minLevel: 60,  energyCost: 100, coinMin: 108000, coinMax: 150000, xp: 610 },
-  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 144, coinMin: 200000, coinMax: 275000, xp: 1000 },
-  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 233, coinMin: 395000, coinMax: 545000, xp: 1850 },
+  secret:    { label: "Secret",    minLevel: 60,  energyCost: 100, coinMin: 162000, coinMax: 225000, xp: 915 },
+  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 144, coinMin: 300000, coinMax: 412500, xp: 1500 },
+  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 233, coinMin: 592500, coinMax: 817500, xp: 2775 },
   // 레벨 상한이 없어져서(100 넘어서도 계속 성장, 300부터는 제곱적으로 폭증 — nextExpFor 참고)
   // abyssal(레벨100) 이후로 200레벨어치나 되는 구간 내내 똑같은 작업만 반복하는 게 심심하다는
   // 피드백 반영 — 새 마일스톤 레벨(150/200/250/300, 후자 둘은 각각 초월적/궁극의 해커 업적과
   // 겹침)에 맞춰 4단계를 더 얹었다. energyCost는 위 누적 스탯 포인트/6 공식을 그대로 이어서
-  // 계산했고, coin/xp는 그 늘어난 에너지의 제곱근만큼만 보상도 함께 올렸다(바로 위 설명 참고).
-  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 475,  coinMin: 830000,   coinMax: 1165000,  xp: 3950 },
-  singularity: { label: "Singularity", minLevel: 200, energyCost: 800,  coinMin: 1650000,  coinMax: 2285000,  xp: 7750 },
-  omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 3055000,  coinMax: 4230000,  xp: 14400 },
-  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 5445000,  coinMax: 7530000,  xp: 25600 },
+  // 계산했고, coin/xp는 그 늘어난 에너지의 제곱근만큼만 보상도 함께 올린 뒤(바로 위 설명 참고)
+  // 다시 x1.5(고레벨 보상 추가 인상)를 곱했다.
+  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 475,  coinMin: 1245000,  coinMax: 1747500,  xp: 5925 },
+  singularity: { label: "Singularity", minLevel: 200, energyCost: 800,  coinMin: 2475000,  coinMax: 3427500,  xp: 11625 },
+  omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 4582500,  coinMax: 6345000,  xp: 21600 },
+  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 8167500,  coinMax: 11295000, xp: 38400 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -910,8 +915,15 @@ const PROPERTY_MAX_DEVICES = 6;
 const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무한 사고팔기로 코인 복사 방지)
 // coinsPerHour = 가격의 1/6(요청 반영, 기존 1/4에서 하향) — 대신 그만큼 종류를 늘리고 훨씬
 // 고렙까지 이어지는 상위 기기 6종을 새로 얹었다("개당 효율은 낮추는 대신 선택지와 상한을
-// 넓힌다"는 방향). PROPERTY_MAX_DEVICES(보유 슬롯 6개)는 그대로라, 17종 중 어떤 6개를
-// 채울지 고르는 게 진짜 선택이 된다.
+// 넓힌다"는 방향). PROPERTY_MAX_DEVICES(보유 슬롯 6개)는 그대로라, 25종(아래 고렙 확장
+// 8종 포함) 중 어떤 6개를 채울지 고르는 게 진짜 선택이 된다.
+// ── "property 종류를 더 많이 추가해줘 고렙까지 커버 가능하도록" 요청 반영 — von_neumann_
+// swarm 이후 8종을 더 얹어 stellar_engine(3600만) 위로 2187억까지 이어지게 했다(계속 x3
+// 성장). 단, "그 대신 코인 양을 1/10으로" 요청 반영 — 이 신규 8종은 위 17종의 1/6 비율을
+// 그대로 잇지 않고, coinsPerHour를 가격의 정확히 1/10로 낮춰서(예: 아래서는 6시간이면 원금을
+// 회수하지만, 여기부터는 10시간 걸림) 후반 기기일수록 "화력은 세지만 효율 자체는 이전보다
+// 낮은" 투자처가 되도록 했다 — 이래야 고렙 Jobs/PvP 소득이 여전히 의미 있고, Property 하나로
+// 경제가 트리비얼해지지 않는다.
 const PROPERTY_DEVICES = {
   proxy_relay:     { name: "Proxy Relay",          price: 200,      coinsPerHour: 33 },
   botnet_node:     { name: "Botnet Node",          price: 500,      coinsPerHour: 83 },
@@ -930,12 +942,20 @@ const PROPERTY_DEVICES = {
   quantum_nexus:   { name: "Quantum Nexus",        price: 4050000,  coinsPerHour: 675000 },
   galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
   stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
+  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,   coinsPerHour: 10000000 },
+  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,   coinsPerHour: 30000000 },
+  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,   coinsPerHour: 90000000 },
+  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,  coinsPerHour: 270000000 },
+  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,  coinsPerHour: 810000000 },
+  reality_compiler:   { name: "Reality Compiler",      price: 24300000000, coinsPerHour: 2430000000 },
+  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000, coinsPerHour: 7290000000 },
+  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 21870000000 },
 };
-// 아이템처럼 별도 rarity 필드는 없지만, 17종을 가격 순으로 5단계(4개씩 묶고 마지막만 1개)로
+// 아이템처럼 별도 rarity 필드는 없지만, 25종을 가격 순으로 7단계(4개씩 묶고 마지막만 1개)로
 // 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
 // 등급감이 있으면 좋겠다는 취지) — 원래(네온) 팔레트에 맞춰 시안 → 블루 → 그린 → 액센트
-// 네온그린 → 골드 순으로 선명하게 이어진다.
-const PROPERTY_TIER_COLORS = ["#00d4ff", "#2b7fff", "#00e07a", "#00ff9d", "#ffb020"];
+// 네온그린 → 골드 → 오렌지 → (Apocalyptic 아이템과 같은) 진홍색까지 이어진다.
+const PROPERTY_TIER_COLORS = ["#00d4ff", "#2b7fff", "#00e07a", "#00ff9d", "#ffb020", "#ff6a00", "#ff0044"];
 const PROPERTY_DEVICE_IDS = Object.keys(PROPERTY_DEVICES);
 function propertyTierColor(deviceId) {
   const idx = PROPERTY_DEVICE_IDS.indexOf(deviceId);
