@@ -171,20 +171,28 @@ function enchantMaxLevelFor(row) { return ENCHANT_MAX_LEVEL + rebirthTier(row.re
 function botMaxCountFor(row) { return BOT_MAX_COUNT + rebirthTier(row.rebirth_count); }
 function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - rebirthTier(row.rebirth_count) * 4000); }
 
-// ── 환생 버프 확장 — "환생 버프가 너무 적다"는 요청 반영. 기존 ATK/DEF +1%/회(최대 +10%)
-// 하나뿐이던 전투력 보너스와는 완전히 다른 4가지 축을 추가했다. 전부 티어(0~4)당 값이라
-// rebirthTier 상한(4)과 함께 자동으로 상한이 걸린다 — "작고 상한 있게" 원칙은 그대로.
-// (1) 자원 효율 — Jobs 에너지 소모/스탯 강화 비용 둘 다 -5%/티어(최대 -20%, 같은 비율 하나로 통일).
-const REBIRTH_COST_DISCOUNT_PER_TIER = 0.05;
-function rebirthCostMult(row) { return 1 - rebirthTier(row.rebirth_count) * REBIRTH_COST_DISCOUNT_PER_TIER; }
-// (2) 회복 속도 — 에너지/스태미나 자연 회복 간격 -10%/티어(최대 -40%, 즉 그만큼 더 자주 찬다).
-const REBIRTH_REGEN_SPEED_BONUS_PER_TIER = 0.10;
-function rebirthRegenTickMs(baseMs, row) { return Math.round(baseMs / (1 + rebirthTier(row.rebirth_count) * REBIRTH_REGEN_SPEED_BONUS_PER_TIER)); }
-// (3) 패시브 수입 — Property 최대 보유 기기 +1/티어(최대 +4), Property 수익 +3%/티어(최대 +12%).
-const REBIRTH_PROPERTY_SLOT_BONUS_PER_TIER = 1;
-const REBIRTH_PROPERTY_INCOME_BONUS_PER_TIER = 0.03;
-// (4) 성장 가속 — 레벨업마다 받는 스탯 포인트 +1/티어(최대 +4).
-const REBIRTH_STAT_POINT_BONUS_PER_TIER = 1;
+// ── 환생 버프 확장 — "환생 버프가 너무 적다"는 요청으로 4가지 축을 추가했었는데, 곧바로
+// "이번엔 너무 크다 — 최대치는 같아도 되니 회당 증가폭을 1~3%대로 낮추고 그만큼 더 많이
+// 환생해야 채워지게" 요청이 다시 들어왔다. 그래서 rebirthTier(브론즈~무지개, 4단계 계단식 —
+// 환생 1회에도 계단 하나를 통째로 올라가 버림)로 주던 걸 버리고, 기존 ATK/DEF 보너스와 같은
+// 방식(rebirthCountRatio — 실제 환생 "횟수"에 선형 비례, REBIRTH_BONUS_MAX_COUNT=10에서
+// 상한)으로 바꿨다. 최댓값(아래 REBIRTH_MAX_* 상수)은 이전과 동일하게 유지 — 그래서 회당
+// 증가폭은 전부 "그 최댓값 나누기 10"이 되고(예: 자원 효율 최대 -20% → 회당 -2%), 10회를
+// 다 채워야 예전과 같은 최댓값에 도달한다. 인챈트/봇/쿨다운 3개 QoL 특권은 원래 있던 오래된
+// 기능이라 이번 요청 범위 밖으로 보고 그대로 rebirthTier 계단식을 유지했다.
+function rebirthCountRatio(count) { return Math.min(count || 0, REBIRTH_BONUS_MAX_COUNT) / REBIRTH_BONUS_MAX_COUNT; }
+// (1) 자원 효율 — Jobs 에너지 소모/스탯 강화 비용 최대 -20%(회당 -2%).
+const REBIRTH_MAX_COST_DISCOUNT = 0.20;
+function rebirthCostMult(row) { return 1 - rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_COST_DISCOUNT; }
+// (2) 회복 속도 — 에너지/스태미나 자연 회복 간격 최대 -40%(회당 -4%, 그만큼 더 자주 찬다).
+const REBIRTH_MAX_REGEN_SPEED_BONUS = 0.40;
+function rebirthRegenTickMs(baseMs, row) { return Math.round(baseMs / (1 + rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_REGEN_SPEED_BONUS)); }
+// (3) 패시브 수입 — Property 최대 보유 기기 최대 +4개, Property 수익 최대 +12%(회당 +1.2%).
+// 기기 개수는 정수라 매 회마다 오르진 않고(2.5회당 +1개) 10회에 정확히 +4로 딱 맞아떨어진다.
+const REBIRTH_MAX_PROPERTY_SLOT_BONUS = 4;
+const REBIRTH_MAX_PROPERTY_INCOME_BONUS = 0.12;
+// (4) 성장 가속 — 레벨업마다 받는 스탯 포인트 최대 +4(마찬가지로 2.5회당 +1, 10회에 +4).
+const REBIRTH_MAX_STAT_POINT_BONUS = 4;
 
 // 환생석 — 환생할 때마다 지급되는 전용 화폐. 코인/다이아 경제와 완전히 분리해서 인플레이션
 // 걱정 없이 "환생 상점" 전용 코스메틱/칭호/버프 구매에만 쓴다. 1회차 20개부터 시작해서
@@ -752,7 +760,7 @@ function propertySlotsUpgradeCost(level) { return level >= PROPERTY_SLOTS_MAX_LE
 // 환생 버프(패시브 수입) — 티어당 +1개(최대 +4)까지 얹는다. rebirthCount를 안 넘기면(기존
 // 호출부 하위 호환) 환생 보너스 없이 그대로 동작한다.
 function effectivePropertyMaxDevices(level, rebirthCount) {
-  return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL) + rebirthTier(rebirthCount) * REBIRTH_PROPERTY_SLOT_BONUS_PER_TIER;
+  return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL) + Math.floor(rebirthCountRatio(rebirthCount) * REBIRTH_MAX_PROPERTY_SLOT_BONUS);
 }
 
 // ── 자동 뽑기(Auto Roll) 연구 — 다이아 5000개 1회성 해금. 해금하면 (1) BOT 탭 가챠에서
@@ -1901,7 +1909,7 @@ function applyXpAndLevel(row, xpGain) {
   let leveledUp = false;
   let pointsGained = 0;
   // 환생 버프(성장 가속) — 레벨업 1회당 스탯 포인트 +1/티어(최대 +4).
-  const rebirthPointBonus = rebirthTier(row.rebirth_count) * REBIRTH_STAT_POINT_BONUS_PER_TIER;
+  const rebirthPointBonus = Math.floor(rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_STAT_POINT_BONUS);
   while (row.xp >= nextExpFor(row.level)) {
     row.xp -= nextExpFor(row.level);
     row.level += 1;
@@ -2186,7 +2194,7 @@ async function pendingPropertyIncome(env, row) {
     if (dev) ratePerHour += dev.coinsPerHour * r.qty;
   }
   // 환생 버프(패시브 수입) — 티어당 +3%(최대 +12%).
-  ratePerHour = Math.round(ratePerHour * (1 + rebirthTier(row.rebirth_count) * REBIRTH_PROPERTY_INCOME_BONUS_PER_TIER));
+  ratePerHour = Math.round(ratePerHour * (1 + rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_PROPERTY_INCOME_BONUS));
   const elapsedMs = Math.min(Date.now() - (row.last_property_collect || row.created_at), PROPERTY_MAX_ACCRUAL_MS);
   const pendingCoins = Math.floor(ratePerHour * (elapsedMs / 3600000));
   return { ratePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
