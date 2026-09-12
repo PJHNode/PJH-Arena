@@ -783,6 +783,11 @@ function rollGachaRarity(table) {
   }
   return RARITY_ORDER[RARITY_ORDER.length - 1]; // 부동소수점 오차로 못 걸렸을 때의 안전망
 }
+// 슬롯별로 "등급"만 뽑는다 — 예전엔 그 등급의 대표 아이템 id를 골라 실제 장착까지 시켰는데,
+// 그러면 봇의 진짜 장착 아이템(equipped_*)이 가챠할 때마다 바뀌어버린다("그 봇 자체의 무기가
+// 아예 바뀌면 안 됨" 요청 반영). 이제 결과는 순수 등급 문자열 3개(weaponRarity/armorRarity/
+// coreRarity)뿐이고, 실제 아이템 id는 전혀 만들지 않는다 — equipStats가 이 등급을 값으로
+// 환산해서 보너스만 준다(gachaRarityValue 참고).
 function rollBotGacha(tierKey) {
   const tier = BOT_GACHA_TIERS[tierKey];
   const slots = ["weapon", "armor", "core"];
@@ -790,7 +795,7 @@ function rollBotGacha(tierKey) {
   let bestIdx = -1;
   for (const slot of slots) {
     const rarity = rollGachaRarity(tier.table);
-    result[slot] = EQUIP_ITEM_BY_TYPE_RARITY[slot][rarity];
+    result[slot + "Rarity"] = rarity;
     const idx = RARITY_ORDER.indexOf(rarity);
     if (idx > bestIdx) bestIdx = idx;
   }
@@ -1227,25 +1232,42 @@ async function ensureSchema(env) {
   // 반영하되(equipStats), "등급"만큼은 가챠를 통해서만 오른다.
   try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_rarity TEXT"); } catch (e) {}
   try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_bots_stationed ON arena_bots(stationed_planet_id)"); } catch (e) {}
-  // 가챠로 채워진 슬롯인지 표시 — "봇 뽑기가 인벤토리를 절대 안 건드린다"로 고친 뒤에도
-  // equippedCountMap이 여전히 이 슬롯들을 "장착 중"으로 세고 있어서, 실제로는 안 가진
-  // 아이템이 다른 곳(내 장착/다른 봇)에서는 "여분 없음"으로 막히는 문제가 남아있었다
-  // ("여전히 아이템 바뀌는 문제 계속 있어" 신고 반영). 가챠로 채운 슬롯은 이 플래그를
-  // 세워서 equippedCountMap 집계에서 아예 제외한다 — 인벤토리와 완전히 무관해진다.
-  // 수동 장착(/bots/equip)이 그 슬롯을 다시 채우면 그 즉시 0으로 내려간다(그때부턴 진짜
-  // 인벤토리 재고를 쓰는 것이므로 정상적으로 집계돼야 함).
-  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN weapon_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
-  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN armor_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
-  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN core_from_gacha INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
-  // 이미 가챠를 돌려본 적 있는 기존 봇들은 지금 장착된 3슬롯이 곧 그 가챠 결과일 가능성이
-  // 가장 높으므로(가챠는 항상 3슬롯을 통째로 교체하고, 그 뒤로 굳이 한 슬롯만 수동으로
-  // 다시 바꾸는 경우는 드묾) 한 번만 소급 적용한다 — 위 세 플래그가 전부 기본값(0)일
-  // 때만 매칭되므로 이후 재실행돼도 이미 처리된 행은 다시 안 건드린다.
+  // ── 가챠는 이제 "가상 등급"만 준다 — equipped_weapon/armor/core(실제 아이템 id, 인벤토리
+  // 소유가 있어야 /bots/equip으로만 채울 수 있음)와 완전히 분리된 gacha_*_rarity 3개를 대신
+  // 쓴다("그 봇 자체의 무기가 아예 바뀌면 안 됨" 요청 반영 — 가챠를 돌려도 이 봇에 실제로
+  // "장착된 아이템"은 그대로고, 슬롯별 전투 보너스만 그 등급에 해당하는 값으로 매겨진다).
+  // equipStats에서 실제 장착 아이템이 있으면 그게 우선이고, 없을 때만 이 가상 등급 값을 쓴다.
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_weapon_rarity TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_armor_rarity TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN gacha_core_rarity TEXT"); } catch (e) {}
+  // 예전 가챠(지금 삭제된 weapon_from_gacha 등 플래그로 표시해뒀던)가 실제 equipped_* 칼럼에
+  // 심어놨던 결과를 위 가상 등급 칼럼으로 1회성 이관하고, 그 칼럼들은 비운다 — SHOP_ITEMS
+  // 조회가 필요해 순수 SQL로 못 하고 여기서 JS로 처리한다. gacha_weapon_rarity 등이 이미
+  // 채워진 행은 다시 안 건드리므로(WHERE 조건) 매 콜드스타트마다 재실행돼도 안전하다.
   try {
-    await env.DB.exec(
-      "UPDATE arena_bots SET weapon_from_gacha=1, armor_from_gacha=1, core_from_gacha=1 " +
-      "WHERE gacha_rarity IS NOT NULL AND weapon_from_gacha=0 AND armor_from_gacha=0 AND core_from_gacha=0"
-    );
+    const legacyCols = await env.DB.prepare("PRAGMA table_info(arena_bots)").all();
+    const hasLegacyFlags = legacyCols.results.some(function (c) { return c.name === "weapon_from_gacha"; });
+    if (hasLegacyFlags) {
+      const legacyRows = await env.DB.prepare(
+        "SELECT id, equipped_weapon, equipped_armor, equipped_core, weapon_from_gacha, armor_from_gacha, core_from_gacha " +
+        "FROM arena_bots WHERE (weapon_from_gacha=1 AND gacha_weapon_rarity IS NULL) " +
+        "OR (armor_from_gacha=1 AND gacha_armor_rarity IS NULL) OR (core_from_gacha=1 AND gacha_core_rarity IS NULL)"
+      ).all();
+      if (legacyRows.results.length) {
+        const writes = legacyRows.results.map(function (b) {
+          const wR = (b.weapon_from_gacha && b.equipped_weapon && SHOP_ITEMS[b.equipped_weapon]) ? SHOP_ITEMS[b.equipped_weapon].rarity : null;
+          const aR = (b.armor_from_gacha && b.equipped_armor && SHOP_ITEMS[b.equipped_armor]) ? SHOP_ITEMS[b.equipped_armor].rarity : null;
+          const cR = (b.core_from_gacha && b.equipped_core && SHOP_ITEMS[b.equipped_core]) ? SHOP_ITEMS[b.equipped_core].rarity : null;
+          return env.DB.prepare(
+            "UPDATE arena_bots SET gacha_weapon_rarity=?, gacha_armor_rarity=?, gacha_core_rarity=?, " +
+            "equipped_weapon = CASE WHEN weapon_from_gacha=1 THEN NULL ELSE equipped_weapon END, " +
+            "equipped_armor = CASE WHEN armor_from_gacha=1 THEN NULL ELSE equipped_armor END, " +
+            "equipped_core = CASE WHEN core_from_gacha=1 THEN NULL ELSE equipped_core END WHERE id=?"
+          ).bind(wR, aR, cR, b.id);
+        });
+        await env.DB.batch(writes);
+      }
+    }
   } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_devices (user_id TEXT NOT NULL, device_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
@@ -1602,11 +1624,24 @@ function slotBonus(itemId, wantType, enchantMap, maxLevel) {
   const mult = enchantMap ? enchantMultiplier(enchantMap[itemId], maxLevel) : 1;
   return Math.round(it.value * mult);
 }
+// 봇 가챠의 "가상 등급" 보너스 — 실제 장착 아이템이 없을 때만 쓰인다(equipStats 참고).
+// EQUIP_ITEM_BY_TYPE_RARITY(타입x등급 -> 그 등급의 대표 아이템 id)를 거쳐 그 아이템의
+// value를 그대로 가져온다 — 인챈트는 실제 소유 아이템에만 적용되는 개념이라 여기엔 없다.
+function gachaRarityValue(type, rarity) {
+  if (!rarity) return 0;
+  const id = EQUIP_ITEM_BY_TYPE_RARITY[type] && EQUIP_ITEM_BY_TYPE_RARITY[type][rarity];
+  const it = id ? SHOP_ITEMS[id] : null;
+  return it ? it.value : 0;
+}
+// 봇은 equipped_*(실제 인벤토리 아이템, /bots/equip으로만 채움)이 있으면 그게 항상 우선이고,
+// 없는 슬롯만 가챠로 뽑은 가상 등급(gacha_*_rarity) 값을 대신 쓴다 — 가챠를 아무리 돌려도
+// "그 봇 자체의 무기가 바뀌는" 일은 없고(equipped_weapon은 그대로), 등급에 따른 전투 보너스만
+// 오른다(요청 반영). 플레이어 본인(row)은 gacha_*_rarity 자체가 없어서 항상 0으로 무시된다.
 function equipStats(unit, enchantMap, maxLevel) {
   return {
-    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap, maxLevel),
-    def: slotBonus(unit.equipped_armor, "armor", enchantMap, maxLevel),
-    crit: slotBonus(unit.equipped_core, "core", enchantMap, maxLevel),
+    atk: slotBonus(unit.equipped_weapon, "weapon", enchantMap, maxLevel) || gachaRarityValue("weapon", unit.gacha_weapon_rarity),
+    def: slotBonus(unit.equipped_armor, "armor", enchantMap, maxLevel) || gachaRarityValue("armor", unit.gacha_armor_rarity),
+    crit: slotBonus(unit.equipped_core, "core", enchantMap, maxLevel) || gachaRarityValue("core", unit.gacha_core_rarity),
   };
 }
 
@@ -1623,7 +1658,8 @@ async function totalCombatStats(env, row) {
   // 개편으로 이제 배치 대상 자체가 없어서 사실상 항상 비어있지만, 혹시 남아있는 데이터를
   // 대비해 안전하게 계속 걸러낸다.
   const botsRes = await env.DB.prepare(
-    "SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL"
+    "SELECT equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity " +
+    "FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL"
   ).bind(row.user_id).all();
   const bots = botsRes.results;
   for (const b of bots) {
@@ -1822,17 +1858,11 @@ async function equippedCountMap(env, userId) {
   function bump(id) { if (id) counts[id] = (counts[id] || 0) + 1; }
   const player = await env.DB.prepare("SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_users WHERE user_id = ?").bind(userId).first();
   if (player) { bump(player.equipped_weapon); bump(player.equipped_armor); bump(player.equipped_core); }
-  // 가챠로 채워진 슬롯(weapon_from_gacha 등)은 인벤토리와 완전히 무관하므로 여기 집계에서
-  // 제외한다 — 안 그러면 실제로는 안 가진 아이템이 "이미 장착 중"으로 잡혀서 그 아이템을
-  // 다른 곳(본인/다른 봇)에 진짜로 장착하려 할 때 "여분 없음"으로 막히는 문제가 생긴다.
-  const botsRes = await env.DB.prepare(
-    "SELECT equipped_weapon, equipped_armor, equipped_core, weapon_from_gacha, armor_from_gacha, core_from_gacha FROM arena_bots WHERE user_id = ?"
-  ).bind(userId).all();
-  for (const b of botsRes.results) {
-    if (!b.weapon_from_gacha) bump(b.equipped_weapon);
-    if (!b.armor_from_gacha) bump(b.equipped_armor);
-    if (!b.core_from_gacha) bump(b.equipped_core);
-  }
+  // 가챠 결과(gacha_*_rarity)는 equipped_weapon/armor/core와 완전히 분리된 가상 등급이라
+  // 여기서 셀 필요가 없다 — equipped_*는 이제 항상 /bots/equip으로 채운 실제 인벤토리
+  // 아이템만 가리킨다.
+  const botsRes = await env.DB.prepare("SELECT equipped_weapon, equipped_armor, equipped_core FROM arena_bots WHERE user_id = ?").bind(userId).all();
+  for (const b of botsRes.results) { bump(b.equipped_weapon); bump(b.equipped_armor); bump(b.equipped_core); }
   return counts;
 }
 
@@ -3140,7 +3170,10 @@ export default {
 
       if (request.method === "GET" && path === "/bots") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const botsRes = await env.DB.prepare("SELECT id, equipped_weapon, equipped_armor, equipped_core, recruit_cost, stationed_planet_id, gacha_rarity FROM arena_bots WHERE user_id = ? ORDER BY id").bind(user.userId).all();
+        const botsRes = await env.DB.prepare(
+          "SELECT id, equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity, " +
+          "recruit_cost, stationed_planet_id, gacha_rarity FROM arena_bots WHERE user_id = ? ORDER BY id"
+        ).bind(user.userId).all();
         const ownedRes = await env.DB.prepare("SELECT item_id, qty FROM arena_inventory WHERE user_id = ?").bind(user.userId).all();
         const equippedCount = await equippedCountMap(env, user.userId);
         const rawEntries = ownedRes.results
@@ -3161,6 +3194,14 @@ export default {
             stats: equipStats(b, enchantMap, enchantMaxLvl),
             gachaRarityLabel: b.gacha_rarity ? RARITY_META[b.gacha_rarity].label : null,
             gachaRarityColor: b.gacha_rarity ? RARITY_META[b.gacha_rarity].color : null,
+            // 슬롯별 가상 등급(실제 장착 아이템이 없을 때만 프론트에서 이걸로 표시) — 요청
+            // 반영: 가챠는 이 등급들만 바꾸고 equipped_*(진짜 장착 아이템)는 절대 안 건드린다.
+            gachaWeaponRarityLabel: b.gacha_weapon_rarity ? RARITY_META[b.gacha_weapon_rarity].label : null,
+            gachaWeaponRarityColor: b.gacha_weapon_rarity ? RARITY_META[b.gacha_weapon_rarity].color : null,
+            gachaArmorRarityLabel: b.gacha_armor_rarity ? RARITY_META[b.gacha_armor_rarity].label : null,
+            gachaArmorRarityColor: b.gacha_armor_rarity ? RARITY_META[b.gacha_armor_rarity].color : null,
+            gachaCoreRarityLabel: b.gacha_core_rarity ? RARITY_META[b.gacha_core_rarity].label : null,
+            gachaCoreRarityColor: b.gacha_core_rarity ? RARITY_META[b.gacha_core_rarity].color : null,
           });
         });
         // 경비병 배치 UI(드롭다운) 재료 — 내가 정복한 야생 행성(홈 제외) 목록 + 행성별 현재
@@ -3229,23 +3270,17 @@ export default {
         return json({ ok: true, stationedPlanetId: planetId, planetName: planet.name });
       }
 
-      // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯을 한 번에 랜덤으로
-      //    뽑아서 무조건 새로 장착한다. 예전엔 "새로 뽑은 게 지금 장착된 것보다 등급이 같거나
-      //    높을 때만" 교체했는데, 그 로직 때문에 실제로는 버그가 하나 있었다 — 어비샬 아이템은
-      //    가챠 테이블 자체에 없어서(EQUIP_ITEM_BY_TYPE_RARITY 참고, 최고가 forbidden) 어비샬을
-      //    수동 장착해 둔 슬롯은 그 뒤로 무슨 가챠를 돌려도 "롤 결과가 어비샬 이상일 때만
-      //    교체"라는 조건을 영원히 못 만족해 항상 그대로 어비샬로 남았다. 겉보기엔 "가챠가
-      //    자동으로 어비샬만 뽑는" 것처럼 보이지만 실은 롤 자체는 정상 랜덤이고 결과가 그냥
-      //    무시되고 있었던 것 — 가챠는 순수 랜덤이어야 하고 지금 장착된 것과는 무관해야
-      //    한다는 요청(신고)을 반영해 이 "보호" 로직 자체를 없앴다.
-      //
-      //    ⚠️ 인벤토리는 절대 건드리지 않는다("봇 뽑기를 했을 때 아이템이 절대 얻어지거나
-      //    바뀌면 안 된다" 요청 반영) — 한때 "봇을 되팔아도 장비가 안 사라지게" 가챠 결과를
-      //    인벤토리에도 정식으로 한 벌씩 쌓아준 적이 있었는데, 그러면 가챠 가격(Basic은 겨우
-      //    1,000코인)만 내고 상점가 수십만~수백만 코인짜리 장비를 실제 소유물로 얻어버리는
-      //    구멍이 된다(그 장비를 플레이어 본인이나 다른 봇에도 장착할 수 있으므로). 그래서
-      //    가챠 결과는 이 봇의 equipped_* 칼럼에만 남고 인벤토리와는 완전히 분리된다 — 이
-      //    봇을 되팔면 그 가챠 장비는 그냥 사라진다(더 이상 인벤토리에 보존되지 않음). ──
+      // ── POST /bots/gacha { botId, tier } — 그 봇의 무장/방어/코어 3슬롯의 "가상 등급"을
+      //    한 번에 랜덤으로 다시 뽑는다. ⚠️ 실제 장착 아이템(equipped_weapon/armor/core)은
+      //    이제 여기서 절대 안 건드린다 — "봇 자체의 무기가 아예 바뀌면 안 된다"는 요청을
+      //    두 차례 다른 방식(인벤토리 미지급 → equippedCountMap 제외)으로 고쳐봤는데도 여전히
+      //    "무기가 바뀐다"는 신고가 계속돼서, 애초에 가챠가 실제 아이템 id를 골라 장착시키는
+      //    구조 자체가 문제였다는 걸 확인하고 근본적으로 다시 설계했다. 이제 가챠는 gacha_
+      //    weapon_rarity/armor_rarity/core_rarity(순수 등급 문자열, 인벤토리와 완전 무관)만
+      //    바꾸고, 이 봇의 실제 장착 슬롯은 처음부터 끝까지 오직 /bots/equip으로만 바뀐다.
+      //    전투 보너스는 equipStats가 "실제 장착 아이템이 있으면 그게 우선, 없으면 이 가상
+      //    등급 값"으로 계산한다(gachaRarityValue 참고) — 그래서 가챠를 아무리 돌려도 이
+      //    봇에 "장착된 아이템"이라는 개념 자체는 그대로 유지된다. ──
       if (request.method === "POST" && path === "/bots/gacha") {
         const body = await request.json().catch(function () { return {}; });
         const tierDef = BOT_GACHA_TIERS[body.tier];
@@ -3263,22 +3298,22 @@ export default {
         await env.DB.batch([
           env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id),
           env.DB.prepare(
-            "UPDATE arena_bots SET equipped_weapon=?, equipped_armor=?, equipped_core=?, gacha_rarity=?, " +
-            "weapon_from_gacha=1, armor_from_gacha=1, core_from_gacha=1 WHERE id=?"
-          ).bind(rolled.weapon, rolled.armor, rolled.core, rolled.bestRarity, botId),
+            "UPDATE arena_bots SET gacha_weapon_rarity=?, gacha_armor_rarity=?, gacha_core_rarity=?, gacha_rarity=? WHERE id=?"
+          ).bind(rolled.weaponRarity, rolled.armorRarity, rolled.coreRarity, rolled.bestRarity, botId),
         ]);
 
         return json({
           ok: true, pocketCoins: row.pocket_coins,
-          weapon: rolled.weapon, armor: rolled.armor, core: rolled.core,
+          weaponRarity: rolled.weaponRarity, armorRarity: rolled.armorRarity, coreRarity: rolled.coreRarity,
           bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
         });
       }
 
       // ── POST /bots/sell { botId } — 모집 당시 낸 비용(recruit_cost)의 BOT_SELL_RATE(50%)만
-      //    환불하고 그 봇을 삭제한다. 수동 장착한 장비는 인벤토리 소유 자체를 건드리지 않으므로
-      //    (봇의 equipped_* 참조만 사라짐) 그대로 남아 다른 슬롯에 다시 쓸 수 있다. 가챠로 뽑은
-      //    장비는 애초에 인벤토리에 없던 것(위 /bots/gacha 참고)이라 봇과 함께 그냥 사라진다. ──
+      //    환불하고 그 봇을 삭제한다. 장착돼 있던 장비는 인벤토리 소유 자체를 건드리지 않으므로
+      //    (봇의 equipped_* 참조만 사라짐) 그대로 남아 다른 슬롯에 다시 쓸 수 있다 — 가챠로
+      //    뽑은 등급(gacha_*_rarity)은 애초에 실제 아이템이 아니라 이 봇 전용 값이라 봇과
+      //    함께 그냥 사라지지만, 그건 원래도 "실제로 소유한 적 없는" 값이라 자연스럽다. ──
       if (request.method === "POST" && path === "/bots/sell") {
         const body = await request.json().catch(function () { return {}; });
         const botId = parseInt(body.botId, 10);
@@ -3313,13 +3348,15 @@ export default {
           const botId = parseInt(target, 10);
           const bot = await env.DB.prepare("SELECT id FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
           if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
-          // 이제 진짜 인벤토리 재고로 채우는 슬롯이므로 가챠 플래그를 내린다 — 안 그러면
-          // equippedCountMap이 계속 이 슬롯을 무시해서 실제로 소모된 재고가 반영 안 된다.
-          await env.DB.prepare("UPDATE arena_bots SET " + col + " = ?, " + slot + "_from_gacha = 0 WHERE id = ?").bind(itemId, botId).run();
+          await env.DB.prepare("UPDATE arena_bots SET " + col + " = ? WHERE id = ?").bind(itemId, botId).run();
         }
         return json({ ok: true });
       }
 
+      // ── POST /bots/unequip { target, slot } — 실제 장착 아이템만 뗀다. 이 슬롯에 예전
+      //    가챠 결과(gacha_*_rarity)가 남아있다면(봇 대상일 때) 그 등급 값으로 자동
+      //    되돌아간다(equipStats의 "실제 장착 없으면 가상 등급" 우선순위 참고) — 별도 처리가
+      //    필요 없다. ──
       if (request.method === "POST" && path === "/bots/unequip") {
         const body = await request.json().catch(function () { return {}; });
         const target = body.target;
@@ -3330,7 +3367,7 @@ export default {
           await env.DB.prepare("UPDATE arena_users SET " + col + " = NULL WHERE user_id = ?").bind(user.userId).run();
         } else {
           const botId = parseInt(target, 10);
-          await env.DB.prepare("UPDATE arena_bots SET " + col + " = NULL, " + slot + "_from_gacha = 0 WHERE id = ? AND user_id = ?").bind(botId, user.userId).run();
+          await env.DB.prepare("UPDATE arena_bots SET " + col + " = NULL WHERE id = ? AND user_id = ?").bind(botId, user.userId).run();
         }
         return json({ ok: true });
       }

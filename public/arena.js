@@ -1128,7 +1128,11 @@
       const [data, catalog] = await Promise.all([api("/bots"), getShopCatalog()]);
       botsTabLoadedOnce = true;
 
-      function slotRow(target, slotType, label, equippedId) {
+      // gachaFallback: 실제 장착 아이템이 없을 때만 쓰이는 "가상 등급" 표시({label,color}) —
+      // 봇 가챠는 이제 이 값만 바꾸고 equippedId(진짜 장착 아이템)는 절대 안 건드린다(요청
+      // 반영: "그 봇 자체의 무기가 아예 바뀌면 안 됨"). 드롭다운 옵션/선택 로직은 기존과
+      // 완전히 동일 — 오직 "지금 뭐가 꽂혀 있는지" 표시 줄만 가상 등급을 보여줄 수 있게 했다.
+      function slotRow(target, slotType, label, equippedId, gachaFallback) {
         // data.availableItems는 서버 sortedShopEntries가 등급 오름차순(약한 것부터)으로 내려주는데,
         // 봇 장착 드롭다운에서는 제일 좋은 장비를 훑어보기 편하게 반대로(강한 것부터) 보여준다
         // — 다른 탭(상점/인챈트)에서 쓰는 공용 정렬 함수 자체는 안 건드리고 여기서만 뒤집는다.
@@ -1142,8 +1146,13 @@
         let optionsHtml = '<option value="">— 비어있음 —</option>';
         if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>[' + (currentItem ? currentItem.rarityLabel : "") + "] " + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
         options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">[' + it.rarityLabel + "] " + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
+        // 실제 장착 아이템이 없는데 가챠로 뽑은 가상 등급이 있으면(봇만 해당) "빈 슬롯" 대신
+        // 그 등급을 보여준다 — 실제로는 아무 아이템도 안 꽂혀 있다는 게 헷갈리지 않도록 옆에
+        // 작게 "(가챠 등급, 실제 장착 없음)"이라고 덧붙인다.
+        const gachaNote = !equippedId && gachaFallback
+          ? '<span class="dim" style="color:' + gachaFallback.color + ';margin-left:4px;">[' + gachaFallback.label + " 가챠 등급]</span>" : "";
         return (
-          '<div class="bot-slot slot-' + slotType + '">' + icon + '<span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
+          '<div class="bot-slot slot-' + slotType + '">' + icon + '<span>' + label + gachaNote + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
         );
       }
 
@@ -1216,9 +1225,9 @@
           attrs.tag +
           statLine(b.stats) +
           stationedNote +
-          slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
-          slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
-          slotRow(String(b.id), "core", "코어", b.equipped_core) +
+          slotRow(String(b.id), "weapon", "무장", b.equipped_weapon, b.gachaWeaponRarityLabel ? { label: b.gachaWeaponRarityLabel, color: b.gachaWeaponRarityColor } : null) +
+          slotRow(String(b.id), "armor", "방어", b.equipped_armor, b.gachaArmorRarityLabel ? { label: b.gachaArmorRarityLabel, color: b.gachaArmorRarityColor } : null) +
+          slotRow(String(b.id), "core", "코어", b.equipped_core, b.gachaCoreRarityLabel ? { label: b.gachaCoreRarityLabel, color: b.gachaCoreRarityColor } : null) +
           stationRow(b) +
           gachaRow(b.id) +
           "</div>";
@@ -1258,10 +1267,12 @@
           btn.disabled = true;
           try {
             const r = await api("/bots/gacha", { method: "POST", body: { botId: btn.dataset.gacha, tier: btn.dataset.tier } });
-            // 가챠는 이제 순수 랜덤 — 기존 장비가 뭐였든 상관없이 무장/방어/코어 3슬롯이
-            // 전부 새로 뽑은 걸로 교체된다(예전엔 기존 것보다 안 좋으면 유지했는데, 그 로직이
-            // "어비샬을 달고 있으면 가챠가 영원히 어비샬만 나오는 것처럼 보이는" 버그였음).
-            toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급으로 3슬롯 전부 새로 장착!");
+            // 가챠는 이제 순수 랜덤 — 기존 결과가 뭐였든 상관없이 무장/방어/코어 3슬롯의
+            // "가상 등급"이 전부 새로 뽑힌 걸로 교체된다(예전엔 기존 것보다 안 좋으면
+            // 유지했는데, 그 로직이 "어비샬을 달고 있으면 가챠가 영원히 어비샬만 나오는
+            // 것처럼 보이는" 버그였음). 실제 장착 아이템(equipped_*)은 절대 안 바뀐다 —
+            // 가챠는 그 봇의 등급만 올려줄 뿐 물리적으로 꽂힌 장비는 그대로다.
+            toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급! (실제 장착 장비는 그대로, 등급 보너스만 갱신됨)");
             state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
         });
