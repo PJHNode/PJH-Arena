@@ -539,11 +539,10 @@
   //    수 있게 했다. 필터/더보기는 이미 받아온 목록을 다시 그리기만 할 뿐 서버를 다시 호출하지
   //    않는다 — 캐시가 없을 때만(최초 진입, 공격 후) 네트워크를 탄다. ──
   let galaxyCache = null;
-  let galaxyExpeditionUnlocked = false;
   let galaxyTierFilter = "all", galaxyShowCount = 12;
   const GALAXY_PAGE_SIZE = 12;
-  const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
-  const PLANET_TIER_LABELS = { weak: "약함", medium: "보통", strong: "강함", elite: "정예", nightmare: "악몽", apex: "극한" };
+  const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex", "transcendent"];
+  const PLANET_TIER_LABELS = { weak: "약함", medium: "보통", strong: "강함", elite: "정예", nightmare: "악몽", apex: "극한", transcendent: "초월" };
 
   async function renderGalaxyTab() {
     if (!state) return;
@@ -551,11 +550,10 @@
       const grid = document.querySelector("#panel-galaxy .planet-grid");
       grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
       try {
-        const [planetsData, researchData, targetsData] = await Promise.all([
-          api("/planets"), api("/research").catch(() => null), api("/planets/targets").catch(() => null),
+        const [planetsData, targetsData] = await Promise.all([
+          api("/planets"), api("/planets/targets").catch(() => null),
         ]);
         galaxyCache = planetsData;
-        galaxyExpeditionUnlocked = !!(researchData && researchData.expeditionUnlocked);
         galaxyTargetsCache = targetsData ? targetsData.targets : [];
       } catch (e) {
         grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
@@ -584,16 +582,9 @@
     galaxyNextRerollAt = data.nextRerollAt;
     setText("galaxyNearbyRadius", data.nearbyRadius);
 
-    // 난이도별 등장 개수(48슬롯 중 보장된 수량) + 다음 리롤까지 남은 시간 — 필터 바로 위에
-    // 작은 범례로 보여준다. 예전엔 "확률 %"였는데, 이제 매 리롤마다 정확히 이 개수만큼
-    // 보장되므로(0개가 되는 경우가 없음) "48개 중 N개"로 표시가 바뀌었다(요청 반영).
-    const legendEl = $("galaxyTierLegend");
-    if (legendEl && data.tierMeta) {
-      legendEl.innerHTML = TIER_ORDER_CLIENT.map((key) => {
-        const t = data.tierMeta[key];
-        return '<span class="galaxy-tier-chip">' + t.label + " " + t.count + "/48</span>";
-      }).join("");
-    }
+    // 난이도별 확률/개수 범례는 완전히 없앴다(요청 반영: "위에 뜨는 확률들 싹다 없애줘") —
+    // 대신 아래 은하 지도 시각화(renderStarmap)에서 등급을 색으로 바로 구분해서 보여준다.
+    renderStarmap(data);
 
     function statLine(p) {
       if (!p.combatStats) return "";
@@ -611,14 +602,11 @@
       const attackBtn = !withButton ? "" : p.attackable
         ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
         : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "내 홈 행성" : "내 행성") + "</button>";
-      const expeditionBtn = withButton && p.expeditionEligible && galaxyExpeditionUnlocked
-        ? '<button class="btn-ghost" data-expedition="' + p.id + '" style="margin-top:6px;width:100%;"' + (state.stamina < 2 ? " disabled" : "") + ">🛰️ 원정 보내기 (⚡2)</button>"
-        : "";
       return (
         '<div class="planet-card ' + cls + '">' +
         '<div class="planet-card-name">' + escapeHtml(p.name) + "</div>" +
         '<div class="planet-card-owner">' + ownerLine + "</div>" +
-        tierLine + statLine(p) + rateLine + attackBtn + expeditionBtn +
+        tierLine + statLine(p) + rateLine + attackBtn +
         "</div>"
       );
     }
@@ -704,22 +692,56 @@
       const planet = data.planets.find((p) => String(p.id) === btn.dataset.planet);
       btn.addEventListener("click", () => openPlanetAttackSequence(planet));
     });
-    grid.querySelectorAll("button[data-expedition]").forEach((btn) => {
-      btn.addEventListener("click", () => sendExpedition(btn.dataset.expedition, btn));
-    });
   }
 
-  // ── 원정(오프라인 자동 전투) — 태세/타이밍 미니게임 없이 즉시 서버 판정. 결과는 토스트로
-  //    바로 보여주되, Hack Log에도 남으니 나중에 로그 탭에서 다시 확인할 수 있다. ──
-  async function sendExpedition(planetId, btn) {
-    btn.disabled = true;
-    try {
-      const r = await api("/planets/expedition", { method: "POST", body: { planetId } });
-      const xpNote = " (EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + ")";
-      toast((r.attackerWins ? "🛰️ 원정 성공! " + r.planetName + " (" + r.tierLabel + ") 약탈 +" + fmt(r.lootCoins) + " 코인" : "🛰️ 원정 실패... " + r.planetName) + xpNote, !r.attackerWins);
-      state = r.state; renderHeader();
-      galaxyCache = null; renderGalaxyTab();
-    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  // 등급별 색/점 크기 — 아이템 등급 색과는 다른 계열(행성 tier는 별개 체계)이지만 "오를수록
+  // 화려하게"라는 감각은 그대로 유지했다. transcendent가 가장 크고 은은한 발광까지 붙는다.
+  const STARMAP_TIER_STYLE = {
+    weak: { color: "#6d8590", r: 2.6 }, medium: { color: "#00e07a", r: 2.8 }, strong: { color: "#00d4ff", r: 3.2 },
+    elite: { color: "#b060e8", r: 3.8 }, nightmare: { color: "#ff3d9e", r: 4.4 }, apex: { color: "#ff1744", r: 5 },
+    transcendent: { color: "#e100ff", r: 6.2 },
+  };
+  // ── 은하 지도 시각화 — 내 홈 행성을 중심(150,150)에 두고, 실제 (x,y) 좌표를 지도 반경
+  // 130px 안으로 축소해서 근처 행성들을 점으로 흩뿌린다(요청 반영: "시각적으로 주변
+  // 행성들이 보이면 좋겠는데"). 점을 클릭하면 바로 공격 시퀀스가 열린다. 탐사선이 출발해
+  // 있으면 궤도를 도는 작은 신호를, 도착했으면 경계선 위에서 펄스로 보여준다(요청 반영:
+  // "탐사선이 출발한것과 도착하는것 역시 시각화"). ──
+  function renderStarmap(data) {
+    const svg = $("galaxyStarmap");
+    if (!svg) return;
+    const home = data.myHome || { x: 500, y: 500 };
+    const radius = data.nearbyRadius || 250;
+    const scale = 130 / radius;
+    const cx = 150, cy = 150;
+    const dots = (data.planets || []).filter((p) => !p.isHome).map((p) => {
+      const style = STARMAP_TIER_STYLE[p.botTier] || STARMAP_TIER_STYLE.weak;
+      const dx = ((p.x || 0) - home.x) * scale, dy = ((p.y || 0) - home.y) * scale;
+      const glow = p.botTier === "apex" || p.botTier === "transcendent" ? ' style="filter:drop-shadow(0 0 4px ' + style.color + ')"' : "";
+      return '<circle class="starmap-dot" data-planet="' + p.id + '" cx="' + (cx + dx).toFixed(1) + '" cy="' + (cy + dy).toFixed(1) +
+        '" r="' + style.r + '" fill="' + style.color + '"' + glow + "><title>" + escapeHtml(p.name) + " (" + (p.botTierLabel || "") + ")</title></circle>";
+    }).join("");
+
+    let probeHtml = "";
+    const probe = data.probe;
+    if (probe && probe.targetTier) {
+      const ready = probe.readyAt && Date.now() >= probe.readyAt;
+      probeHtml = ready
+        ? '<circle class="starmap-probe-ready" cx="' + cx + '" cy="' + (cy - 130) + '" r="6" fill="none" stroke="var(--stamina)" stroke-width="2"/>'
+        : '<g class="starmap-probe-ship" style="animation-duration:' + Math.max(4, Math.min(20, Math.round((probe.waitMs || 900000) / 60000))) + 's;">' +
+          '<circle cx="' + cx + '" cy="' + (cy - 130) + '" r="4" fill="var(--stamina)"><title>🛸 ' + escapeHtml(probe.targetTierLabel || "") + " 등급 탐사 중</title></circle></g>";
+    }
+
+    svg.innerHTML =
+      '<circle class="starmap-radius" cx="' + cx + '" cy="' + cy + '" r="130"/>' + dots +
+      '<circle class="starmap-home" cx="' + cx + '" cy="' + cy + '" r="7" fill="var(--accent)"><title>🏠 내 홈 행성</title></circle>' +
+      (probeHtml ? '<g class="starmap-probe">' + probeHtml + "</g>" : "");
+
+    svg.querySelectorAll(".starmap-dot").forEach((dot) => {
+      dot.addEventListener("click", () => {
+        const planet = (galaxyCache.planets || []).find((p) => String(p.id) === dot.dataset.planet);
+        if (planet) openPlanetAttackSequence(planet);
+      });
+    });
   }
 
   let galaxyNextRerollAt = 0;
@@ -735,15 +757,18 @@
     el.textContent = "다음 난이도 리롤까지 " + fmtCountdown(remain);
   }, 1000);
 
-  // 정찰 탐사선 도착 카운트다운 — 도착하면 카운트다운 자리에 "수령하기" 버튼을 보여준다.
+  // 정찰 탐사선 도착 카운트다운 — 도착하면 카운트다운 자리에 "수령하기" 버튼을 보여주고,
+  // 은하 지도의 궤도 신호도 그 순간 한 번만 "도착" 펄스로 바꿔준다(요청 반영: 도착 시각화).
+  let galaxyProbeStarmapFlipped = false;
   setInterval(() => {
-    if (!galaxyProbeReadyAt) return;
+    if (!galaxyProbeReadyAt) { galaxyProbeStarmapFlipped = false; return; }
     const el = $("galaxyProbeCountdown"), btn = $("galaxyProbeCollectBtn");
     if (!el) return;
     const remain = galaxyProbeReadyAt - Date.now();
     if (remain <= 0) {
       el.textContent = "도착!";
       if (btn) btn.style.display = "block";
+      if (!galaxyProbeStarmapFlipped && galaxyCache) { galaxyProbeStarmapFlipped = true; renderStarmap(galaxyCache); }
     } else {
       el.textContent = fmtCountdown(remain);
       if (btn) btn.style.display = "none";
@@ -778,7 +803,7 @@
         id: r.planetId, name: r.planetName, isHome: true, mine: false,
         ownerUserId: r.ownerUserId, ownerName: r.ownerName,
         combatStats: r.combatStats, homeInvulnerable: r.homeInvulnerable, attackable: r.attackable,
-        botTier: null, botTierLabel: null, rewardCoins: 0, expeditionEligible: false,
+        botTier: null, botTierLabel: null, rewardCoins: 0,
       };
       state = r.state; renderHeader();
       renderGalaxyContent();
@@ -1457,7 +1482,8 @@
     $("bankVault").textContent = fmt(state.bankCoins);
   }
 
-  // ── Research — 다이아로 상점 행운/원정(오프라인 자동 전투) 연구를 진행한다. ──
+  // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
+  //    삭제됨 — 요청 반영: "원정 연구를 없애줘"). ──
   // $(id)가 null이어도 조용히 무시한다 — 이 탭의 여러 버튼이 "한 번 해금/맥스가 되면
   // 그 안의 <span>을 통째로 textContent로 갈아치우는" 패턴을 쓰는데(예: "이미 해금됨"),
   // 그러면 그 <span>이 영구히 사라지므로 이후 렌더에서 그 span을 다시 찾으려 하면 null이라
@@ -1495,21 +1521,6 @@
         slotsBtn.disabled = r.diamonds < r.slotsUpgradeCost;
       }
 
-      // 버그 수정: 예전엔 researchExpeditionCost의 textContent를 분기 밖에서 무조건 먼저
-      // 건드렸는데, "이미 해금됨" 분기가 그 안의 <span>을 완전히 지워버리므로(expBtn.textContent
-      // 로 통째로 교체) 원정 연구를 이미 해금한 계정은 이 탭을 열 때마다(버튼을 뭘 눌러도 다시
-      // 그리는 매 순간) 그 span을 못 찾아 에러가 났다. 이제 분기 안에서만 건드린다.
-      const expBtn = $("researchExpeditionUnlockBtn");
-      if (r.expeditionUnlocked) {
-        setText("researchExpeditionTag", "해금됨");
-        expBtn.disabled = true;
-        expBtn.textContent = "이미 해금됨";
-      } else {
-        setText("researchExpeditionTag", "미해금");
-        expBtn.disabled = r.diamonds < r.expeditionUnlockCost;
-        expBtn.innerHTML = "해금하기 (💎 <span id=\"researchExpeditionCost\">" + fmt(r.expeditionUnlockCost) + "</span>)";
-      }
-
       // 영구 EXP 부스터 — 딱 3레벨, 다이아 500/750/1000으로 x1.2/x1.5/x2(환생과 무관하게 처음부터 가능).
       setText("researchExpBoosterLevelTag", "Lv." + r.expBoosterLevel);
       setText("researchExpBoosterCurrent", "x" + r.expBoosterMult);
@@ -1531,7 +1542,7 @@
       const probeBtn = $("researchProbeUpgradeBtn");
       if (r.probeUpgradeCost == null) {
         probeBtn.disabled = true;
-        probeBtn.textContent = "최대 레벨 (극한까지 · 결과 " + r.probeCurrentResultCount + "개)";
+        probeBtn.textContent = "최대 레벨 (" + PLANET_TIER_LABELS[unlockedTiers[unlockedTiers.length - 1]] + "까지 · 결과 " + r.probeCurrentResultCount + "개)";
       } else {
         probeBtn.innerHTML = "연구하기 → " + escapeHtml(r.probeNextTier || "") + " 해금 (💎 <span>" + fmt(r.probeUpgradeCost) + "</span>)";
         probeBtn.disabled = r.diamonds < r.probeUpgradeCost;
@@ -1548,15 +1559,6 @@
         toast("상점 행운 연구 Lv." + r.shopLevel + " 달성!");
         renderResearchTab();
       } catch (e) { toast(e.message, true); upBtn.disabled = false; }
-    });
-    const expBtn = $("researchExpeditionUnlockBtn");
-    if (expBtn) expBtn.addEventListener("click", async () => {
-      expBtn.disabled = true;
-      try {
-        const r = await api("/research/expedition-unlock", { method: "POST" });
-        toast("🛰️ 원정 연구 해금 완료!");
-        renderResearchTab();
-      } catch (e) { toast(e.message, true); expBtn.disabled = false; }
     });
     const slotsBtn = $("researchSlotsUpgradeBtn");
     if (slotsBtn) slotsBtn.addEventListener("click", async () => {

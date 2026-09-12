@@ -677,8 +677,6 @@ const BOUNTY_TEMPLATES = [
   { id: "b_pvp_4",        label: "PvP 침투 성공 4회",         counterKey: "pvp_win",       goal: 4, coin: 4200,  xpPct: 0.12 },
   { id: "b_planet_2",     label: "행성 공격 성공 2회",         counterKey: "planet_win",    goal: 2, coin: 1800,  xpPct: 0.06 },
   { id: "b_planet_3",     label: "행성 공격 성공 3회",         counterKey: "planet_win",    goal: 3, coin: 3200,  xpPct: 0.10 },
-  { id: "b_expedition_3", label: "원정 성공 3회",             counterKey: "expedition_win", goal: 3, coin: 1500,  xpPct: 0.05 },
-  { id: "b_expedition_6", label: "원정 성공 6회",             counterKey: "expedition_win", goal: 6, coin: 3000,  xpPct: 0.09 },
   { id: "b_trade_1",      label: "거래 완료 1회",             counterKey: "trade",         goal: 1, coin: 700,   xpPct: 0.02 },
 ];
 function bountyBoardFor(userId, bucket) {
@@ -692,14 +690,13 @@ function bountyBoardFor(userId, bucket) {
 }
 async function bountyProgressCounts(env, userId, bucketStart) {
   const res = await env.DB.prepare(
-    "SELECT kind, result FROM arena_logs WHERE user_id = ? AND created_at >= ? AND kind IN ('job','pvp_attack','planet_attack','planet_expedition','trade')"
+    "SELECT kind, result FROM arena_logs WHERE user_id = ? AND created_at >= ? AND kind IN ('job','pvp_attack','planet_attack','trade')"
   ).bind(userId, bucketStart).all();
-  const counts = { job: 0, pvp_win: 0, planet_win: 0, expedition_win: 0, trade: 0 };
+  const counts = { job: 0, pvp_win: 0, planet_win: 0, trade: 0 };
   res.results.forEach(function (r) {
     if (r.kind === "job") counts.job++;
     else if (r.kind === "pvp_attack" && (r.result === "win" || r.result === "crit")) counts.pvp_win++;
     else if (r.kind === "planet_attack" && r.result === "win") counts.planet_win++;
-    else if (r.kind === "planet_expedition" && r.result === "win") counts.expedition_win++;
     else if (r.kind === "trade") counts.trade++;
   });
   return counts;
@@ -739,7 +736,6 @@ async function recordWarScoreIfHostile(env, attackerUserId, defenderUserId) {
     ]);
   }
 }
-const RESEARCH_EXPEDITION_UNLOCK_COST = 300; // 원정(오프라인 자동 전투) 연구 — 다이아로 1회 해금(x15)
 const STARTING_ENERGY = BASE_MAX_ENERGY;
 
 // 경비병 시스템이 생기면서 봇 하나가 "내 전투력용"과 "행성 방어용"을 놓고 경합하게 됐다 —
@@ -894,29 +890,36 @@ const HOME_PLANET_BREACH_CONFISCATE_RATE = 0.20;
 // 정당하다는 판단. 이제 흔한 등급(약함/보통)도 Property 중상위 기기와 맞먹고, 정예 이상은
 // Property 최상위권과 경쟁한다. 전투력/등장 확률은 그대로.
 const PLANET_BOT_TIERS = {
-  weak:      { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 5625,    weight: 0.40 },
-  medium:    { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 18750,   weight: 0.30 },
-  strong:    { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 60000,   weight: 0.20 },
-  elite:     { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 150000,  weight: 0.08 },
-  nightmare: { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 375000,  weight: 0.015 },
-  apex:      { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 1050000, weight: 0.005 },
+  weak:         { label: "약함", atk: 18,   def: 15,   crit: 5,  coinsPerHour: 5625,    weight: 0.40 },
+  medium:       { label: "보통", atk: 55,   def: 48,   crit: 10, coinsPerHour: 18750,   weight: 0.30 },
+  strong:       { label: "강함", atk: 140,  def: 120,  crit: 15, coinsPerHour: 60000,   weight: 0.20 },
+  elite:        { label: "정예", atk: 320,  def: 280,  crit: 20, coinsPerHour: 150000,  weight: 0.08 },
+  nightmare:    { label: "악몽", atk: 750,  def: 650,  crit: 28, coinsPerHour: 375000,  weight: 0.015 },
+  apex:         { label: "극한", atk: 1800, def: 1600, crit: 35, coinsPerHour: 1050000, weight: 0.005 },
+  // "초월 단계를 하나 만들어줘. 극한보다 더 강하게" 요청 반영 — 극한 다음 단계, 게임에서
+  // 가장 희귀하고 강한 등급. weight는 표시용 참고치일 뿐 실제 등장은 확률이 아니라
+  // PLANET_TIER_GUARANTEED_COUNTS의 보장 개수(1/48)로 정해진다.
+  transcendent: { label: "초월", atk: 3200, def: 2850, crit: 42, coinsPerHour: 1900000, weight: 0.002 },
 };
-const PLANET_TIER_ORDER = ["weak", "medium", "strong", "elite", "nightmare", "apex"];
+const PLANET_TIER_ORDER = ["weak", "medium", "strong", "elite", "nightmare", "apex", "transcendent"];
 
 // ── 정찰 탐사선(Scout Probe) — "코인 에너지를 내고 보내면 일정 시간 뒤 결과를 알려주는
 // 액션, 탐사선 자체를 연구로 업그레이드해야 더 좋고 많은 행성을 찾을 수 있다" 요청 반영.
 // 레벨 0(기본)은 strong까지만 노릴 수 있고, 연구(다이아)로 레벨을 올릴 때마다 한 단계
-// 위 등급을 노릴 수 있게 되며 도착 시간도 짧아진다 — 레벨 3(최대)에서는 극한까지 노릴 수
+// 위 등급을 노릴 수 있게 되며 도착 시간도 짧아진다 — 레벨 4(최대)에서는 초월까지 노릴 수
 // 있고 한 번에 2개를 찾아온다("더 많은" 요청 반영). 한 번에 탐사선 하나만 보낼 수 있다
 // (probe_target_tier가 있으면 새로 못 보냄) — "작고 상한 있게" 원칙과 동일.
-const PROBE_MAX_LEVEL = 4; // 레벨 0~3
+const PROBE_MAX_LEVEL = 5; // 레벨 0~4
 const PROBE_LEVELS = [
-  { unlockTier: "strong",    waitMs: 30 * 60 * 1000, resultCount: 1 },
-  { unlockTier: "elite",     waitMs: 25 * 60 * 1000, resultCount: 1 },
-  { unlockTier: "nightmare", waitMs: 20 * 60 * 1000, resultCount: 1 },
-  { unlockTier: "apex",      waitMs: 15 * 60 * 1000, resultCount: 2 },
+  { unlockTier: "strong",       waitMs: 30 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "elite",        waitMs: 25 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "nightmare",    waitMs: 20 * 60 * 1000, resultCount: 1 },
+  { unlockTier: "apex",         waitMs: 15 * 60 * 1000, resultCount: 2 },
+  { unlockTier: "transcendent", waitMs: 12 * 60 * 1000, resultCount: 2 },
 ];
-const PROBE_UPGRADE_COSTS = [2000, 8000, 30000]; // 인덱스 = 현재 레벨(0→1, 1→2, 2→3 비용), 다이아
+// "정찰 탐사선 업그레이드를 다이아 600개에서 시작하도록" 요청 반영 — 첫 업그레이드 비용을
+// 2000 → 600으로 낮추고, 이후 단계도 같은 성장 비율(약 4배 → 3.75배)로 다시 맞췄다.
+const PROBE_UPGRADE_COSTS = [600, 2400, 9000, 30000]; // 인덱스 = 현재 레벨(0→1 … 3→4 비용), 다이아
 function probeUpgradeCost(level) { return level >= PROBE_MAX_LEVEL - 1 ? null : PROBE_UPGRADE_COSTS[level]; }
 function probeLevelInfo(level) { return PROBE_LEVELS[Math.min(Math.max(level || 0, 0), PROBE_MAX_LEVEL - 1)]; }
 function probeUnlockedTiers(level) {
@@ -925,12 +928,13 @@ function probeUnlockedTiers(level) {
 }
 // 노릴 등급이 높을수록 탐사 비용(코인+에너지)도 커진다.
 const PROBE_LAUNCH_COST = {
-  weak:      { coins: 1000,   energy: 10 },
-  medium:    { coins: 3000,   energy: 12 },
-  strong:    { coins: 8000,   energy: 15 },
-  elite:     { coins: 30000,  energy: 20 },
-  nightmare: { coins: 100000, energy: 28 },
-  apex:      { coins: 350000, energy: 35 },
+  weak:         { coins: 1000,   energy: 10 },
+  medium:       { coins: 3000,   energy: 12 },
+  strong:       { coins: 8000,   energy: 15 },
+  elite:        { coins: 30000,  energy: 20 },
+  nightmare:    { coins: 100000, energy: 28 },
+  apex:         { coins: 350000, energy: 35 },
+  transcendent: { coins: 900000, energy: 45 },
 };
 
 // ── 경비병(행성 배치 봇) — 봇 구역/사람 구역 개편으로 야생 행성을 아예 소유할 수 없어지면서
@@ -939,10 +943,12 @@ const PROBE_LAUNCH_COST = {
 // 소유한 야생 행성" 목록이 항상 비어있으므로 자연히 아무도 실제로는 쓸 수 없는 상태다.
 const PLANET_GARRISON_MAX_PER_PLANET = 3;
 const PLANET_NAME_PREFIXES = ["Nova", "Zenith", "Vortex", "Cinder", "Helix", "Obsidian", "Quasar", "Drift", "Ember", "Static", "Neon", "Glitch", "Rogue", "Nexus", "Eclipse", "Fracture"];
-// 아직 아무도 정복하지 않은 행성은 15분마다 난이도가 통째로 리롤된다(슬롯 번호+시간 구간으로
-// 시드하는 결정론적 뽑기라 저장 없이 매번 다시 계산해도 같은 결과가 나온다) — 정복되고 나면
-// bot_tier가 NULL이 되면서 리롤 대상에서 완전히 빠진다(그때부턴 주인의 실제 전투력이 곧 난이도).
-const PLANET_REROLL_MS = 15 * 60 * 1000;
+// "난이도 리롤은 없애줘 ... 10시간마다 한번씩 주변 행성들이 랜덤하게 물갈이" 요청 반영 —
+// 예전의 잦은(15분) 리롤을 없애고 10시간에 한 번만 통째로 물갈이되도록 늘렸다(슬롯 번호+
+// 시간 구간으로 시드하는 결정론적 뽑기라 저장 없이 매번 다시 계산해도 같은 결과가 나오는
+// 방식은 그대로) — 정복되고 나면 bot_tier가 NULL이 되면서 리롤 대상에서 완전히 빠진다
+// (그때부턴 주인의 실제 전투력이 곧 난이도, 봇 구역 개편 이후로는 사실상 도달 불가 상태).
+const PLANET_REROLL_MS = 10 * 60 * 60 * 1000;
 function planetRerollBucket(nowMs) { return Math.floor((nowMs || Date.now()) / PLANET_REROLL_MS); }
 function pickTierFromRng(rng) {
   const r = rng();
@@ -962,7 +968,7 @@ function pickTierFromRng(rng) {
 // 요청대로 이 덱은 유저 아이디까지 시드에 넣어 사람마다 독립적으로 섞인다 — 같은 슬롯
 // 번호라도 사람마다 다른 난이도로 보일 수 있지만(서로 비교/공유할 이유가 없는 PVE 콘텐츠라
 // 문제 없음), 한 사람 입장에서는 같은 15분 구간 내내 항상 같은 결과가 나온다(결정론적).
-const PLANET_TIER_GUARANTEED_COUNTS = { weak: 19, medium: 14, strong: 9, elite: 4, nightmare: 1, apex: 1 };
+const PLANET_TIER_GUARANTEED_COUNTS = { weak: 18, medium: 14, strong: 9, elite: 4, nightmare: 1, apex: 1, transcendent: 1 };
 // userId 같은 문자열을 정수 시드로 바꾸는 간단한 해시(FNV-1a 변형).
 function hashSeedFromString(str) {
   let h = 2166136261;
@@ -1688,7 +1694,6 @@ function applyXpAndLevel(row, xpGain) {
 function xpPct(row, pct) { return Math.max(1, Math.round(nextExpFor(row.level) * pct * expBoosterMult(row))); }
 const PVP_WIN_XP_PCT = 0.06, PVP_LOSE_XP_PCT = 0.015;
 const PLANET_WIN_XP_PCT = 0.06, PLANET_LOSE_XP_PCT = 0.015;
-const EXPEDITION_WIN_XP_PCT = 0.04, EXPEDITION_LOSE_XP_PCT = 0.01; // 오프라인 자동 원정이라 살짝 낮게
 const ACHIEVEMENT_CLAIM_XP_PCT = 0.15; // 1회성 업적 청구 — 큰 보상
 const DAILY_QUEST_CLAIM_XP_PCT = 0.05; // 오늘의 미션 3종, 각각
 const ATTENDANCE_XP_PCT = 0.04;
@@ -1965,10 +1970,9 @@ async function equippedCountMap(env, userId) {
   return counts;
 }
 
-// ── 행성 전투 판정 — /planets/attack(직접, 태세+타이밍 미니게임)과 /planets/expedition(연구로
-//    해금하는 오프라인 자동 전투, 중립 태세+평균 타이밍으로 대신 계산)이 완전히 같은 판정
-//    로직을 쓴다. attacker의 stamina/hp/pocket_coins는 여기서 갱신하지 않는다(호출부가 검증
-//    후 직접 persist) — 이 함수는 순수하게 "싸우면 어떻게 되는지"만 계산+정복/약탈 반영. ──
+// ── 행성 전투 판정 — /planets/attack(태세+타이밍 미니게임)의 판정 로직. attacker의
+//    stamina/hp/pocket_coins는 여기서 갱신하지 않는다(호출부가 검증 후 직접 persist) —
+//    이 함수는 순수하게 "싸우면 어떻게 되는지"만 계산+약탈 반영. ──
 async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores) {
   const stance = STANCES[stanceId];
   // 봇 구역/사람 구역 개편 이후로는 딱 두 경우뿐이다 — is_home이 아니면 무조건 봇 구역
@@ -3683,8 +3687,6 @@ export default {
           rarityChances: rarityChances,
           rarityLabels: Object.fromEntries(RARITY_ORDER.map(function (r) { return [r, RARITY_META[r].label]; })),
           rarityColors: Object.fromEntries(RARITY_ORDER.map(function (r) { return [r, RARITY_META[r].color]; })),
-          expeditionUnlocked: !!row.research_expedition_unlocked,
-          expeditionUnlockCost: RESEARCH_EXPEDITION_UNLOCK_COST,
           slotsLevel: row.research_shop_slots_level || 0,
           slotsMaxLevel: RESEARCH_SLOTS_MAX_LEVEL,
           slotsCurrentMin: effectiveMinShopItems(row.research_shop_slots_level),
@@ -3719,18 +3721,9 @@ export default {
         return json({ ok: true, diamonds: row.diamonds, shopLevel: row.research_shop_level, nextCost: researchShopUpgradeCost(row.research_shop_level) });
       }
 
-      // ── POST /research/expedition-unlock — 다이아 1회 소모로 "원정"(오프라인 자동 전투)을
-      //    영구 해금한다. 해금되면 Galaxy Map에서 정예/악몽/극한 등급 행성에 원정을 보낼 수
-      //    있다(태세 선택도 타이밍 미니게임도 없이 서버가 즉시 판정 — 그 자리에 없어도 됨). ──
-      if (request.method === "POST" && path === "/research/expedition-unlock") {
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
-        if (row.research_expedition_unlocked) return json({ error: "이미 해금했습니다." }, 400);
-        if (row.diamonds < RESEARCH_EXPEDITION_UNLOCK_COST) return json({ error: "다이아가 부족합니다. (필요 " + RESEARCH_EXPEDITION_UNLOCK_COST + ")" }, 400);
-        row.diamonds -= RESEARCH_EXPEDITION_UNLOCK_COST;
-        row.research_expedition_unlocked = 1;
-        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_expedition_unlocked=1 WHERE user_id=?").bind(row.diamonds, row.user_id).run();
-        return json({ ok: true, diamonds: row.diamonds, expeditionUnlocked: true });
-      }
+      // POST /research/expedition-unlock 및 POST /planets/expedition은 삭제됐다(요청 반영:
+      // "원정 연구를 없애줘") — research_expedition_unlocked 컬럼 자체는 그냥 둔다(제거해도
+      // 득 될 게 없고 DB 컬럼 삭제는 되돌리기 번거로움).
 
       // ── POST /research/slots-upgrade — 다이아를 써서 상점에 뜨는 최소 진열 개수를 레벨당 1개
       //    늘린다(RESEARCH_SLOTS_MAX_LEVEL에서 상한). 행운 연구(등급 확률)와는 완전히 별개 축 —
@@ -4048,22 +4041,9 @@ export default {
             rewardCoins: rewardCoins,
             homeInvulnerable: homeInvulnerable,
             attackable: !mine && !homeInvulnerable,
-            expeditionEligible: !!(tierKey && ["elite", "nightmare", "apex"].indexOf(tierKey) !== -1),
+            x: p.x, y: p.y, // 시각적 은하 지도용 좌표(요청 반영: "시각적으로 주변 행성들이 보이면")
           };
         });
-        const tierMeta = {};
-        const deckSize = Object.values(PLANET_TIER_GUARANTEED_COUNTS).reduce(function (a, b) { return a + b; }, 0);
-        for (const key in PLANET_BOT_TIERS) {
-          const t = PLANET_BOT_TIERS[key];
-          // weight는 이제 "확률"이 아니라 48슬롯 중 보장된 개수의 비율이다(요청 반영: 확률
-          // 대신 정확한 개수로 바꿈) — 프론트는 그대로 %로 보여주면 되고, 값 자체가 항상
-          // 정확히 이 비율만큼 존재함을 뜻한다(0개가 되는 경우가 없음).
-          tierMeta[key] = {
-            label: t.label, weight: (PLANET_TIER_GUARANTEED_COUNTS[key] || 0) / deckSize,
-            count: PLANET_TIER_GUARANTEED_COUNTS[key] || 0,
-            atk: t.atk, def: t.def, crit: t.crit, rewardCoins: Math.round(t.coinsPerHour * 0.5),
-          };
-        }
         // 정찰 탐사선 현재 상태 — 연구 레벨이 정하는 해금 등급/도착시간/결과개수 + 지금 출발해
         // 있는 탐사선이 있다면 그 목표 등급/도착 시각(프론트가 카운트다운 표시용으로 씀).
         const probeLevel = meRow.research_probe_level || 0;
@@ -4079,9 +4059,10 @@ export default {
         };
         return json({
           planets: planets, stances: STANCES,
-          tierMeta: tierMeta, nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
+          nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
           homeInvulnerableLevel: HOME_PLANET_INVULNERABLE_UNTIL_LEVEL,
           nearbyRadius: PLANET_NEARBY_RADIUS, galaxySize: PLANET_GALAXY_SIZE,
+          myHome: { x: myHome.x, y: myHome.y },
           probe: probe,
         });
       }
@@ -4166,7 +4147,7 @@ export default {
               id: p.id, name: p.name, isHome: false, botTier: targetTier, botTierLabel: t.label,
               combatStats: { atk: t.atk, def: t.def, crit: t.crit },
               rewardCoins: Math.round(t.coinsPerHour * 0.5),
-              attackable: true, expeditionEligible: ["elite", "nightmare", "apex"].indexOf(targetTier) !== -1,
+              attackable: true,
             };
           }),
           state: publicState(row, combat),
@@ -4307,59 +4288,6 @@ export default {
           planetName: planet.name, isHome: !!planet.is_home,
           rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
           myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
-          state: publicState(attacker, combat),
-        });
-      }
-
-      // ── POST /planets/expedition { planetId } — 연구로 해금한 "원정": 정예/악몽/극한 등급
-      //    PVE 행성에 한해 태세 선택도 타이밍 미니게임도 없이(중립 태세 "기습형" + 평균 정확도
-      //    70점 고정) 서버가 즉시 판정한다. 자리에 없어도 보낼 수 있고, 결과는 Hack Log
-      //    최상단(created_at DESC라 자동으로 그렇게 됨)에서 돌아왔을 때 확인한다. ──
-      if (request.method === "POST" && path === "/planets/expedition") {
-        const body = await request.json().catch(function () { return {}; });
-        const planetId = parseInt(body.planetId, 10);
-
-        const attacker = await loadOrCreateUser(env, user.userId, user.realName);
-        if (!attacker.research_expedition_unlocked) return json({ error: "원정 연구를 먼저 해금하세요." }, 400);
-        if (attacker.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
-        // Galaxy Map 원정도 공격과 마찬가지로 쿨타임 없음(요청 반영).
-        if (attacker.stamina < PLANET_ATTACK_STAMINA_COST) return json({ error: "스태미나가 부족합니다." }, 400);
-
-        const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
-        if (!planet) return json({ error: "존재하지 않는 행성입니다." }, 404);
-        if (planet.is_home) return json({ error: "홈 행성은 공격할 수 없습니다." }, 400);
-        if (planet.owner_user_id) return json({ error: "원정은 PVE 행성(봇이 지키는 곳)에서만 가능합니다." }, 400);
-
-        const tierKey = effectivePlanetTier(user.userId, planet.slot_index, Date.now());
-        if (["elite", "nightmare", "apex"].indexOf(tierKey) === -1) {
-          return json({ error: "원정은 정예 이상 등급(정예/악몽/극한) 행성에서만 가능합니다." }, 400);
-        }
-
-        const stanceId = "ambush";
-        const timingScores = [70, 70, 70]; // 사람이 직접 안 하니 평균적인 정확도로 고정
-        const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
-        if (result.error) return json({ error: result.error }, 400);
-
-        // 원정은 사람이 직접 안 하는 자동 전투라 같은 승패라도 일반 공격보다 경험치를
-        // 살짝 낮게 준다(EXPEDITION_*_XP_PCT). 나머지 원칙은 위 /planets/attack과 동일.
-        const xpGain = Math.round(xpPct(attacker, result.attackerWins ? EXPEDITION_WIN_XP_PCT : EXPEDITION_LOSE_XP_PCT) * activityBoostMult(attacker));
-        const leveledUp = applyXpAndLevel(attacker, xpGain);
-
-        attacker.stamina -= PLANET_ATTACK_STAMINA_COST;
-        await env.DB.prepare(
-          "UPDATE arena_users SET stamina=?, energy=?, hp=?, pocket_coins=?, last_stance=?, xp=?, level=?, stat_points=?, " +
-          "last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, last_attack_at=? WHERE user_id=?"
-        ).bind(attacker.stamina, attacker.energy, attacker.hp, attacker.pocket_coins, stanceId, attacker.xp, attacker.level, attacker.stat_points,
-               attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
-
-        await insertLog(env, attacker.user_id, "planet_expedition", null, planet.name,
-          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
-
-        const combat = await totalCombatStats(env, attacker);
-        return json({
-          ok: true, attackerWins: result.attackerWins, sweep: result.sweep, lootCoins: result.lootCoins,
-          xpGained: xpGain, leveledUp: leveledUp,
-          planetName: planet.name, tierLabel: PLANET_BOT_TIERS[tierKey].label,
           state: publicState(attacker, combat),
         });
       }

@@ -471,9 +471,20 @@
   .galaxy-target-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 11px; color: var(--text); cursor: pointer; font-family: var(--font-mono); }
   .galaxy-target-chip:hover { border-color: var(--accent); color: var(--accent); }
   .galaxy-legend-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
-  .galaxy-tier-legend { display: flex; gap: 6px; flex-wrap: wrap; }
-  .galaxy-tier-chip { font-size: 9px; color: var(--sub); background: var(--surface-2); border: 1px solid var(--border); padding: 3px 8px; }
   .galaxy-reroll-countdown { font-size: 10px; color: var(--sub); }
+  /* ── 은하 지도 시각화 — "시각적으로 주변 행성들이 보이면 좋겠는데" 요청 반영. 내 홈
+     행성을 중심에 두고, 실제 (x,y) 좌표 기반으로 근처 행성들을 점으로 흩뿌려 보여준다. ── */
+  .galaxy-starmap-wrap { background: radial-gradient(circle at 50% 50%, rgba(0,255,157,0.05), transparent 70%), var(--surface); border: 1px solid var(--border); margin-bottom: 14px; padding: 8px; }
+  .galaxy-starmap { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; }
+  .starmap-home { filter: drop-shadow(0 0 6px var(--accent)); }
+  .starmap-radius { fill: none; stroke: var(--border); stroke-dasharray: 3 3; }
+  .starmap-dot { cursor: pointer; stroke: rgba(0,0,0,0.4); stroke-width: 0.5; transition: r 0.15s ease; }
+  .starmap-dot:hover { stroke: #fff; stroke-width: 1; }
+  .starmap-probe { pointer-events: none; }
+  .starmap-probe-ship { animation: starmapProbeOrbit linear infinite; transform-origin: 150px 150px; }
+  @keyframes starmapProbeOrbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .starmap-probe-ready { animation: starmapProbePulse 1s ease-in-out infinite; }
+  @keyframes starmapProbePulse { 0%, 100% { opacity: 0.6; r: 5; } 50% { opacity: 1; r: 8; } }
   .planet-card-combat { font-size: 10px; color: var(--sub); margin-bottom: 4px; }
   .galaxy-filter-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
   .galaxy-filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -754,12 +765,14 @@
           <div class="galaxy-empire-grid" id="galaxyProbeResult"></div>
         </div>
 
-        <div class="galaxy-legend-row">
-          <div class="galaxy-tier-legend" id="galaxyTierLegend"></div>
+        <div class="galaxy-legend-row" style="justify-content:flex-end;">
           <div class="galaxy-reroll-countdown" id="galaxyRerollCountdown"></div>
         </div>
 
         <p class="panel-subtitle">🤖 봇 구역 — 내 홈 행성 근처(PVE 전용, 절대 고갈되지 않음)</p>
+        <div class="galaxy-starmap-wrap">
+          <svg id="galaxyStarmap" class="galaxy-starmap" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
         <div class="galaxy-filter-bar">
           <div class="galaxy-filter-group" data-filter-group="tier">
             <button class="galaxy-filter-btn active" data-tier="all">전체 난이도</button>
@@ -769,6 +782,7 @@
             <button class="galaxy-filter-btn" data-tier="elite">정예</button>
             <button class="galaxy-filter-btn" data-tier="nightmare">악몽</button>
             <button class="galaxy-filter-btn" data-tier="apex">극한</button>
+            <button class="galaxy-filter-btn" data-tier="transcendent">초월</button>
           </div>
         </div>
 
@@ -873,11 +887,6 @@
           <p class="dim">상점 최소 진열 개수 영구 증가(등급 확률과는 무관) · 현재 최소 <b id="researchSlotsCurrent">8</b>개.</p>
           <button class="btn-primary" id="researchSlotsUpgradeBtn">연구하기 (💎 <span id="researchSlotsCost">15</span>)</button>
         </div>
-        <div class="research-node">
-          <div class="research-node-title">🛰️ 원정 연구 <span class="research-level-tag" id="researchExpeditionTag">미해금</span></div>
-          <p class="dim">정예 이상 행성에 자동 원정 해금(오프라인 가능) · 결과는 Hack Log에서 확인.</p>
-          <button class="btn-primary" id="researchExpeditionUnlockBtn">해금하기 (💎 <span id="researchExpeditionCost">300</span>)</button>
-        </div>
         <div class="research-node" id="researchExpBoosterNode">
           <div class="research-node-title">🧪 영구 EXP 부스터 <span class="research-level-tag" id="researchExpBoosterLevelTag">Lv.0</span></div>
           <p class="dim">모든 경험치 획득에 영구 배율 적용(현재 <b id="researchExpBoosterCurrent">x1</b>) · 최대 3레벨(x1.2 → x1.5 → x2).</p>
@@ -888,7 +897,7 @@
           <p class="dim">Galaxy Map에서 홈 행성 근처가 아닌 먼 행성을 등급 지정해서 찾아오는 탐사선을 업그레이드한다.
             레벨이 오를수록 노릴 수 있는 최고 등급이 풀리고(현재 <b id="researchProbeUnlockedTier">약함</b>까지),
             도착 시간도 짧아지며 최고 레벨에서는 한 번에 <b id="researchProbeResultCount">1</b>개를 찾아온다.</p>
-          <button class="btn-primary" id="researchProbeUpgradeBtn">연구하기 (💎 <span id="researchProbeCost">2000</span>)</button>
+          <button class="btn-primary" id="researchProbeUpgradeBtn">연구하기 (💎 <span id="researchProbeCost">600</span>)</button>
         </div>
       </div>
 
