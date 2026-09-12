@@ -42,13 +42,13 @@
     apex:      { minLevel: 28, energyCost: 32,   coinMin: 22500, coinMax: 30000, xp: 180 },
     legendary: { minLevel: 35, energyCost: 44,   coinMin: 37500,  coinMax: 51000,  xp: 260 },
     mythic:    { minLevel: 45,  energyCost: 64,  coinMin: 60000,  coinMax: 82500,  xp: 380 },
-    secret:    { minLevel: 60,  energyCost: 100, coinMin: 97500,  coinMax: 135000, xp: 550 },
-    forbidden: { minLevel: 75,  energyCost: 144, coinMin: 157500, coinMax: 217500, xp: 800 },
-    abyssal:   { minLevel: 100, energyCost: 233, coinMin: 255000, coinMax: 352500, xp: 1200 },
-    voidwalker:  { minLevel: 150, energyCost: 475,  coinMin: 400000,  coinMax: 560000,  xp: 1900 },
-    singularity: { minLevel: 200, energyCost: 800,  coinMin: 650000,  coinMax: 900000,  xp: 3050 },
-    omega:       { minLevel: 250, energyCost: 1208, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
-    genesis:     { minLevel: 300, energyCost: 1700, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
+    secret:    { minLevel: 60,  energyCost: 100, coinMin: 108000, coinMax: 150000, xp: 610 },
+    forbidden: { minLevel: 75,  energyCost: 144, coinMin: 200000, coinMax: 275000, xp: 1000 },
+    abyssal:   { minLevel: 100, energyCost: 233, coinMin: 395000, coinMax: 545000, xp: 1850 },
+    voidwalker:  { minLevel: 150, energyCost: 475,  coinMin: 830000,  coinMax: 1165000, xp: 3950 },
+    singularity: { minLevel: 200, energyCost: 800,  coinMin: 1650000, coinMax: 2285000, xp: 7750 },
+    omega:       { minLevel: 250, energyCost: 1208, coinMin: 3055000, coinMax: 4230000, xp: 14400 },
+    genesis:     { minLevel: 300, energyCost: 1700, coinMin: 5445000, coinMax: 7530000, xp: 25600 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }

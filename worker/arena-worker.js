@@ -182,6 +182,11 @@ function rebirthStonesForCount(newCount) { return 15 + Math.max(1, newCount) * 5
 // 10레벨 구간마다 지급량 자체가 2씩 늘어나므로(statPointsForLevel 참고) 누적치는 선형보다
 // 가파르게 커지고, 그만큼 고레벨 작업의 에너지 요구량도 예전보다 훨씬 커졌다(예: Abyssal
 // 98 → 233, Genesis 160 → 1700).
+//
+// energyCost가 옛값보다 늘어난 등급(secret 이상)은 "그 대신 보상도 늘어나야" 요청 반영 —
+// 완전히 비례(늘어난 배수 그대로)는 아니고, 그 배수의 제곱근만큼만 coinMin/coinMax/xp를
+// 올렸다(예: Genesis는 에너지가 10.6배 늘었지만 보상은 √10.6 ≈ 3.26배만). 에너지가
+// 오히려 줄어든 등급(apex 이하)은 이미 효율이 좋아졌으니 보상은 그대로 둔다.
 const JOB_TIERS = {
   trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 1,    coinMin: 600,   coinMax: 900,   xp: 8 },
   low:       { label: "Low",       minLevel: 1,  energyCost: 1,    coinMin: 1500,  coinMax: 2250,  xp: 15 },
@@ -198,18 +203,18 @@ const JOB_TIERS = {
   apex:      { label: "Apex",      minLevel: 28, energyCost: 32,   coinMin: 22500, coinMax: 30000, xp: 180 },
   legendary: { label: "Legendary", minLevel: 35, energyCost: 44,   coinMin: 37500,  coinMax: 51000,  xp: 260 },
   mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 64,  coinMin: 60000,  coinMax: 82500,  xp: 380 },
-  secret:    { label: "Secret",    minLevel: 60,  energyCost: 100, coinMin: 97500,  coinMax: 135000, xp: 550 },
-  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 144, coinMin: 157500, coinMax: 217500, xp: 800 },
-  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 233, coinMin: 255000, coinMax: 352500, xp: 1200 },
+  secret:    { label: "Secret",    minLevel: 60,  energyCost: 100, coinMin: 108000, coinMax: 150000, xp: 610 },
+  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 144, coinMin: 200000, coinMax: 275000, xp: 1000 },
+  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 233, coinMin: 395000, coinMax: 545000, xp: 1850 },
   // 레벨 상한이 없어져서(100 넘어서도 계속 성장, 300부터는 제곱적으로 폭증 — nextExpFor 참고)
   // abyssal(레벨100) 이후로 200레벨어치나 되는 구간 내내 똑같은 작업만 반복하는 게 심심하다는
   // 피드백 반영 — 새 마일스톤 레벨(150/200/250/300, 후자 둘은 각각 초월적/궁극의 해커 업적과
-  // 겹침)에 맞춰 4단계를 더 얹었다. coin/xp는 같은 ~1.5~1.6배 성장률로 계속 이어가고,
-  // energyCost는 위 누적 스탯 포인트/6 공식을 그대로 이어서 계산했다.
-  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 475,  coinMin: 400000,  coinMax: 560000,  xp: 1900 },
-  singularity: { label: "Singularity", minLevel: 200, energyCost: 800,  coinMin: 650000,  coinMax: 900000,  xp: 3050 },
-  omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
-  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
+  // 겹침)에 맞춰 4단계를 더 얹었다. energyCost는 위 누적 스탯 포인트/6 공식을 그대로 이어서
+  // 계산했고, coin/xp는 그 늘어난 에너지의 제곱근만큼만 보상도 함께 올렸다(바로 위 설명 참고).
+  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 475,  coinMin: 830000,   coinMax: 1165000,  xp: 3950 },
+  singularity: { label: "Singularity", minLevel: 200, energyCost: 800,  coinMin: 1650000,  coinMax: 2285000,  xp: 7750 },
+  omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 3055000,  coinMax: 4230000,  xp: 14400 },
+  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 5445000,  coinMax: 7530000,  xp: 25600 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
