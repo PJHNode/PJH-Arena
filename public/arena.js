@@ -1649,6 +1649,15 @@
       const data = await api("/property");
       $("propertyRate").textContent = fmt(data.ratePerHour) + " / hr";
       $("propertyPending").textContent = fmt(data.pendingCoins);
+      // Property 총수익은 "액티브로 벌 수 있는 최대치의 70%"를 못 넘는다(요청 반영: "오프라인이
+      // 아니면 이 수익을 넘게 벌 수 있어야 하는데 그런 게 없다") — 상한에 걸렸을 때만 이유를
+      // 보여준다. 안 걸렸으면(기기가 적어서 합계 자체가 상한 밑) 조용히 넘어간다.
+      const capNote = $("propertyCapNote");
+      if (capNote) {
+        capNote.textContent = data.uncappedRatePerHour > data.ratePerHour
+          ? "⚠️ 보유 기기 합계는 " + fmt(data.uncappedRatePerHour) + "/hr이지만, 액티브 최대 효율(" + fmt(data.activePotentialRatePerHour) + "/hr)의 " + Math.round((data.activeCapRatio || 0) * 100) + "%로 상한이 걸려 있습니다 — 직접 플레이하면 항상 이보다 더 벌 수 있어요."
+          : "";
+      }
       const atCap = data.totalOwned >= data.maxDevices;
       grid.innerHTML =
         '<p class="dim" style="grid-column:1/-1;margin-bottom:4px;">보유 기기 ' + data.totalOwned + " / " + data.maxDevices + "</p>" +

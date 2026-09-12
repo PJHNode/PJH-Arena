@@ -252,6 +252,34 @@ const JOB_TIERS = {
   genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 8167500,  coinMax: 11295000, xp: 38400 },
 };
 
+// ── Property 총수익 상한 = "내가 액티브로 벌 수 있는 최대 시간당 수익"의 일정 비율 —
+// "오프라인(Property)이 아니면 이걸 넘게 벌 수 있어야 하는데 그런 게 없다"는 요청 반영.
+// 개별 기기 가격/수익을 아무리 잘 맞춰도 여러 대를 같이 굴리면(6~10칸) 합산 수익이 순식간에
+// 액티브 한계를 넘어버린다 — 그래서 기기별 개별 조정 대신 "총합"에 상한을 건다. 상한은
+// 고정값이 아니라 그 유저가 지금 레벨로 뚫을 수 있는 최고 Jobs 등급을, 에너지를 쉬지 않고
+// 다 쏟아부었을 때의 시간당 수익(환생 버프로 에너지 비용 할인/회복 속도 증가까지 반영)의
+// PROPERTY_ACTIVE_CAP_RATIO(70%)로 잡는다 — 그러면 "실제로 앉아서 계속 플레이"하는 유저는
+// 언제나 자기 Property 총수익보다 더 많이 벌 수 있고(100% > 70%), 레벨이 오르면 상한 자체도
+// 같이 올라가서 성장이 무의미해지지 않는다.
+const PROPERTY_ACTIVE_CAP_RATIO = 0.7;
+function bestJobTierForLevel(level) {
+  let best = JOB_TIERS.trivial;
+  for (const key in JOB_TIERS) {
+    const t = JOB_TIERS[key];
+    if (t.minLevel <= level && t.minLevel >= best.minLevel) best = t;
+  }
+  return best;
+}
+function activePotentialRatePerHour(row) {
+  const tier = bestJobTierForLevel(row.level);
+  const avgCoin = (tier.coinMin + tier.coinMax) / 2;
+  const effEnergyCost = Math.max(1, Math.round(tier.energyCost * rebirthCostMult(row)));
+  const coinsPerEnergy = avgCoin / effEnergyCost;
+  const energyTickMs = rebirthRegenTickMs(ENERGY_TICK_MS, row);
+  const energyPerHour = (3600000 / energyTickMs) * ENERGY_REGEN_PER_TICK;
+  return coinsPerEnergy * energyPerHour;
+}
+
 // ── 신호 감청(Signal Intercept) — "hacking jobs/property 말고는 돈 벌 수단이 없다"는 요청
 // 반영. 에너지/스태미나 둘 다 안 쓰고 순수 쿨다운(10분)만으로 도는 세 번째 축의 수입원 —
 // 다른 자원이 바닥난 상태에서도 뭔가 클릭할 거리를 준다. 보상은 레벨에 비례하되 시간당으로
@@ -2229,9 +2257,14 @@ async function pendingPropertyIncome(env, row) {
   }
   // 환생 버프(패시브 수입) — 티어당 +3%(최대 +12%).
   ratePerHour = Math.round(ratePerHour * (1 + rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_PROPERTY_INCOME_BONUS));
+  // Property 총수익 상한 — "오프라인이 아니면 이걸 넘게 벌 수 있어야 하는데 그런 게 없다"는
+  // 요청 반영. 기기를 아무리 많이/비싸게 채워도 이 유저의 액티브 잠재 수익(activePotentialRatePerHour)의
+  // 70%를 못 넘는다 — 그래서 실제로 앉아서 플레이하면 항상 자기 Property 총수익보다 더 번다.
+  const activeCap = Math.round(activePotentialRatePerHour(row) * PROPERTY_ACTIVE_CAP_RATIO);
+  const capped = Math.min(ratePerHour, activeCap);
   const elapsedMs = Math.min(Date.now() - (row.last_property_collect || row.created_at), PROPERTY_MAX_ACCRUAL_MS);
-  const pendingCoins = Math.floor(ratePerHour * (elapsedMs / 3600000));
-  return { ratePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
+  const pendingCoins = Math.floor(capped * (elapsedMs / 3600000));
+  return { ratePerHour: capped, uncappedRatePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
 }
 
 async function collectProperty(env, row) {
@@ -4375,7 +4408,14 @@ export default {
           .sort(function (a, b) { return a[1].price - b[1].price; })
           .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
         const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
-        return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
+        // uncappedRatePerHour/activeCap을 같이 내려줘서 "총수익이 왜 기기 합계보다 낮은지"를
+        // 프론트에서 설명할 수 있게 한다(요청 반영: 액티브가 항상 이 상한보다는 더 벌 수 있다는
+        // 걸 투명하게 보여줘야 "억울함"이 안 생긴다).
+        return json({
+          devices: devices, ratePerHour: info.ratePerHour, uncappedRatePerHour: info.uncappedRatePerHour,
+          activeCapRatio: PROPERTY_ACTIVE_CAP_RATIO, activePotentialRatePerHour: Math.round(activePotentialRatePerHour(row)),
+          pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000,
+        });
       }
 
       if (request.method === "POST" && path === "/property/buy") {
