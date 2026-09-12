@@ -861,14 +861,16 @@ const PLANET_ATTACK_STAMINA_COST = 2;
 const PLANET_SCOUT_STAMINA_COST = 1;
 // ── 홈 행성 특수 규칙 ──
 // (1) 레벨 20 미만이면 무적 — 막 시작한 유저의 홈 행성이 접속하자마자 털리는 걸 막는다.
-// (2) 그 이후엔 공격 가능하지만, 방어력이 실전 전투력의 2배로 뻥튀기된 "최후의 요새"라 뚫기
-//     훨씬 어렵다(다른 곳에 쓰는 실제 ATK/DEF는 그대로, 홈 행성 방어 계산에서만 2배).
+// (2) 그 이후엔 공격 가능하지만, 공격력/방어력이 실전 전투력의 1.1배로 소폭 뻥튀기된
+//     "약간의 홈 어드밴티지"가 있다(요청 반영: 2배 → 1.1배로 하향, 다른 곳에 쓰는 실제
+//     ATK/DEF는 그대로, 홈 행성 계산에서만 적용). 공격 시 상대의 ATK도 똑같이 1.1배가
+//     붙는다 — 홈 행성은 방어만 유리한 게 아니라 "공격도 조금 더 세게" 반영된다.
 // (3) 그래도 뚫리면(공격자가 이기면) — 홈 행성은 원래 시세(coins_per_hour)가 항상 0이라 기존
 //     "쌓인 수익 약탈" 방식으로는 약탈해도 0원이었다. 대신 포켓 코인의 20%를 그 자리에서
 //     몰수한다(뱅크는 그대로 보호 — 기존 "예치하면 안전하다" 컨셉과 일관됨).
 // (4) 소유권은 절대 넘어가지 않는다 — 홈 행성은 뺏을 수 없고, 이겨도 위 (3)의 보상만 받는다.
 const HOME_PLANET_INVULNERABLE_UNTIL_LEVEL = 20;
-const HOME_PLANET_DEFENSE_MULT = 2;
+const HOME_PLANET_DEFENSE_MULT = 1.1;
 const HOME_PLANET_BREACH_CONFISCATE_RATE = 0.20;
 // 예전엔 strong(110/95)이 사실상 최고 난이도였는데, 레벨 30 정도만 돼도 장비+봇 몇 기만으로
 // 가볍게 이겨버린다는 피드백을 받아서 그 위로 3단계(정예/악몽/극한)를 더 얹었다. 극한은
@@ -910,9 +912,38 @@ function pickTierFromRng(rng) {
   }
   return "weak"; // 부동소수점 오차 안전망
 }
-function effectivePlanetTier(slotIndex, nowMs) {
+// ── 악몽/극한 등급 "보장" 개편 — 기존엔 슬롯마다 독립적으로 아주 낮은 확률(악몽 1.5%,
+// 극한 0.5%)을 뽑았는데, 그러면 48슬롯 전체를 다 뒤져도 이번 15분엔 악몽이나 극한이 단
+// 하나도 없는 리롤이 실제로 흔했다("확률로 하지 않고 다른 걸로 바꾸고 싶다" 요청 반영).
+// 그래서 이제 48개 슬롯 전체를 PLANET_BOT_TIERS 비율 그대로의 "정확한 개수"만큼 미리
+// 채운 카드 덱을 만들고, 그 덱을 섞어서 슬롯 번호에 나눠준다 — 이러면 악몽 1개·극한 1개가
+// 매 리롤마다 무조건 존재한다(0개가 되는 경우 자체가 없음). "각 사람마다 로컬로"라는
+// 요청대로 이 덱은 유저 아이디까지 시드에 넣어 사람마다 독립적으로 섞인다 — 같은 슬롯
+// 번호라도 사람마다 다른 난이도로 보일 수 있지만(서로 비교/공유할 이유가 없는 PVE 콘텐츠라
+// 문제 없음), 한 사람 입장에서는 같은 15분 구간 내내 항상 같은 결과가 나온다(결정론적).
+const PLANET_TIER_GUARANTEED_COUNTS = { weak: 19, medium: 14, strong: 9, elite: 4, nightmare: 1, apex: 1 };
+// userId 같은 문자열을 정수 시드로 바꾸는 간단한 해시(FNV-1a 변형).
+function hashSeedFromString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h | 0;
+}
+function buildPersonalPlanetDeck(userId, nowMs) {
+  const deck = [];
+  for (const key in PLANET_TIER_GUARANTEED_COUNTS) {
+    for (let i = 0; i < PLANET_TIER_GUARANTEED_COUNTS[key]; i++) deck.push(key);
+  }
   const bucket = planetRerollBucket(nowMs);
-  return pickTierFromRng(mulberry32((slotIndex ^ bucket) | 0));
+  const rng = mulberry32((hashSeedFromString(String(userId)) ^ bucket) | 0);
+  for (let i = deck.length - 1; i > 0; i--) { // Fisher-Yates
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
+  }
+  return deck;
+}
+function effectivePlanetTier(userId, slotIndex, nowMs) {
+  const deck = buildPersonalPlanetDeck(userId, nowMs);
+  return deck[slotIndex % deck.length];
 }
 function rollPlanetTier() {
   return pickTierFromRng(Math.random); // 최초 시드용 — 어차피 미정복 상태론 위 effectivePlanetTier로 계속 덮임
@@ -1883,7 +1914,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   let defenderCombat, defenderLastStance = null, effectiveTierKey = null, defenderRow = null;
 
   if (isBotPlanet) {
-    effectiveTierKey = effectivePlanetTier(planet.slot_index, now);
+    effectiveTierKey = effectivePlanetTier(user.userId, planet.slot_index, now);
     const t = PLANET_BOT_TIERS[effectiveTierKey];
     defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
   } else {
@@ -3898,7 +3929,7 @@ export default {
           // 표시했었다)를 쓰지 않는다(요청 반영: "그냥 보상이니까 이렇게 쓰지마").
           let tierKey = null, combatStats = null, rewardCoins = 0, homeInvulnerable = false;
           if (!p.is_home) {
-            tierKey = effectivePlanetTier(p.slot_index, now);
+            tierKey = effectivePlanetTier(user.userId, p.slot_index, now);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             rewardCoins = Math.round(t.coinsPerHour * 0.5);
@@ -3919,9 +3950,17 @@ export default {
           };
         });
         const tierMeta = {};
+        const deckSize = Object.values(PLANET_TIER_GUARANTEED_COUNTS).reduce(function (a, b) { return a + b; }, 0);
         for (const key in PLANET_BOT_TIERS) {
           const t = PLANET_BOT_TIERS[key];
-          tierMeta[key] = { label: t.label, weight: t.weight, atk: t.atk, def: t.def, crit: t.crit, rewardCoins: Math.round(t.coinsPerHour * 0.5) };
+          // weight는 이제 "확률"이 아니라 48슬롯 중 보장된 개수의 비율이다(요청 반영: 확률
+          // 대신 정확한 개수로 바꿈) — 프론트는 그대로 %로 보여주면 되고, 값 자체가 항상
+          // 정확히 이 비율만큼 존재함을 뜻한다(0개가 되는 경우가 없음).
+          tierMeta[key] = {
+            label: t.label, weight: (PLANET_TIER_GUARANTEED_COUNTS[key] || 0) / deckSize,
+            count: PLANET_TIER_GUARANTEED_COUNTS[key] || 0,
+            atk: t.atk, def: t.def, crit: t.crit, rewardCoins: Math.round(t.coinsPerHour * 0.5),
+          };
         }
         return json({
           planets: planets, stances: STANCES,
@@ -4087,7 +4126,7 @@ export default {
         if (planet.is_home) return json({ error: "홈 행성은 공격할 수 없습니다." }, 400);
         if (planet.owner_user_id) return json({ error: "원정은 PVE 행성(봇이 지키는 곳)에서만 가능합니다." }, 400);
 
-        const tierKey = effectivePlanetTier(planet.slot_index, Date.now());
+        const tierKey = effectivePlanetTier(user.userId, planet.slot_index, Date.now());
         if (["elite", "nightmare", "apex"].indexOf(tierKey) === -1) {
           return json({ error: "원정은 정예 이상 등급(정예/악몽/극한) 행성에서만 가능합니다." }, 400);
         }

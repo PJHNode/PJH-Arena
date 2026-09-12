@@ -579,12 +579,14 @@
 
     galaxyNextRerollAt = data.nextRerollAt;
 
-    // 난이도별 등장 확률 + 다음 리롤까지 남은 시간 — 필터 바로 위에 작은 범례로 보여준다.
+    // 난이도별 등장 개수(48슬롯 중 보장된 수량) + 다음 리롤까지 남은 시간 — 필터 바로 위에
+    // 작은 범례로 보여준다. 예전엔 "확률 %"였는데, 이제 매 리롤마다 정확히 이 개수만큼
+    // 보장되므로(0개가 되는 경우가 없음) "48개 중 N개"로 표시가 바뀌었다(요청 반영).
     const legendEl = $("galaxyTierLegend");
     if (legendEl && data.tierMeta) {
       legendEl.innerHTML = TIER_ORDER_CLIENT.map((key) => {
         const t = data.tierMeta[key];
-        return '<span class="galaxy-tier-chip">' + t.label + " " + Math.round(t.weight * 100) + "%</span>";
+        return '<span class="galaxy-tier-chip">' + t.label + " " + t.count + "/48</span>";
       }).join("");
     }
 
