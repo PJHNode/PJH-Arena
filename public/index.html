@@ -219,6 +219,21 @@
   .enchant-level-fill { background: var(--cyan); height: 100%; }
   .enchant-level-text { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
   .shop-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
+  /* apocalyptic(진짜 최종 등급)이 상점에 뜨면 칸 자체가 발광한다 — "상점칸 자체가 발광을
+     하며 화려하게" 요청 반영. 바깥은 펄스치는 네온 글로우, 안쪽은 회전하는 에너지 스윕
+     (conic-gradient ::before)을 콘텐츠 뒤에 깔아서 "그 무엇보다 강력해보이게" 했다. */
+  .shop-card-apocalyptic { position: relative; overflow: hidden; border-color: var(--apoc-color, #ff0044); border-left-color: var(--apoc-color, #ff0044); border-width: 2px;
+    background: radial-gradient(circle at 50% 0%, rgba(255,0,68,0.22), var(--surface) 72%);
+    animation: shopCardApocPulse 1.6s ease-in-out infinite; }
+  .shop-card-apocalyptic::before { content: ""; position: absolute; inset: -60%; z-index: 0;
+    background: conic-gradient(from 0deg, transparent, var(--apoc-color, #ff0044), transparent 30%);
+    opacity: 0.35; animation: shopCardApocSpin 3s linear infinite; }
+  .shop-card-apocalyptic > * { position: relative; z-index: 1; }
+  @keyframes shopCardApocPulse {
+    0%, 100% { box-shadow: 0 0 14px 1px var(--apoc-color, #ff0044), inset 0 0 16px rgba(255,0,68,0.14); }
+    50% { box-shadow: 0 0 32px 6px var(--apoc-color, #ff0044), inset 0 0 30px rgba(255,0,68,0.3); }
+  }
+  @keyframes shopCardApocSpin { to { transform: rotate(360deg); } }
   .item-icon { display: inline-block; vertical-align: middle; filter: drop-shadow(0 0 3px currentColor); }
   .item-icon svg { width: 100%; height: 100%; display: block; }
   /* 등급 파티클/아우라 — legendary 이상 아이템·봇 아이콘에 붙는 이펙트. 아우라는 아이콘

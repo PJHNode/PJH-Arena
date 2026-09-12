@@ -17,6 +17,9 @@ window.ITEM_ICONS = {
   singularity_worm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3a9 9 0 100 18 6 6 0 100-12 3 3 0 100 6"/></svg>',
   omega_killswitch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v7"/><path d="M6.5 7a8 8 0 1011 0"/></svg>',
   abyssal_maw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 9c3 6 15 6 18 0"/><path d="M4 9l2 3M8 9l1.5 4M12 9v4.5M16 9l-1.5 4M20 9l-2 3"/></svg>',
+  // 진짜 최종 등급(abyssal보다 위) — "그 무엇보다 강력해보이게" 요청 반영, 거대한 낫 날에
+  // 사방으로 균열/번개가 뻗어나가는 도안으로 지금까지 중 가장 화려하게 그렸다.
+  apocalypse_scythe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 21c0-9 5-17 14-18 1 5-3 11-9 13-3 1-5 3-5 5z"/><path d="M9 15l-5 6"/><path d="M14 6l2-3M17 9l3-2M11 9l-2-3M6 12l-2 1"/></svg>',
 
   // ── 방어구(armor) ──
   basic_av: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l7 3v6c0 5-3 8-7 9-4-1-7-4-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>',
@@ -28,6 +31,8 @@ window.ITEM_ICONS = {
   black_ice: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l3 6 6 1-4.5 4 1.5 6-6-3.5L6 22l1.5-6L3 12l6-1z"/></svg>',
   absolute_zero: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M4 7l16 10M20 7L4 17"/><path d="M12 5l-2 2M12 5l2 2M12 19l-2-2M12 19l2-2"/></svg>',
   eventhorizon_ward: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.5" stroke-dasharray="2 2"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>',
+  // 방패 안에 빛나는 코어 + 사방으로 뻗는 광선 — 지금까지 방어구 중 가장 정교/화려하게.
+  omega_aegis: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 2l8 3.5v6c0 6-4 9.5-8 10.5-4-1-8-4.5-8-10.5v-6z"/><path d="M12 4v3M12 15v3M6.5 11h3M14.5 11h3" stroke-width="1.2"/><circle cx="12" cy="11" r="2.4" fill="currentColor" stroke="none"/></svg>',
 
   // ── 코어(core) ──
   overclock_chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 3v3M12 3v3M15 3v3M9 18v3M12 18v3M15 18v3M3 9h3M3 12h3M3 15h3M18 9h3M18 12h3M18 15h3"/></svg>',
@@ -39,6 +44,8 @@ window.ITEM_ICONS = {
   observers_eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>',
   algorithm_of_god: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 9a3 3 0 100 6 5 5 0 004-2 5 5 0 004 2 3 3 0 100-6 5 5 0 00-4 2 5 5 0 00-4-2z"/></svg>',
   voidheart_core: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 12c0-4 4-6 6-3s0 7-4 7-6-3-6-6 2-6 5-6"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>',
+  // 붕괴하는 특이점 + 8방향으로 뻗는 코로나 — voidheart_core보다 한층 더 복잡하고 폭발적으로.
+  genesis_singularity: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="9.5" stroke-dasharray="1.5 2"/><path d="M12 1v2M12 21v2M1 12h2M21 12h2M4.5 4.5l1.4 1.4M18.1 18.1l1.4 1.4M4.5 19.5l1.4-1.4M18.1 5.9l1.4-1.4"/></svg>',
 
   // ── 소비재(consumable) ──
   nanobot_kit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M12 10v6M9 13h6"/><path d="M9 6V5a3 3 0 016 0v1"/></svg>',
@@ -99,10 +106,11 @@ window.propertyIconHtml = function propertyIconHtml(deviceId, color, sizePx) {
 // ══════════════════════════════════════════════════════════
 //  등급 파티클/아우라 이펙트 — "레전더리 이상이면 주변에 파티클과 아우라, 희귀도가 올라갈수록
 //  화려하게" 요청 반영. RARITY_ORDER 전체를 여기 다시 못 박아두는 대신(서버 값과 어긋날 위험),
-//  legendary부터 최상위까지의 5단계만 알면 충분해서 그 구간만 하드코딩했다. rarity가 이
-//  목록에 없으면(=legendary 미만이거나 아예 없으면) 이펙트 없이 기존과 동일한 아이콘만 낸다.
+//  legendary부터 최상위까지의 단계만 알면 충분해서 그 구간만 하드코딩했다(apocalyptic 추가로
+//  6단계). rarity가 이 목록에 없으면(=legendary 미만이거나 아예 없으면) 이펙트 없이 기존과
+//  동일한 아이콘만 낸다.
 // ══════════════════════════════════════════════════════════
-const RARITY_FX_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal"];
+const RARITY_FX_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal", "apocalyptic"];
 // 아우라/파티클/링 레이어를 만드는 공용 코어 — 아이콘(고정 크기 정사각형)과 플레이어 이름
 // 배지(가변 폭 텍스트) 둘 다 이 레이어들을 재사용한다. rarity가 5단계에 없으면(=legendary
 // 미만) null을 반환해서 호출부가 이펙트 없이 그대로 내보내게 한다.

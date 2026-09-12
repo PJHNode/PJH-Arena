@@ -6,7 +6,12 @@
   const FORUM_API = "https://forum.chaostatix.workers.dev";
 
   // 서버 RARITY_ORDER와 동일 순서(낮은 등급→높은 등급) — 봇 카드의 "대표 등급"을 고를 때만 씀.
-  const RARITY_ORDER_CLIENT = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal"];
+  const RARITY_ORDER_CLIENT = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal", "apocalyptic"];
+  // BOT 가챠 테이블(basic/advanced/premium, 서버 BOT_GACHA_TIERS)엔 abyssal/apocalyptic이
+  // 아예 없어서(가챠로는 절대 안 나옴) 자동 뽑기 목표로 그 등급을 고르면 영원히 성공 못 하는
+  // 시도만 반복하게 된다 — BOT 자동 뽑기 드롭다운은 실제로 뜰 수 있는 forbidden까지만 보여준다.
+  const BOT_GACHA_MAX_RARITY = "forbidden";
+  const RARITY_ORDER_BOT_GACHA = RARITY_ORDER_CLIENT.slice(0, RARITY_ORDER_CLIENT.indexOf(BOT_GACHA_MAX_RARITY) + 1);
 
   const JOB_META = {
     trivial:   { label: "TRIVIAL",   icon: "📶" },
@@ -1157,8 +1162,12 @@
         const disabled = capped || soldOut || state.pocketCoins < it.price;
         const btnLabel = soldOut ? "품절" : capped ? "보유 한도" : "구매";
         const stockLine = it.totalStock != null ? '<div class="shop-card-type" style="color:' + (soldOut ? "var(--danger)" : "var(--sub)") + ';">재고 ' + it.remainingStock + " / " + it.totalStock + "</div>" : "";
+        // apocalyptic(진짜 최종 등급)이 상점에 뜨면 칸 자체가 발광한다 — "상점칸 자체가
+        // 발광을 하며 화려하게" 요청 반영. rarityColor를 CSS 변수로 넘겨서 다른 등급 색이
+        // 와도(만약을 위해) 그 색 기준으로 발광하도록 했다.
+        const isApocalyptic = it.rarity === "apocalyptic";
         return (
-        '<div class="shop-card" style="border-left-color:' + it.typeColor + '">' +
+        '<div class="shop-card' + (isApocalyptic ? " shop-card-apocalyptic" : "") + '" style="border-left-color:' + it.typeColor + (isApocalyptic ? ";--apoc-color:" + it.rarityColor : "") + '">' +
         '<div class="shop-card-icon">' + itemIconHtml(it.id, it.rarityColor, 30, it.rarity) + "</div>" +
         '<div class="shop-card-name">' + escapeHtml(it.name) + "</div>" +
         '<div class="shop-card-type" style="color:' + it.typeColor + '">' + (it.typeLabel || it.type.toUpperCase()) + (it.owned ? " · 보유 " + it.owned + (it.maxOwned ? "/" + it.maxOwned : "") : (it.maxOwned ? " · 최대 " + it.maxOwned + "개" : "")) + "</div>" +
@@ -1399,7 +1408,7 @@
         // 때까지 서버가 알아서 반복한다. 실제 장착 아이템(equipped_*)은 여전히 안 건드린다.
         if (research.autoRollUnlocked) {
           const tierOptions = Object.keys(BOT_GACHA_META).map((tier) => '<option value="' + tier + '">' + BOT_GACHA_META[tier].label + "</option>").join("");
-          const rarityOptions = RARITY_ORDER_CLIENT.map((rr) => '<option value="' + rr + '">' + research.rarityLabels[rr] + "</option>").join("");
+          const rarityOptions = RARITY_ORDER_BOT_GACHA.map((rr) => '<option value="' + rr + '">' + research.rarityLabels[rr] + "</option>").join("");
           html += '<div class="bot-gacha-auto-row">' +
             '<select data-auto-tier="' + botId + '">' + tierOptions + "</select>" +
             '<select data-auto-rarity="' + botId + '">' + rarityOptions + "</select>" +

@@ -145,7 +145,7 @@ function rebirthTier(count) {
 // 결정하므로(SHOP_ITEMS 값 곡선) 별도 절대치 기준 없이 무기 등급 하나로 대표한다. 셋 중
 // 가장 높은 단계로만 판정하고(합산하지 않음) — "작고 상한 있게" 원칙과 같은 이유로, 여러
 // 요소가 겹쳐도 무한정 화려해지지 않고 abyssal(최상위)에서 막힌다.
-const PVP_AURA_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal"];
+const PVP_AURA_TIERS = ["legendary", "mythic", "secret", "forbidden", "abyssal", "apocalyptic"];
 function pvpAuraTierFor(row) {
   const weaponItem = row.equipped_weapon ? SHOP_ITEMS[row.equipped_weapon] : null;
   const weaponIdx = weaponItem ? PVP_AURA_TIERS.indexOf(weaponItem.rarity) : -1;
@@ -267,7 +267,7 @@ function recomputeStatUnderNewCostCurve(base, increment, currentMax) {
 // ══════════════════════════════════════════════════════════
 //  아이템 등급(Rarity) — 상점 로테이션의 확률/등장 개수를 결정한다.
 // ══════════════════════════════════════════════════════════
-const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal"];
+const RARITY_ORDER = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret", "forbidden", "abyssal", "apocalyptic"];
 // 기본 확률(연구 보너스 적용 전) — "1000번 뽑으면 common 650 / uncommon 200 / epic 100 /
 // legendary 40 / secret 10 / forbidden 0" 요청을 그대로 chance(=count/1000)에 반영했다.
 // rare·mythic는 명시되지 않아서 양옆 값 사이로 자연스럽게 보간했다(rare는 uncommon·epic
@@ -286,6 +286,9 @@ const RARITY_META = {
   secret:    { chance: 0.01,  maxSlots: 1, label: "SECRET",    color: "#ffd700" },
   forbidden: { chance: 0,     maxSlots: 1, label: "FORBIDDEN", color: "#ff1744" },
   abyssal:   { chance: 0,     maxSlots: 1, label: "ABYSSAL",   color: "#e100ff" },
+  // 진짜 최종 등급 — "그 무엇보다 강력해보이게" 요청 반영. 지금까지 색 계열(회색→초록→시안→
+  // 보라→주황→핑크→금색→빨강→마젠타)과 완전히 다른, 타오르는 듯한 진홍색으로 확실히 구분했다.
+  apocalyptic: { chance: 0, maxSlots: 1, label: "APOCALYPTIC", color: "#ff0044" },
 };
 const SHOP_ROTATION_MS = 4 * 60 * 1000;
 
@@ -318,6 +321,11 @@ const AVATAR_ICONS = { neon: "⚡", gold: "⭐", prism: "💎", galaxy: "🌌" }
 // abyssal에서는 그보다 훨씬 큰 5배(800→4000)를 줘서 최종 등급이 확실히 도드라지게 했다.
 // 가격은 이 변경과 무관하게 그대로 둔다(리롤/시세 체계 재설계는 별도 사안). 코어는 항상
 // 무기/방어 value의 0.4배 유지.
+// ── apocalyptic(진짜 최종 등급, abyssal보다도 위) — "가격은 abyssal의 20배, 아우라와
+// 공격력(value)은 6배" 요청 그대로: 무기/방어 4000→24000(x6), 코어는 코어 규칙(0.4배)을
+// 깨고 1600→9600(정확히 x6, 코어도 동일 배율)으로 맞췄다. 가격은 무기/방어 12억→240억,
+// 코어 36억→720억(전부 x20). 상점 행운 연구 레벨 13을 찍어야 0.1% 확률로만 등장한다
+// (ABYSSAL_RESEARCH_UNLOCK_LEVEL/APOCALYPTIC_RESEARCH_UNLOCK_LEVEL 참고).
 const SHOP_ITEMS = {
   rusty_script:     { name: "Rusty Script Kit",     type: "weapon", rarity: "common",    price: 50,       value: 5 },
   packet_spoofer:   { name: "Packet Spoofer",       type: "weapon", rarity: "uncommon",  price: 200,      value: 10 },
@@ -328,6 +336,7 @@ const SHOP_ITEMS = {
   singularity_worm: { name: "Singularity Worm",     type: "weapon", rarity: "secret",    price: 15000000,  value: 320 },
   omega_killswitch: { name: "종말의 킬스위치",       type: "weapon", rarity: "forbidden", price: 120000000, value: 800 },
   abyssal_maw:      { name: "심연의 아가리",         type: "weapon", rarity: "abyssal",   price: 1200000000, value: 4000 },
+  apocalypse_scythe: { name: "묵시록의 낫",          type: "weapon", rarity: "apocalyptic", price: 24000000000, value: 24000 },
 
   basic_av:         { name: "Basic Antivirus",      type: "armor", rarity: "common",    price: 50,       value: 5 },
   packet_filter:    { name: "Packet Filter",        type: "armor", rarity: "uncommon",  price: 200,      value: 10 },
@@ -338,6 +347,7 @@ const SHOP_ITEMS = {
   black_ice:        { name: "Black ICE",            type: "armor", rarity: "secret",    price: 15000000,  value: 320 },
   absolute_zero:    { name: "절대영도 방벽",          type: "armor", rarity: "forbidden", price: 120000000, value: 800 },
   eventhorizon_ward: { name: "사건의 지평선 방벽",    type: "armor", rarity: "abyssal",   price: 1200000000, value: 4000 },
+  omega_aegis:       { name: "최후의 이지스",        type: "armor", rarity: "apocalyptic", price: 24000000000, value: 24000 },
 
   overclock_chip:     { name: "오버클럭 칩셋",       type: "core", rarity: "common",    price: 150,      value: 2 },
   tactical_matrix:    { name: "AI 전술 매트릭스",    type: "core", rarity: "uncommon",  price: 600,      value: 4 },
@@ -348,6 +358,7 @@ const SHOP_ITEMS = {
   observers_eye:      { name: "관측자의 눈",         type: "core", rarity: "secret",    price: 45000000,  value: 128 },
   algorithm_of_god:   { name: "신의 알고리즘",       type: "core", rarity: "forbidden", price: 360000000, value: 320 },
   voidheart_core:     { name: "보이드하트 코어",     type: "core", rarity: "abyssal",   price: 3600000000, value: 1600 },
+  genesis_singularity: { name: "창세 특이점",        type: "core", rarity: "apocalyptic", price: 72000000000, value: 9600 },
 
   nanobot_kit:      { name: "나노봇 응급키트",         type: "consumable", rarity: "common",    price: 100,  effect: "heal_flat", value: 30 },
   energy_drink:     { name: "에너지 드링크",           type: "consumable", rarity: "common",    price: 150,  effect: "energy", value: 20 },
@@ -861,11 +872,18 @@ for (const _id in SHOP_ITEMS) {
 function rollGachaRarity(table) {
   const r = Math.random();
   let cum = 0;
+  let lastNonZero = null;
   for (const rarity of RARITY_ORDER) {
+    if (table[rarity]) lastNonZero = rarity;
     cum += table[rarity] || 0;
     if (r < cum) return rarity;
   }
-  return RARITY_ORDER[RARITY_ORDER.length - 1]; // 부동소수점 오차로 못 걸렸을 때의 안전망
+  // 부동소수점 오차로 못 걸렸을 때의 안전망 — 반드시 "이 table에 실제로 있는 등급 중 가장
+  // 높은 것"으로 떨어져야 한다(전역 RARITY_ORDER의 맨 끝이 아니라). apocalyptic을 최상단에
+  // 추가한 뒤로 이 값이 사실상 "abyssal 확률표엔 없는 등급"이 될 수 있어서, 예전처럼
+  // RARITY_ORDER[RARITY_ORDER.length-1]을 그대로 반환하면 basic 가챠에서 극히 드문
+  // 부동소수점 오차 한 번에 apocalyptic이 튀어나오는 사고가 날 수 있었다.
+  return lastNonZero || RARITY_ORDER[0];
 }
 // 슬롯별로 "등급"만 뽑는다 — 예전엔 그 등급의 대표 아이템 id를 골라 실제 장착까지 시켰는데,
 // 그러면 봇의 진짜 장착 아이템(equipped_*)이 가챠할 때마다 바뀌어버린다("그 봇 자체의 무기가
@@ -1149,7 +1167,12 @@ function researchShopUpgradeCost(level) { return Math.round(RESEARCH_SHOP_BASE_C
 // 그 이상 연구해도 더 잘 뜨진 않는, "문을 여는" 개념의 게이트다.
 const ABYSSAL_RESEARCH_UNLOCK_LEVEL = 6;
 const ABYSSAL_CHANCE = 0.01;
+// apocalyptic — "진짜 최종 등급" 요청 반영. abyssal과 같은 게이트 방식이지만 훨씬 더 늦게
+// (상점 행운 연구 레벨 13) 열리고, 그마저도 0.1%로 abyssal(1%)보다 10배 더 희귀하다.
+const APOCALYPTIC_RESEARCH_UNLOCK_LEVEL = 13;
+const APOCALYPTIC_CHANCE = 0.001;
 function effectiveRarityChance(rarity, researchLevel) {
+  if (rarity === "apocalyptic") return (researchLevel || 0) >= APOCALYPTIC_RESEARCH_UNLOCK_LEVEL ? APOCALYPTIC_CHANCE : 0;
   if (rarity === "abyssal") return (researchLevel || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL ? ABYSSAL_CHANCE : 0;
   return clamp(RARITY_META[rarity].chance + (researchLevel || 0) * RESEARCH_SHOP_BONUS_PER_LEVEL, 0, 1);
 }
@@ -1357,6 +1380,7 @@ const STOCK_WEIGHTS_BY_RARITY = {
   secret:    { one: 0.97, two: 0.025, three: 0.005 },
   forbidden: { one: 0.99, two: 0.009, three: 0.001 },
   abyssal:   { one: 0.995, two: 0.004, three: 0.001 },
+  apocalyptic: { one: 1, two: 0, three: 0 }, // 항상 딱 1개만 — 그마저도 뜨면 즉시 품절되는 게 자연스럽다.
 };
 // 특정 소비재는 등급표 대신 자기만의 재고 범위를 쓴다(요청 반영) — 에너지 드링크는 3~5개,
 // 메가 에너지 셀은 2~4개로 시작한다. 범위 안에서 균등 랜덤(로테이션/유저별로 다시 섞임).
