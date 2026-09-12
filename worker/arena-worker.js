@@ -79,7 +79,11 @@ async function verifyUser(request, env) {
 // 이다 — 레벨업으로 받는 스탯 포인트로 늘릴 수 있기 때문. 아래 값들은 "신규 유저의 시작 최대치"
 // 로만 쓰인다(DB 컬럼 기본값과 반드시 맞춰둘 것).
 const BASE_MAX_HP = 100, BASE_MAX_ENERGY = 50, BASE_MAX_STAMINA = 10;
-const ENERGY_REGEN_PER_TICK = 5, ENERGY_TICK_MS = 30 * 1000;   // 30초당 +5
+// 30초당 +5 → +10으로 2배(요청 반영: "상한 걸지 말고 액티브 최대 효율을 더 높여줘" — Property
+// 총수익 상한을 없애는 대신, Jobs로 벌 수 있는 시간당 절대치 자체를 에너지 회복량부터
+// 끌어올렸다. 모든 Jobs 등급이 코인/에너지 비율은 그대로 두고 "시간당 몇 번 할 수 있는지"만
+// 2배가 돼서, 등급별 상대적 밸런스는 안 건드리고 전체적인 액티브 상한만 2배로 올라간다).
+const ENERGY_REGEN_PER_TICK = 10, ENERGY_TICK_MS = 30 * 1000;
 // 2분당 +1 → 1분당 +1로 2배 빠르게(요청 반영: 봇 구역 전투를 진짜 쓸만한 3번째 수입원으로
 // 만들려면 에너지 대비 지나치게 느린 회복 속도부터 고쳐야 했다). PvP도 같은 자원을 쓰므로
 // 덤으로 더 자주 싸울 수 있게 됐다.
@@ -251,34 +255,6 @@ const JOB_TIERS = {
   omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 4582500,  coinMax: 6345000,  xp: 21600 },
   genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 8167500,  coinMax: 11295000, xp: 38400 },
 };
-
-// ── Property 총수익 상한 = "내가 액티브로 벌 수 있는 최대 시간당 수익"의 일정 비율 —
-// "오프라인(Property)이 아니면 이걸 넘게 벌 수 있어야 하는데 그런 게 없다"는 요청 반영.
-// 개별 기기 가격/수익을 아무리 잘 맞춰도 여러 대를 같이 굴리면(6~10칸) 합산 수익이 순식간에
-// 액티브 한계를 넘어버린다 — 그래서 기기별 개별 조정 대신 "총합"에 상한을 건다. 상한은
-// 고정값이 아니라 그 유저가 지금 레벨로 뚫을 수 있는 최고 Jobs 등급을, 에너지를 쉬지 않고
-// 다 쏟아부었을 때의 시간당 수익(환생 버프로 에너지 비용 할인/회복 속도 증가까지 반영)의
-// PROPERTY_ACTIVE_CAP_RATIO(70%)로 잡는다 — 그러면 "실제로 앉아서 계속 플레이"하는 유저는
-// 언제나 자기 Property 총수익보다 더 많이 벌 수 있고(100% > 70%), 레벨이 오르면 상한 자체도
-// 같이 올라가서 성장이 무의미해지지 않는다.
-const PROPERTY_ACTIVE_CAP_RATIO = 0.7;
-function bestJobTierForLevel(level) {
-  let best = JOB_TIERS.trivial;
-  for (const key in JOB_TIERS) {
-    const t = JOB_TIERS[key];
-    if (t.minLevel <= level && t.minLevel >= best.minLevel) best = t;
-  }
-  return best;
-}
-function activePotentialRatePerHour(row) {
-  const tier = bestJobTierForLevel(row.level);
-  const avgCoin = (tier.coinMin + tier.coinMax) / 2;
-  const effEnergyCost = Math.max(1, Math.round(tier.energyCost * rebirthCostMult(row)));
-  const coinsPerEnergy = avgCoin / effEnergyCost;
-  const energyTickMs = rebirthRegenTickMs(ENERGY_TICK_MS, row);
-  const energyPerHour = (3600000 / energyTickMs) * ENERGY_REGEN_PER_TICK;
-  return coinsPerEnergy * energyPerHour;
-}
 
 // ── 신호 감청(Signal Intercept) — "hacking jobs/property 말고는 돈 벌 수단이 없다"는 요청
 // 반영. 에너지/스태미나 둘 다 안 쓰고 순수 쿨다운(10분)만으로 도는 세 번째 축의 수입원 —
@@ -1065,11 +1041,12 @@ const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무�
 // ── "property 종류를 더 많이 추가해줘 고렙까지 커버 가능하도록" 요청 반영 — von_neumann_
 // swarm 이후 8종을 더 얹어 stellar_engine(3600만) 위로 2187억까지 이어지게 했다(계속 x3
 // 성장). 이 신규 8종의 coinsPerHour는 "그냥 1/30으로" 요청 반영 — 가격의 정확히 1/30(위
-// 17종의 1/6보다 낮은 효율, 회수 기간 30시간). 예전엔 이 개별 비율 하나로 "액티브를
-// 못 넘어야 한다"는 조건까지 맞추려다 두 번이나 자릿수 계산을 잘못했었는데(1/10→시간당
-// 218억, 1/50→43억, 둘 다 의도한 값의 1000배), 이제는 그 역할을 아래 PROPERTY_ACTIVE_CAP_RATIO
-// (기기를 몇 대를 사든 총수익은 액티브 잠재 효율의 70%를 못 넘음)가 대신하므로, 여기 개별
-// 기기 비율은 실수해도 경제가 안 깨지는 단순한 숫자로만 정하면 된다.
+// 17종의 1/6보다 낮은 효율, 회수 기간 30시간). 한때 여기(개별 비율)로 "총수익이 액티브를
+// 못 넘어야 한다"는 조건까지 맞추려다 두 번이나 자릿수 계산을 잘못했고(1/10→시간당 218억,
+// 1/50→43억, 둘 다 의도한 값의 1000배), 그다음엔 총수익에 액티브 잠재 효율 기반 상한을
+// 걸어 해결했었는데 — "그냥 상한 걸지 말고 액티브 최대 효율을 더 높여줘" 요청으로 그 상한도
+// 뺐다(pendingPropertyIncome 참고). 이제 Property는 순수하게 보유 기기 총합만 내고,
+// 액티브 쪽 절대치는 ENERGY_REGEN_PER_TICK을 올려서 대신 끌어올렸다.
 
 const PROPERTY_DEVICES = {
   proxy_relay:     { name: "Proxy Relay",          price: 200,      coinsPerHour: 33 },
@@ -1128,7 +1105,7 @@ function propertyTierColor(deviceId) {
 const PLANET_COUNT = 48;
 // "hacking jobs/property 말고는 딱히 돈 벌 수단이 없다"는 요청 반영 — 사실 봇 구역 전투가
 // 세 번째 반복 수입원이긴 한데(승리 시 그 난이도 coinsPerHour의 절반을 즉시 획득), 스태미나
-// 회복이 에너지보다 훨씬 느려서(기본 2분당 +1 vs 30초당 +5, 아래 STAMINA_TICK_MS 참고)
+// 회복이 에너지보다 훨씬 느려서(기본 2분당 +1 vs 30초당 +10, 아래 STAMINA_TICK_MS 참고)
 // 물량 자체가 안 나왔다 — 공격 비용을 2 → 1로 반으로 줄여서 같은 스태미나로 2배 더 많이
 // 시도할 수 있게 했다.
 const PLANET_ATTACK_STAMINA_COST = 1;
@@ -2333,14 +2310,12 @@ async function pendingPropertyIncome(env, row) {
   }
   // 환생 버프(패시브 수입) — 티어당 +3%(최대 +12%).
   ratePerHour = Math.round(ratePerHour * (1 + rebirthCountRatio(row.rebirth_count) * REBIRTH_MAX_PROPERTY_INCOME_BONUS));
-  // Property 총수익 상한 — "오프라인이 아니면 이걸 넘게 벌 수 있어야 하는데 그런 게 없다"는
-  // 요청 반영. 기기를 아무리 많이/비싸게 채워도 이 유저의 액티브 잠재 수익(activePotentialRatePerHour)의
-  // 70%를 못 넘는다 — 그래서 실제로 앉아서 플레이하면 항상 자기 Property 총수익보다 더 번다.
-  const activeCap = Math.round(activePotentialRatePerHour(row) * PROPERTY_ACTIVE_CAP_RATIO);
-  const capped = Math.min(ratePerHour, activeCap);
+  // 총수익 상한(액티브 잠재 효율의 70%)은 뺐다 — "그냥 상한 걸지 말고 액티브 최대 효율을
+  // 더 높여줘" 요청 반영. 대신 ENERGY_REGEN_PER_TICK을 올려서 액티브 쪽 절대치 자체를
+  // 끌어올렸다(위 상수 정의 참고) — Property는 보유 기기 그대로 다 더한 값을 낸다.
   const elapsedMs = Math.min(Date.now() - (row.last_property_collect || row.created_at), PROPERTY_MAX_ACCRUAL_MS);
-  const pendingCoins = Math.floor(capped * (elapsedMs / 3600000));
-  return { ratePerHour: capped, uncappedRatePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
+  const pendingCoins = Math.floor(ratePerHour * (elapsedMs / 3600000));
+  return { ratePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
 }
 
 async function collectProperty(env, row) {
@@ -4535,14 +4510,7 @@ export default {
           .sort(function (a, b) { return a[1].price - b[1].price; })
           .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
         const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
-        // uncappedRatePerHour/activeCap을 같이 내려줘서 "총수익이 왜 기기 합계보다 낮은지"를
-        // 프론트에서 설명할 수 있게 한다(요청 반영: 액티브가 항상 이 상한보다는 더 벌 수 있다는
-        // 걸 투명하게 보여줘야 "억울함"이 안 생긴다).
-        return json({
-          devices: devices, ratePerHour: info.ratePerHour, uncappedRatePerHour: info.uncappedRatePerHour,
-          activeCapRatio: PROPERTY_ACTIVE_CAP_RATIO, activePotentialRatePerHour: Math.round(activePotentialRatePerHour(row)),
-          pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000,
-        });
+        return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 
       if (request.method === "POST" && path === "/property/buy") {
