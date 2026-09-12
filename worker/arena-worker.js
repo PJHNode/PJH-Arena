@@ -878,6 +878,79 @@ async function bountyProgressCounts(env, userId, bucketStart) {
   return counts;
 }
 
+// ══════════════════════════════════════════════════════════
+//  다크넷 로또(Raffle) — "RNG 느낌의 탭" 요청 반영. 여러 유저가 코인으로 티켓을 사서 같은
+//  판(라운드)에 판돈을 모으고, 라운드가 끝나면 산 티켓 수에 비례한 확률로 딱 한 명이 판돈을
+//  가져간다(래플/복권 방식 — 요청 반영: "복권/래플, 유저끼리 파이 공유"). 하우스 엣지
+//  (RAFFLE_RAKE_RATE)만큼은 당첨자에게도 안 가고 그대로 사라진다 — 즉 라운드 전체로 보면
+//  코인 총량이 줄어드는 순수 코인 싱크다(요청 반영: "코인만, 하우스 엣지 있는 순수 코인
+//  싱크"). 이건 수입원이 아니라 지출처라, 방금 만든 "Property 총수익은 액티브를 못 이긴다"
+//  원칙과 절대 충돌하지 않는다 — 오히려 고렙/부자 유저가 남는 코인을 태울 곳이 하나 더 생겨서
+//  "돈 쓸 데가 없다"는 반대쪽 불만도 같이 줄여준다.
+//
+//  라운드는 실제 크론 없이 "누군가 이 티어를 조회/구매할 때" 그 시점에서 끝났으면 그 자리에서
+//  즉시 정산하고 새 라운드를 여는 지연 평가 방식(상점 로테이션과 같은 발상)이지만, 상점과
+//  달리 실제로 돈이 오가는 상태 변경이라 동시 요청 경쟁을 반드시 막아야 한다 — status를
+//  'active' 조건부 UPDATE로 딱 한 요청만 "정산할 권리"를 갖게 한다(POST /shop/buy의 재고
+//  차감과 같은 패턴, stockRes.meta.changes 체크 참고).
+// ══════════════════════════════════════════════════════════
+const RAFFLE_TIERS = {
+  common:    { label: "커먼",     ticketPrice: 1000,     periodMs: 1 * 60 * 60 * 1000 },
+  rare:      { label: "레어",     ticketPrice: 100000,   periodMs: 4 * 60 * 60 * 1000 },
+  legendary: { label: "레전더리", ticketPrice: 10000000, periodMs: 12 * 60 * 60 * 1000 },
+};
+const RAFFLE_RAKE_RATE = 0.15; // 판돈의 15%는 당첨자에게도 안 가고 소각(하우스 엣지)
+const RAFFLE_MAX_TICKETS_PER_BUY = 1000; // 실수 방지용 안전장치일 뿐 잔고만 있으면 여러 번 나눠 사면 됨
+
+async function ensureRaffleRound(env, tier) {
+  const tierDef = RAFFLE_TIERS[tier];
+  const now = Date.now();
+  let round = await env.DB.prepare("SELECT * FROM arena_raffle_rounds WHERE tier=? AND status='active' ORDER BY id DESC LIMIT 1").bind(tier).first();
+  if (!round) {
+    await env.DB.prepare("INSERT INTO arena_raffle_rounds (tier, status, pot, ticket_count, ends_at, created_at) VALUES (?, 'active', 0, 0, ?, ?)")
+      .bind(tier, now + tierDef.periodMs, now).run();
+    round = await env.DB.prepare("SELECT * FROM arena_raffle_rounds WHERE tier=? AND status='active' ORDER BY id DESC LIMIT 1").bind(tier).first();
+  }
+  if (now >= round.ends_at) {
+    await resolveRaffleRound(env, round);
+    return ensureRaffleRound(env, tier); // 정산 후 새로 열린(혹은 이미 다른 요청이 연) 라운드를 다시 읽는다
+  }
+  return round;
+}
+
+async function resolveRaffleRound(env, round) {
+  // 조건부 UPDATE — 실제로 바뀐 행이 있을 때만 이 요청이 "당첨자를 뽑을 권리"를 가진다.
+  // 0행이면 동시에 들어온 다른 요청이 이미 처리했다는 뜻이므로 조용히 넘어간다.
+  const claim = await env.DB.prepare("UPDATE arena_raffle_rounds SET status='resolving' WHERE id=? AND status='active'").bind(round.id).run();
+  if (!claim.meta || !claim.meta.changes) return;
+
+  let winnerId = null, winnerName = null, payout = 0;
+  if (round.ticket_count > 0) {
+    const tickets = await env.DB.prepare("SELECT user_id, user_name, qty FROM arena_raffle_tickets WHERE round_id=?").bind(round.id).all();
+    const r = Math.random() * round.ticket_count;
+    let cum = 0;
+    for (const t of tickets.results) {
+      cum += t.qty;
+      if (r < cum) { winnerId = t.user_id; winnerName = t.user_name; break; }
+    }
+    if (!winnerId && tickets.results.length) {
+      const last = tickets.results[tickets.results.length - 1];
+      winnerId = last.user_id; winnerName = last.user_name; // 부동소수점 오차 안전망
+    }
+    if (winnerId) {
+      payout = Math.round(round.pot * (1 - RAFFLE_RAKE_RATE));
+      await env.DB.prepare("UPDATE arena_users SET pocket_coins = pocket_coins + ? WHERE user_id=?").bind(payout, winnerId).run();
+      await insertLog(env, winnerId, "raffle_win", null, RAFFLE_TIERS[round.tier].label, "success", payout, 0);
+    }
+  }
+  const now = Date.now();
+  await env.DB.prepare("UPDATE arena_raffle_rounds SET status='resolved', winner_user_id=?, winner_name=?, payout=?, resolved_at=? WHERE id=?")
+    .bind(winnerId, winnerName, payout, now, round.id).run();
+  const tierDef = RAFFLE_TIERS[round.tier];
+  await env.DB.prepare("INSERT INTO arena_raffle_rounds (tier, status, pot, ticket_count, ends_at, created_at) VALUES (?, 'active', 0, 0, ?, ?)")
+    .bind(round.tier, now + tierDef.periodMs, now).run();
+}
+
 async function clubIdOf(env, userId) {
   const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
   return row ? row.club_id : null;
@@ -1535,6 +1608,20 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_breaker_used_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_block_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_signal_intercept_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+
+  // ── 다크넷 로또(Raffle) — 라운드 하나(티어별로 항상 최대 1개 'active')에 여러 유저의
+  // 티켓이 쌓이고, 끝나면 정산돼 'resolved'로 바뀐다(ensureRaffleRound/resolveRaffleRound 참고). ──
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_raffle_rounds (id INTEGER PRIMARY KEY AUTOINCREMENT, tier TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', " +
+    "pot INTEGER NOT NULL DEFAULT 0, ticket_count INTEGER NOT NULL DEFAULT 0, ends_at INTEGER NOT NULL, " +
+    "winner_user_id TEXT, winner_name TEXT, payout INTEGER, resolved_at INTEGER, created_at INTEGER NOT NULL)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_raffle_rounds_tier_status ON arena_raffle_rounds(tier, status)"); } catch (e) {}
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_raffle_rounds_resolved ON arena_raffle_rounds(status, resolved_at)"); } catch (e) {}
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_raffle_tickets (round_id INTEGER NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL, " +
+    "qty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (round_id, user_id))"
+  );
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -4384,6 +4471,57 @@ export default {
           env.DB.prepare("INSERT INTO arena_bounty_claims (user_id, bucket, bounty_id, claimed_at) VALUES (?, ?, ?, ?)").bind(user.userId, bucket, id, Date.now()),
         ]);
         return json({ ok: true, reward: coinReward, pocketCoins: row.pocket_coins, xpGained: xpGain, leveledUp: leveledUp });
+      }
+
+      // ── GET /raffle — 3개 티어 전부 현재 라운드 상태를 내려준다. 조회하는 그 순간 라운드가
+      //    끝나 있으면(ensureRaffleRound 내부) 그 자리에서 즉시 정산하고 새 라운드를 연다 —
+      //    그래서 이 요청만으로도 항상 "지금 살아있는" 라운드 정보를 보게 된다. ──
+      if (request.method === "GET" && path === "/raffle") {
+        const tiers = {};
+        for (const tier in RAFFLE_TIERS) {
+          const round = await ensureRaffleRound(env, tier);
+          const myTicket = await env.DB.prepare("SELECT qty FROM arena_raffle_tickets WHERE round_id=? AND user_id=?").bind(round.id, user.userId).first();
+          const myQty = myTicket ? myTicket.qty : 0;
+          tiers[tier] = {
+            label: RAFFLE_TIERS[tier].label, ticketPrice: RAFFLE_TIERS[tier].ticketPrice,
+            pot: round.pot, ticketCount: round.ticket_count, endsAt: round.ends_at,
+            myTickets: myQty,
+            myWinChancePct: round.ticket_count > 0 ? Math.round((myQty / round.ticket_count) * 10000) / 100 : 0,
+          };
+        }
+        const recentRes = await env.DB.prepare(
+          "SELECT tier, winner_name, payout, resolved_at FROM arena_raffle_rounds WHERE status='resolved' AND winner_user_id IS NOT NULL ORDER BY resolved_at DESC LIMIT 10"
+        ).all();
+        const recentWinners = recentRes.results.map(function (r) {
+          return { tier: r.tier, tierLabel: RAFFLE_TIERS[r.tier] ? RAFFLE_TIERS[r.tier].label : r.tier, winnerName: r.winner_name, payout: r.payout, resolvedAt: r.resolved_at };
+        });
+        return json({ tiers: tiers, rakeRatePct: RAFFLE_RAKE_RATE * 100, recentWinners: recentWinners });
+      }
+
+      // ── POST /raffle/buy { tier, qty } — 코인으로 티켓을 산다. 산 만큼 그 라운드의 당첨
+      //    확률이 오르지만(내 티켓 수 / 전체 티켓 수), 당첨돼도 판돈의 (1-RAFFLE_RAKE_RATE)만
+      //    받는다 — 나머지는 하우스 엣지로 사라지는 순수 코인 싱크. ──
+      if (request.method === "POST" && path === "/raffle/buy") {
+        const body = await request.json().catch(function () { return {}; });
+        const tier = String(body.tier || "");
+        const tierDef = RAFFLE_TIERS[tier];
+        if (!tierDef) return json({ error: "알 수 없는 등급입니다." }, 400);
+        const qty = Math.max(1, Math.min(RAFFLE_MAX_TICKETS_PER_BUY, parseInt(body.qty, 10) || 1));
+
+        const round = await ensureRaffleRound(env, tier);
+        const cost = tierDef.ticketPrice * qty;
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.pocket_coins < cost) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(cost) + ")" }, 400);
+
+        row.pocket_coins -= cost;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
+          env.DB.prepare(
+            "INSERT INTO arena_raffle_tickets (round_id, user_id, user_name, qty) VALUES (?, ?, ?, ?) ON CONFLICT(round_id, user_id) DO UPDATE SET qty = qty + ?"
+          ).bind(round.id, user.userId, user.realName, qty, qty),
+          env.DB.prepare("UPDATE arena_raffle_rounds SET pot = pot + ?, ticket_count = ticket_count + ? WHERE id=?").bind(cost, qty, round.id),
+        ]);
+        return json({ ok: true, pocketCoins: row.pocket_coins, tier: tier, qtyBought: qty });
       }
 
       if (request.method === "GET" && path === "/property") {

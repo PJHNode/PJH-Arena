@@ -344,6 +344,7 @@
     inventory: renderInventoryTab,
     property: renderPropertyTab,
     bank: renderBankTab,
+    raffle: renderRaffleTab,
     research: renderResearchTab,
     enchant: renderEnchantTab,
     rebirthshop: renderRebirthShopTab,
@@ -1719,6 +1720,81 @@
     $("bankVault").textContent = fmt(state.bankCoins);
   }
 
+  // ── 다크넷 로또(Raffle) — "RNG 느낌의 탭" 요청 반영. 코인으로 티켓을 사서 판돈에 참여하고,
+  //    라운드가 끝나면 산 티켓 수에 비례한 확률로 한 명이 판돈(의 85%, 나머지는 하우스 몫)을
+  //    가져간다. 수익원이 아니라 순수 코인 소모처 — Property처럼 "액티브를 못 이겨야 한다"는
+  //    제약이 없다(오히려 반대로, 쌓인 코인을 태우는 용도). 라운드 종료 카운트다운은 다른
+  //    탭들과 같은 패턴(1초마다 로컬 갱신, 0이 되면 라파 탭이 보일 때만 서버에서 다시 조회 —
+  //    서버가 그 조회 시점에 실제 정산까지 끝내 놓는다). ──
+  let raffleTiersCache = null;
+  const RAFFLE_TIER_META = { common: { icon: "🥉", color: "var(--sub)" }, rare: { icon: "🥈", color: "var(--cyan)" }, legendary: { icon: "🥇", color: "var(--stamina)" } };
+  async function renderRaffleTab() {
+    const grid = $("raffleGrid");
+    const winnersEl = $("raffleWinners");
+    try {
+      const data = await api("/raffle");
+      raffleTiersCache = data;
+      setText("raffleRakeNote", data.rakeRatePct);
+      grid.innerHTML = Object.keys(data.tiers).map((tier) => {
+        const t = data.tiers[tier];
+        const meta = RAFFLE_TIER_META[tier] || RAFFLE_TIER_META.common;
+        const canAfford = state && state.pocketCoins >= t.ticketPrice;
+        return (
+          '<div class="raffle-card" style="border-left-color:' + meta.color + ';">' +
+          '<div class="raffle-card-title">' + meta.icon + " " + t.label + "</div>" +
+          '<div class="raffle-pot">💰 ' + fmt(t.pot) + "</div>" +
+          '<div class="raffle-card-row"><span>티켓 가격</span><b>' + fmt(t.ticketPrice) + " 코인</b></div>" +
+          '<div class="raffle-card-row"><span>전체 티켓</span><b>' + fmt(t.ticketCount) + "장</b></div>" +
+          '<div class="raffle-card-row"><span>내 티켓</span><b>' + fmt(t.myTickets) + "장 (" + t.myWinChancePct + "%)</b></div>" +
+          '<div class="raffle-card-row"><span>추첨까지</span><b class="raffle-countdown" data-ends="' + t.endsAt + '">--</b></div>' +
+          '<div class="raffle-buy-form">' +
+          '<input type="number" min="1" max="1000" value="1" data-qty="' + tier + '" />' +
+          '<button class="btn-primary" data-buyraffle="' + tier + '"' + (canAfford ? "" : " disabled") + ">티켓 구매</button>" +
+          "</div></div>"
+        );
+      }).join("");
+      grid.querySelectorAll("button[data-buyraffle]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const tier = btn.dataset.buyraffle;
+          const qtyInput = grid.querySelector('input[data-qty="' + tier + '"]');
+          const qty = Math.max(1, Math.min(1000, parseInt(qtyInput.value, 10) || 1));
+          btn.disabled = true;
+          try {
+            const r = await api("/raffle/buy", { method: "POST", body: { tier: tier, qty: qty } });
+            toast("🎫 " + (RAFFLE_TIER_META[tier] || {}).icon + " 티켓 " + fmt(r.qtyBought) + "장 구매!");
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderRaffleTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+
+      if (!data.recentWinners.length) {
+        winnersEl.innerHTML = '<p class="dim" style="padding:10px 0;">아직 당첨자가 없습니다.</p>';
+      } else {
+        winnersEl.innerHTML = data.recentWinners.map((w) => (
+          '<div class="raffle-winner-row"><span>' + (RAFFLE_TIER_META[w.tier] || {}).icon + " " + escapeHtml(w.tierLabel) + "</span>" +
+          "<span>" + escapeHtml(w.winnerName) + "</span>" +
+          '<span style="color:var(--stamina);">+' + fmt(w.payout) + "</span>" +
+          '<span class="dim">' + new Date(w.resolvedAt).toLocaleString("ko-KR") + "</span></div>"
+        )).join("");
+      }
+    } catch (e) {
+      grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+  // 1초마다 각 티어 카운트다운만 갱신하고, 하나라도 0이 되면(추첨 시각 도달) 라파 탭이 보일
+  // 때만 다시 조회한다(그 조회가 서버 쪽 정산도 같이 끝내놓음).
+  setInterval(() => {
+    if (currentTab !== "raffle" || !raffleTiersCache) return;
+    const now = Date.now();
+    let anyDue = false;
+    document.querySelectorAll(".raffle-countdown").forEach((el) => {
+      const endsAt = Number(el.dataset.ends);
+      if (endsAt <= now) { anyDue = true; el.textContent = "정산 중..."; }
+      else el.textContent = fmtCountdown(endsAt - now);
+    });
+    if (anyDue) renderRaffleTab();
+  }, 1000);
+
   // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
   //    삭제됨 — 요청 반영: "원정 연구를 없애줘"). ──
   // $(id)가 null이어도 조용히 무시한다 — 이 탭의 여러 버튼이 "한 번 해금/맥스가 되면
@@ -2819,6 +2895,7 @@
         else if (l.kind === "home_breached") { icon = "💥"; desc = "홈 행성 피습당함: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "planet_expedition") { icon = attackWon ? "🛰️" : "🛰️"; desc = (attackWon ? "원정 성공: " : "원정 실패: ") + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
+        else if (l.kind === "raffle_win") { icon = "🎫"; desc = escapeHtml(l.opponent_name || "") + " 등급 다크넷 로또 당첨!"; }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
           '<div class="log-row"><span>' + icon + "</span><span>" + desc + '</span><span class="' + coinCls + '">' +

@@ -62,11 +62,11 @@
   .job-card, .shop-card, .achievement-card, .enchant-card, .diamond-exchange-card, .research-node,
   .trade-composer, .trade-row, .club-header, .club-browse-card, .club-create-card, .daily-widget,
   .admin-card, .profile-card, .profile-slot, .profile-edit, .bot-card, .bot-recruit-card,
-  .property-card, .galaxy-empire, .planet-card, .bank-card, .club-chat-box {
+  .property-card, .galaxy-empire, .planet-card, .bank-card, .club-chat-box, .raffle-card {
     border-radius: 6px; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
   }
   .job-card:hover, .shop-card:hover, .achievement-card:hover, .enchant-card:hover, .bot-card:hover,
-  .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover {
+  .property-card:hover, .planet-card:hover, .club-browse-card:hover, .admin-card:hover, .trade-row:hover, .raffle-card:hover {
     transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.45);
   }
   .pvp-row, .lb-row, .log-row, .inv-row, .club-member-row, .club-relation-row, .daily-quest-row {
@@ -477,6 +477,19 @@
   .property-card-rate { font-size: 11px; color: var(--energy); margin-bottom: 4px; }
   .property-card-price { font-size: 12px; color: var(--stamina); margin-bottom: 10px; }
   .property-card-owned { font-size: 10px; color: var(--sub); margin-bottom: 8px; }
+  /* 다크넷 로또 — 티어 3개(커먼/레어/레전더리) 카드 + 최근 당첨자 목록. */
+  .raffle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .raffle-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 16px; }
+  .raffle-card-title { font-weight: bold; font-size: 14px; margin-bottom: 8px; }
+  .raffle-card-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--sub); margin-bottom: 6px; }
+  .raffle-card-row b { color: var(--text); }
+  .raffle-pot { font-size: 20px; font-weight: bold; color: var(--stamina); margin: 8px 0; }
+  .raffle-buy-form { display: flex; gap: 6px; margin-top: 10px; }
+  .raffle-buy-form input { width: 70px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; padding: 8px; }
+  .raffle-buy-form button { flex: 1; }
+  .raffle-winners { background: var(--surface); border: 1px solid var(--border); padding: 4px 14px; }
+  .raffle-winner-row { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .raffle-winner-row:last-child { border-bottom: none; }
 
   /* Galaxy Map */
   .galaxy-empire { background: var(--surface); border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; }
@@ -723,6 +736,7 @@
       <button class="side-tab" data-tab="inventory">💾 Inventory</button>
       <button class="side-tab" data-tab="property">🏭 Property</button>
       <button class="side-tab" data-tab="bank">🏦 Secure Bank</button>
+      <button class="side-tab" data-tab="raffle">🎫 다크넷 로또</button>
       <button class="side-tab" data-tab="research">🔬 Research</button>
       <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
       <button class="side-tab" data-tab="trade">🤝 Trade</button>
@@ -891,6 +905,14 @@
           <button class="btn-ghost" id="withdrawAllBtn">ALL</button>
         </div>
         <p class="dim">🛡️ 약탈 완전 면역 · 입금 수수료 10% · 이자 없음</p>
+      </div>
+
+      <div class="tab-panel" id="panel-raffle">
+        <p class="panel-title">🎫 DARKNET RAFFLE</p>
+        <p class="dim" style="margin-bottom:14px;">코인으로 티켓을 사서 판돈에 참여 — 산 티켓 수만큼 당첨 확률이 오릅니다. 당첨돼도 판돈의 <span id="raffleRakeNote">15</span>%는 하우스 몫으로 사라집니다(순수 코인 소모처, 수익원 아님).</p>
+        <div class="raffle-grid" id="raffleGrid"><p class="dim">불러오는 중...</p></div>
+        <p class="panel-title" style="margin-top:22px;">최근 당첨자</p>
+        <div class="raffle-winners" id="raffleWinners"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-research">
