@@ -475,22 +475,22 @@
   /* ── 은하 지도 시각화 — "시각적으로 주변 행성들이 보이면 좋겠는데" 요청 반영. 내 홈
      행성을 중심에 두고, 실제 (x,y) 좌표 기반으로 근처 행성들을 점으로 흩뿌려 보여준다. ── */
   .galaxy-starmap-wrap { background: radial-gradient(circle at 50% 50%, rgba(0,255,157,0.05), transparent 70%), var(--surface); border: 1px solid var(--border); margin-bottom: 14px; padding: 8px; }
-  .galaxy-starmap { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; }
-  .starmap-home { filter: drop-shadow(0 0 6px var(--accent)); }
+  .galaxy-starmap { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; overflow: visible; }
   .starmap-radius { fill: none; stroke: var(--border); stroke-dasharray: 3 3; }
   .starmap-dot { cursor: pointer; stroke: rgba(0,0,0,0.4); stroke-width: 0.5; transition: r 0.15s ease; }
   .starmap-dot:hover { stroke: #fff; stroke-width: 1; }
+  /* 등급 이펙트 — 회전하는 고리(극한 이상)와 궤도 파티클(정예 이상)은 같은 애니메이션을
+     transform-origin 0 0(부모 <g>가 이미 그 행성 좌표로 translate돼 있음)으로 공유한다. */
+  .starmap-ring, .starmap-particle-orbit { transform-origin: 0px 0px; animation-name: starmapOrbitSpin; animation-timing-function: linear; animation-iteration-count: infinite; }
+  @keyframes starmapOrbitSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .starmap-breathe { transform-origin: 0px 0px; animation: starmapBreathe 2.2s ease-in-out infinite; }
+  @keyframes starmapBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
   .starmap-probe { pointer-events: none; }
   .starmap-probe-ship { animation: starmapProbeOrbit linear infinite; transform-origin: 150px 150px; }
   @keyframes starmapProbeOrbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .starmap-probe-ready { animation: starmapProbePulse 1s ease-in-out infinite; }
   @keyframes starmapProbePulse { 0%, 100% { opacity: 0.6; r: 5; } 50% { opacity: 1; r: 8; } }
   .planet-card-combat { font-size: 10px; color: var(--sub); margin-bottom: 4px; }
-  .galaxy-filter-bar { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-  .galaxy-filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
-  .galaxy-filter-btn { background: var(--surface); border: 1px solid var(--border); color: var(--sub); font-size: 10px; padding: 6px 10px; }
-  .galaxy-filter-btn.active { color: var(--accent); border-color: var(--accent); }
-  .planet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .planet-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 14px; text-align: center; }
   .planet-card.mine { border-left-color: var(--energy); }
   .planet-card.home { border-left-color: var(--cyan); }
@@ -770,24 +770,10 @@
         </div>
 
         <p class="panel-subtitle">🤖 봇 구역 — 내 홈 행성 근처(PVE 전용, 절대 고갈되지 않음)</p>
+        <p class="dim" style="margin-bottom:8px;">지도의 행성을 클릭하면 바로 공격할 수 있습니다 — 등급이 높을수록 크고 화려하게 빛납니다.</p>
         <div class="galaxy-starmap-wrap">
           <svg id="galaxyStarmap" class="galaxy-starmap" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
-        <div class="galaxy-filter-bar">
-          <div class="galaxy-filter-group" data-filter-group="tier">
-            <button class="galaxy-filter-btn active" data-tier="all">전체 난이도</button>
-            <button class="galaxy-filter-btn" data-tier="weak">약함</button>
-            <button class="galaxy-filter-btn" data-tier="medium">보통</button>
-            <button class="galaxy-filter-btn" data-tier="strong">강함</button>
-            <button class="galaxy-filter-btn" data-tier="elite">정예</button>
-            <button class="galaxy-filter-btn" data-tier="nightmare">악몽</button>
-            <button class="galaxy-filter-btn" data-tier="apex">극한</button>
-            <button class="galaxy-filter-btn" data-tier="transcendent">초월</button>
-          </div>
-        </div>
-
-        <div class="planet-grid"></div>
-        <button class="btn-ghost" id="galaxyShowMoreBtn" style="display:none;margin-top:14px;width:100%;">더 보기</button>
       </div>
 
       <div class="tab-panel" id="panel-pvp">

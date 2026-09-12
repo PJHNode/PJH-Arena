@@ -539,24 +539,24 @@
   //    수 있게 했다. 필터/더보기는 이미 받아온 목록을 다시 그리기만 할 뿐 서버를 다시 호출하지
   //    않는다 — 캐시가 없을 때만(최초 진입, 공격 후) 네트워크를 탄다. ──
   let galaxyCache = null;
-  let galaxyTierFilter = "all", galaxyShowCount = 12;
-  const GALAXY_PAGE_SIZE = 12;
-  const TIER_ORDER_CLIENT = ["weak", "medium", "strong", "elite", "nightmare", "apex", "transcendent"];
   const PLANET_TIER_LABELS = { weak: "약함", medium: "보통", strong: "강함", elite: "정예", nightmare: "악몽", apex: "극한", transcendent: "초월" };
 
   async function renderGalaxyTab() {
     if (!state) return;
     if (!galaxyCache) {
-      const grid = document.querySelector("#panel-galaxy .planet-grid");
-      grid.innerHTML = '<p class="dim">은하 지도 스캔 중...</p>';
+      const wrap = document.querySelector("#panel-galaxy .galaxy-starmap-wrap");
+      if (wrap) wrap.insertAdjacentHTML("afterbegin", '<p class="dim" id="galaxyStarmapStatus">은하 지도 스캔 중...</p>');
       try {
         const [planetsData, targetsData] = await Promise.all([
           api("/planets"), api("/planets/targets").catch(() => null),
         ]);
         galaxyCache = planetsData;
         galaxyTargetsCache = targetsData ? targetsData.targets : [];
+        const status = $("galaxyStarmapStatus");
+        if (status) status.remove();
       } catch (e) {
-        grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+        const status = $("galaxyStarmapStatus");
+        if (status) status.textContent = e.message;
         return;
       }
     }
@@ -575,9 +575,6 @@
   function renderGalaxyContent() {
     const data = galaxyCache;
     if (!data) return;
-    const panel = $("panel-galaxy");
-    const grid = panel.querySelector(".planet-grid");
-    const moreBtn = $("galaxyShowMoreBtn");
 
     galaxyNextRerollAt = data.nextRerollAt;
     setText("galaxyNearbyRadius", data.nearbyRadius);
@@ -675,31 +672,24 @@
       });
     }
 
-    // 봇 구역 — 필터 적용 후 GALAXY_PAGE_SIZE만큼만 우선 노출. 내 홈 행성(mine)은 애초에
-    // 공격 대상이 아니므로 제외.
-    const targets = data.planets.filter((p) => {
-      if (p.mine) return false;
-      if (galaxyTierFilter !== "all" && p.botTier !== galaxyTierFilter) return false;
-      return true;
-    });
-    const visible = targets.slice(0, galaxyShowCount);
-    grid.innerHTML = visible.length
-      ? visible.map((p) => planetCard(p, true)).join("")
-      : '<p class="dim">조건에 맞는 행성이 없습니다.</p>';
-    moreBtn.style.display = targets.length > visible.length ? "" : "none";
-
-    grid.querySelectorAll("button[data-planet]").forEach((btn) => {
-      const planet = data.planets.find((p) => String(p.id) === btn.dataset.planet);
-      btn.addEventListener("click", () => openPlanetAttackSequence(planet));
-    });
+    // 봇 구역은 이제 카드 목록/난이도 필터 없이 은하 지도(위 renderStarmap)만으로 보여준다
+    // (요청 반영: "아래 탭에 있는 전체난이도는 빼고 그냥 그래픽만 남기자") — 지도의 점을
+    // 클릭하면 renderStarmap 안에서 바로 openPlanetAttackSequence가 열린다.
   }
 
-  // 등급별 색/점 크기 — 아이템 등급 색과는 다른 계열(행성 tier는 별개 체계)이지만 "오를수록
-  // 화려하게"라는 감각은 그대로 유지했다. transcendent가 가장 크고 은은한 발광까지 붙는다.
-  const STARMAP_TIER_STYLE = {
-    weak: { color: "#6d8590", r: 2.6 }, medium: { color: "#00e07a", r: 2.8 }, strong: { color: "#00d4ff", r: 3.2 },
-    elite: { color: "#b060e8", r: 3.8 }, nightmare: { color: "#ff3d9e", r: 4.4 }, apex: { color: "#ff1744", r: 5 },
-    transcendent: { color: "#e100ff", r: 6.2 },
+  // 등급별 크기/색/이펙트 — "난이도가 높아짐에 따라 확실하게 시각적으로 매우 차이가
+  // 나게, 아우라·파티클·크기로" 요청 반영. 반지름이 약함(2.2)→초월(9.5)까지 4배 넘게
+  // 벌어지고, 정예부터 발광이, 정예~극한부터 궤도 파티클이, 극한 이상부터 회전하는 고리가
+  // 붙는다 — 초월은 그 위에 은은하게 숨쉬듯 커졌다 작아지기까지 한다(아이템 파티클/아우라
+  // 이펙트에서 썼던 "등급이 오를수록 화려해지는" 감각을 은하 지도용으로 다시 구현한 것).
+  const STARMAP_TIER_FX = {
+    weak:         { color: "#6d8590", r: 2.2, glow: 0,   particles: 0, ring: false, breathe: false },
+    medium:       { color: "#00e07a", r: 2.6, glow: 0,   particles: 0, ring: false, breathe: false },
+    strong:       { color: "#00d4ff", r: 3.4, glow: 1.2, particles: 0, ring: false, breathe: false },
+    elite:        { color: "#b060e8", r: 4.4, glow: 1.6, particles: 3, ring: false, breathe: false },
+    nightmare:    { color: "#ff3d9e", r: 5.6, glow: 2.0, particles: 5, ring: false, breathe: false },
+    apex:         { color: "#ff1744", r: 7.2, glow: 2.6, particles: 7, ring: true,  breathe: false },
+    transcendent: { color: "#e100ff", r: 9.5, glow: 3.2, particles: 9, ring: true,  breathe: true },
   };
   // ── 은하 지도 시각화 — 내 홈 행성을 중심(150,150)에 두고, 실제 (x,y) 좌표를 지도 반경
   // 130px 안으로 축소해서 근처 행성들을 점으로 흩뿌린다(요청 반영: "시각적으로 주변
@@ -713,13 +703,46 @@
     const radius = data.nearbyRadius || 250;
     const scale = 130 / radius;
     const cx = 150, cy = 150;
-    const dots = (data.planets || []).filter((p) => !p.isHome).map((p) => {
-      const style = STARMAP_TIER_STYLE[p.botTier] || STARMAP_TIER_STYLE.weak;
-      const dx = ((p.x || 0) - home.x) * scale, dy = ((p.y || 0) - home.y) * scale;
-      const glow = p.botTier === "apex" || p.botTier === "transcendent" ? ' style="filter:drop-shadow(0 0 4px ' + style.color + ')"' : "";
-      return '<circle class="starmap-dot" data-planet="' + p.id + '" cx="' + (cx + dx).toFixed(1) + '" cy="' + (cy + dy).toFixed(1) +
-        '" r="' + style.r + '" fill="' + style.color + '"' + glow + "><title>" + escapeHtml(p.name) + " (" + (p.botTierLabel || "") + ")</title></circle>";
+
+    const bodies = (data.planets || []).filter((p) => !p.isHome).map((p) => {
+      const fx = STARMAP_TIER_FX[p.botTier] || STARMAP_TIER_FX.weak;
+      const px = (cx + ((p.x || 0) - home.x) * scale).toFixed(1);
+      const py = (cy + ((p.y || 0) - home.y) * scale).toFixed(1);
+      let inner = "";
+      // 아우라(발광) — 정예 이상부터, 등급이 오를수록 더 크고 흐릿하고 진해진다.
+      if (fx.glow > 0) {
+        inner += '<circle r="' + (fx.r * (1.6 + fx.glow)).toFixed(1) + '" fill="' + fx.color + '" opacity="0.25" ' +
+          'style="filter:blur(' + (1 + fx.glow).toFixed(1) + 'px)"/>';
+      }
+      // 회전하는 고리 — 극한 이상 전용, "이건 진짜 위험하다"는 신호.
+      if (fx.ring) {
+        inner += '<g class="starmap-ring" style="animation-duration:' + (fx.breathe ? 3 : 4) + 's;">' +
+          '<circle r="' + (fx.r + 4.5) + '" fill="none" stroke="' + fx.color + '" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.85"/></g>';
+      }
+      // 파티클 — 정예부터 개수가 계속 늘어나며 궤도를 돈다(같은 애니메이션을 delay만 다르게
+      // 줘서 고르게 퍼뜨린다 — 정적 회전값과 animation의 transform이 서로 안 부딪히게 하는 트릭).
+      const dur = Math.max(1.2, 2.6 - fx.particles * 0.12);
+      for (let i = 0; i < fx.particles; i++) {
+        const delay = (-(dur * i) / fx.particles).toFixed(2);
+        inner += '<g class="starmap-particle-orbit" style="animation-duration:' + dur.toFixed(2) + 's;animation-delay:' + delay + 's;">' +
+          '<circle cx="' + (fx.r + 4.5).toFixed(1) + '" cy="0" r="1.1" fill="' + fx.color + '"/></g>';
+      }
+      const dotCls = "starmap-dot" + (fx.breathe ? " starmap-breathe" : "");
+      inner += '<circle class="' + dotCls + '" data-planet="' + p.id + '" r="' + fx.r + '" fill="' + fx.color +
+        '"><title>' + escapeHtml(p.name) + " (" + (p.botTierLabel || "") + ")</title></circle>";
+      return '<g transform="translate(' + px + "," + py + ')">' + inner + "</g>";
     }).join("");
+
+    // 홈 행성 — "더 명확하게" 요청 반영: 점 하나가 아니라 후광+점선 고리+속이 빈 중심점+
+    // "HOME" 글자까지 붙여서 다른 어떤 행성과도 헷갈릴 수 없게 만들었다.
+    const homeMarker =
+      '<g transform="translate(' + cx + "," + cy + ')">' +
+      '<circle r="15" fill="var(--accent)" opacity="0.15"/>' +
+      '<g class="starmap-ring" style="animation-duration:6s;"><circle r="11" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="2 2"/></g>' +
+      '<circle r="7" fill="var(--accent)" style="filter:drop-shadow(0 0 5px var(--accent))"/>' +
+      '<circle r="2.6" fill="var(--bg)"/>' +
+      '<text y="25" text-anchor="middle" font-size="9" font-weight="bold" fill="var(--accent)" style="font-family:var(--font-mono);">HOME</text>' +
+      "</g>";
 
     let probeHtml = "";
     const probe = data.probe;
@@ -732,8 +755,7 @@
     }
 
     svg.innerHTML =
-      '<circle class="starmap-radius" cx="' + cx + '" cy="' + cy + '" r="130"/>' + dots +
-      '<circle class="starmap-home" cx="' + cx + '" cy="' + cy + '" r="7" fill="var(--accent)"><title>🏠 내 홈 행성</title></circle>' +
+      '<circle class="starmap-radius" cx="' + cx + '" cy="' + cy + '" r="130"/>' + bodies + homeMarker +
       (probeHtml ? '<g class="starmap-probe">' + probeHtml + "</g>" : "");
 
     svg.querySelectorAll(".starmap-dot").forEach((dot) => {
@@ -774,20 +796,6 @@
       if (btn) btn.style.display = "none";
     }
   }, 1000);
-
-  function initGalaxyFilters() {
-    document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".galaxy-filter-btn[data-tier]").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        galaxyTierFilter = btn.dataset.tier;
-        galaxyShowCount = GALAXY_PAGE_SIZE;
-        renderGalaxyContent();
-      });
-    });
-    const moreBtn = $("galaxyShowMoreBtn");
-    if (moreBtn) moreBtn.addEventListener("click", () => { galaxyShowCount += GALAXY_PAGE_SIZE; renderGalaxyContent(); });
-  }
 
   // ── 사람 구역 정찰 — /arena/scan(PvP 정찰)과 똑같은 발상. 정찰해야만 그 순간 상대 홈
   //    행성 정보(전투력/무적 여부/planetId)가 드러나고 공격 버튼이 뜬다. targetUserId 자리엔
@@ -850,7 +858,6 @@
   }
 
   function initGalaxyButtons() {
-    initGalaxyFilters();
     initGalaxyScout();
     initGalaxyProbe();
   }

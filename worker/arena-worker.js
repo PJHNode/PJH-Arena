@@ -975,7 +975,14 @@ function hashSeedFromString(str) {
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
   return h | 0;
 }
-function buildPersonalPlanetDeck(userId, nowMs) {
+// "일반(홈 근처)에서는 극한/초월이 절대 안 뜨게, 오직 탐사로만" 요청 반영 — 이 등급들은
+// 무조건 반경 밖(먼 곳)에만 존재해야 한다.
+const PLANET_NEARBY_RESTRICTED_TIERS = ["apex", "transcendent"];
+// homeXY + slotCoords(슬롯 인덱스 -> {x,y})를 같이 넘기면, 셔플 직후 "근처인데 제한 등급"인
+// 슬롯을 "먼 곳인데 제한 등급이 아닌" 슬롯과 맞바꾼다 — 등급별 전체 개수(48개 구성비)는
+// 그대로 유지하면서 위치만 재배치하는 것이라 보장 개수 자체는 안 깨진다. 좌표 정보가 없으면
+// (호출부가 안 넘기면) 그냥 원래 셔플 결과를 쓴다 — 하위 호환.
+function buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords) {
   const deck = [];
   for (const key in PLANET_TIER_GUARANTEED_COUNTS) {
     for (let i = 0; i < PLANET_TIER_GUARANTEED_COUNTS[key]; i++) deck.push(key);
@@ -986,11 +993,37 @@ function buildPersonalPlanetDeck(userId, nowMs) {
     const j = Math.floor(rng() * (i + 1));
     const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
   }
+  if (homeXY && slotCoords) {
+    const isNearby = function (idx) {
+      const c = slotCoords[idx];
+      return !!c && planetDistance(c.x, c.y, homeXY.x, homeXY.y) <= PLANET_NEARBY_RADIUS;
+    };
+    for (let idx = 0; idx < deck.length; idx++) {
+      if (PLANET_NEARBY_RESTRICTED_TIERS.indexOf(deck[idx]) === -1 || !isNearby(idx)) continue;
+      for (let j = 0; j < deck.length; j++) {
+        if (j === idx || PLANET_NEARBY_RESTRICTED_TIERS.indexOf(deck[j]) !== -1 || isNearby(j)) continue;
+        const tmp = deck[idx]; deck[idx] = deck[j]; deck[j] = tmp;
+        break;
+      }
+    }
+  }
   return deck;
 }
-function effectivePlanetTier(userId, slotIndex, nowMs) {
-  const deck = buildPersonalPlanetDeck(userId, nowMs);
+function effectivePlanetTier(userId, slotIndex, nowMs, homeXY, slotCoords) {
+  const deck = buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords);
   return deck[slotIndex % deck.length];
+}
+// effectivePlanetTier를 "근처 제한 등급" 반영해서 정확히 판정하려면 내 홈 좌표 + 48슬롯
+// 좌표가 다 필요한데, 이미 그 데이터를 갖고 있는 호출부(GET /planets, probe/collect)는
+// 굳이 다시 안 부르고, 그렇지 않은 곳(resolvePlanetCombat)만 이 헬퍼로 새로 조회한다.
+async function planetNearbyContext(env, userId) {
+  const [homeRow, slotsRes] = await Promise.all([
+    env.DB.prepare("SELECT x, y FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(userId).first(),
+    env.DB.prepare("SELECT slot_index, x, y FROM arena_planets WHERE is_home = 0").all(),
+  ]);
+  const slotCoords = {};
+  slotsRes.results.forEach(function (p) { slotCoords[p.slot_index] = { x: p.x, y: p.y }; });
+  return { homeXY: homeRow ? { x: homeRow.x, y: homeRow.y } : null, slotCoords: slotCoords };
 }
 function rollPlanetTier() {
   return pickTierFromRng(Math.random); // 최초 시드용 — 어차피 미정복 상태론 위 effectivePlanetTier로 계속 덮임
@@ -1982,7 +2015,8 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   let defenderCombat, defenderLastStance = null, effectiveTierKey = null, defenderRow = null;
 
   if (isBotPlanet) {
-    effectiveTierKey = effectivePlanetTier(user.userId, planet.slot_index, now);
+    const nearbyCtx = await planetNearbyContext(env, user.userId);
+    effectiveTierKey = effectivePlanetTier(user.userId, planet.slot_index, now, nearbyCtx.homeXY, nearbyCtx.slotCoords);
     const t = PLANET_BOT_TIERS[effectiveTierKey];
     defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
   } else {
@@ -4010,6 +4044,10 @@ export default {
         const res = await env.DB.prepare("SELECT * FROM arena_planets WHERE is_home = 0 OR owner_user_id = ? ORDER BY is_home DESC, slot_index ASC").bind(user.userId).all();
         const meRow = await loadOrCreateUser(env, user.userId, user.realName);
         const myCombat = await totalCombatStats(env, meRow);
+        // 근처 제한 등급(극한/초월) 판정에 필요한 좌표표 — 이미 위 쿼리로 48슬롯 좌표를 전부
+        // 갖고 있으니 다시 조회하지 않고 여기서 바로 만든다.
+        const slotCoordsForTier = {};
+        res.results.forEach(function (p) { if (!p.is_home) slotCoordsForTier[p.slot_index] = { x: p.x, y: p.y }; });
         const planets = res.results
           .filter(function (p) {
             if (p.is_home) return true; // 내 홈 행성은 항상 포함(쿼리 조건상 항상 "내" 것)
@@ -4024,7 +4062,7 @@ export default {
           // 표시했었다)를 쓰지 않는다(요청 반영: "그냥 보상이니까 이렇게 쓰지마").
           let tierKey = null, combatStats = null, rewardCoins = 0, homeInvulnerable = false;
           if (!p.is_home) {
-            tierKey = effectivePlanetTier(user.userId, p.slot_index, now);
+            tierKey = effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             rewardCoins = Math.round(t.coinsPerHour * 0.5);
@@ -4112,9 +4150,11 @@ export default {
         const now = Date.now();
         const myHome = await env.DB.prepare("SELECT x, y FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(user.userId).first();
         const allSlots = await env.DB.prepare("SELECT id, name, slot_index, x, y FROM arena_planets WHERE is_home = 0").all();
+        const slotCoordsForTier = {};
+        allSlots.results.forEach(function (p) { slotCoordsForTier[p.slot_index] = { x: p.x, y: p.y }; });
         const matches = [];
         for (const p of allSlots.results) {
-          if (effectivePlanetTier(user.userId, p.slot_index, now) !== targetTier) continue;
+          if (effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier) !== targetTier) continue;
           if (myHome && planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS) continue; // 이미 그냥 보이는 건 패스
           matches.push(p);
         }
