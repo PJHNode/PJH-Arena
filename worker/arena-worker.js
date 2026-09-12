@@ -919,11 +919,13 @@ const PROPERTY_SELL_RATE = 0.5; // 되팔 때는 구매가의 50%만 환불(무�
 // 8종 포함) 중 어떤 6개를 채울지 고르는 게 진짜 선택이 된다.
 // ── "property 종류를 더 많이 추가해줘 고렙까지 커버 가능하도록" 요청 반영 — von_neumann_
 // swarm 이후 8종을 더 얹어 stellar_engine(3600만) 위로 2187억까지 이어지게 했다(계속 x3
-// 성장). 단, "그 대신 코인 양을 1/10으로" 요청 반영 — 이 신규 8종은 위 17종의 1/6 비율을
-// 그대로 잇지 않고, coinsPerHour를 가격의 정확히 1/10로 낮춰서(예: 아래서는 6시간이면 원금을
-// 회수하지만, 여기부터는 10시간 걸림) 후반 기기일수록 "화력은 세지만 효율 자체는 이전보다
-// 낮은" 투자처가 되도록 했다 — 이래야 고렙 Jobs/PvP 소득이 여전히 의미 있고, Property 하나로
-// 경제가 트리비얼해지지 않는다.
+// 성장). 처음엔 "코인 양을 1/10으로"로 낮췄었는데, 계산해보니 최상위 기기(The Last
+// Server)가 시간당 2187만 코인이 나와서 액티브로 Genesis Job을 계속 돌릴 때(시간당 약
+// 342만 코인)의 6.4배나 되는 "혜자" 비율이었다 — 그래서 1/50로 다시 낮췄다: 최상위 기기가
+// 시간당 437만 코인으로, 액티브 최고 효율의 약 1.3배 정도로만 맞춰서 "화력은 세지만
+// 액티브 플레이가 여전히 밑지지 않는" 선을 지켰다(위 17종의 기존 1/6 비율은 그대로 둠 —
+// 이 신규 8종만 별도 비율).
+
 const PROPERTY_DEVICES = {
   proxy_relay:     { name: "Proxy Relay",          price: 200,      coinsPerHour: 33 },
   botnet_node:     { name: "Botnet Node",          price: 500,      coinsPerHour: 83 },
@@ -942,14 +944,14 @@ const PROPERTY_DEVICES = {
   quantum_nexus:   { name: "Quantum Nexus",        price: 4050000,  coinsPerHour: 675000 },
   galactic_forge:  { name: "Galactic Forge",       price: 12000000, coinsPerHour: 2000000 },
   stellar_engine:  { name: "Stellar Engine",       price: 36000000, coinsPerHour: 6000000 },
-  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,   coinsPerHour: 10000000 },
-  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,   coinsPerHour: 30000000 },
-  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,   coinsPerHour: 90000000 },
-  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,  coinsPerHour: 270000000 },
-  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,  coinsPerHour: 810000000 },
-  reality_compiler:   { name: "Reality Compiler",      price: 24300000000, coinsPerHour: 2430000000 },
-  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000, coinsPerHour: 7290000000 },
-  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 21870000000 },
+  von_neumann_swarm:  { name: "Von Neumann Swarm",     price: 100000000,   coinsPerHour: 2000000 },
+  dark_matter_refinery:{ name: "Dark Matter Refinery", price: 300000000,   coinsPerHour: 6000000 },
+  neutron_star_tap:   { name: "Neutron Star Tap",      price: 900000000,   coinsPerHour: 18000000 },
+  kardashev_array:    { name: "Kardashev Array",       price: 2700000000,  coinsPerHour: 54000000 },
+  multiverse_ledger:  { name: "Multiverse Ledger",     price: 8100000000,  coinsPerHour: 162000000 },
+  reality_compiler:   { name: "Reality Compiler",      price: 24300000000, coinsPerHour: 486000000 },
+  omniscience_engine: { name: "Omniscience Engine",    price: 72900000000, coinsPerHour: 1458000000 },
+  last_server:        { name: "The Last Server",       price: 218700000000, coinsPerHour: 4374000000 },
 };
 // 아이템처럼 별도 rarity 필드는 없지만, 25종을 가격 순으로 7단계(4개씩 묶고 마지막만 1개)로
 // 나눠 아이콘 색을 점점 화려하게 만든다(요청: "빛나야 하는 건 빛나야 한다" — Property도
