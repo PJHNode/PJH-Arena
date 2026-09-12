@@ -120,8 +120,12 @@ function nextExpFor(level) {
 
 // ── 환생(Rebirth) — 레벨 100에서 레벨/XP/스탯 포인트(HP·에너지·스태미나 최대치 포함)를
 // 전부 기본값으로 되돌리는 대신, 회당 ATK/DEF에 영구 +1%가 붙는다(최대 10회, +10%에서 상한).
-// 코인/다이아/장비/봇/행성/클럽 등 "진짜 경제"는 절대 안 건드린다 — 순수하게 "레벨을 다시
-// 밟아 올라가는 동안 잠깐 약해지는 대가로 아주 작은 영구 우위를 얻는" 선택지로만 설계했다. ──
+// 코인/다이아/장비/봇/행성/클럽 등 "진짜 경제"는 절대 안 건드린다 — "레벨을 다시 밟아
+// 올라가는 동안 잠깐 약해지는 대가로 영구 우위를 얻는" 선택지로 설계했다. "환생 버프가 너무
+// 적다"는 요청 반영 — 순수 전투력(ATK/DEF)뿐이던 보상을 자원 효율/회복 속도/패시브 수입/
+// 성장 속도 4개 축으로 넓혔다(전부 rebirthTier 기반, 아래 "환생 버프 확장" 블록 참고 —
+// enchantMaxLevelFor 등 기존 QoL 특권 바로 다음에 있음). 등급(티어)당 값이라 여전히
+// "작고 상한 있게" 원칙은 유지된다. ──
 const REBIRTH_LEVEL_REQUIREMENT = 100;
 const REBIRTH_BONUS_PER_COUNT = 0.01;
 const REBIRTH_BONUS_MAX_COUNT = 10;
@@ -166,6 +170,21 @@ function pvpAuraTierFor(row) {
 function enchantMaxLevelFor(row) { return ENCHANT_MAX_LEVEL + rebirthTier(row.rebirth_count) * 2; }
 function botMaxCountFor(row) { return BOT_MAX_COUNT + rebirthTier(row.rebirth_count); }
 function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - rebirthTier(row.rebirth_count) * 4000); }
+
+// ── 환생 버프 확장 — "환생 버프가 너무 적다"는 요청 반영. 기존 ATK/DEF +1%/회(최대 +10%)
+// 하나뿐이던 전투력 보너스와는 완전히 다른 4가지 축을 추가했다. 전부 티어(0~4)당 값이라
+// rebirthTier 상한(4)과 함께 자동으로 상한이 걸린다 — "작고 상한 있게" 원칙은 그대로.
+// (1) 자원 효율 — Jobs 에너지 소모/스탯 강화 비용 둘 다 -5%/티어(최대 -20%, 같은 비율 하나로 통일).
+const REBIRTH_COST_DISCOUNT_PER_TIER = 0.05;
+function rebirthCostMult(row) { return 1 - rebirthTier(row.rebirth_count) * REBIRTH_COST_DISCOUNT_PER_TIER; }
+// (2) 회복 속도 — 에너지/스태미나 자연 회복 간격 -10%/티어(최대 -40%, 즉 그만큼 더 자주 찬다).
+const REBIRTH_REGEN_SPEED_BONUS_PER_TIER = 0.10;
+function rebirthRegenTickMs(baseMs, row) { return Math.round(baseMs / (1 + rebirthTier(row.rebirth_count) * REBIRTH_REGEN_SPEED_BONUS_PER_TIER)); }
+// (3) 패시브 수입 — Property 최대 보유 기기 +1/티어(최대 +4), Property 수익 +3%/티어(최대 +12%).
+const REBIRTH_PROPERTY_SLOT_BONUS_PER_TIER = 1;
+const REBIRTH_PROPERTY_INCOME_BONUS_PER_TIER = 0.03;
+// (4) 성장 가속 — 레벨업마다 받는 스탯 포인트 +1/티어(최대 +4).
+const REBIRTH_STAT_POINT_BONUS_PER_TIER = 1;
 
 // 환생석 — 환생할 때마다 지급되는 전용 화폐. 코인/다이아 경제와 완전히 분리해서 인플레이션
 // 걱정 없이 "환생 상점" 전용 코스메틱/칭호/버프 구매에만 쓴다. 1회차 20개부터 시작해서
@@ -730,7 +749,11 @@ function expBoosterUpgradeCost(level) { return level >= EXP_BOOSTER_MAX_LEVEL ? 
 const PROPERTY_SLOTS_MAX_LEVEL = 3;
 const PROPERTY_SLOTS_COSTS = [1000, 2000, 4000]; // 인덱스 = 현재 레벨(0→1, 1→2, 2→3 비용), 다이아
 function propertySlotsUpgradeCost(level) { return level >= PROPERTY_SLOTS_MAX_LEVEL ? null : PROPERTY_SLOTS_COSTS[level]; }
-function effectivePropertyMaxDevices(level) { return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL); }
+// 환생 버프(패시브 수입) — 티어당 +1개(최대 +4)까지 얹는다. rebirthCount를 안 넘기면(기존
+// 호출부 하위 호환) 환생 보너스 없이 그대로 동작한다.
+function effectivePropertyMaxDevices(level, rebirthCount) {
+  return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL) + rebirthTier(rebirthCount) * REBIRTH_PROPERTY_SLOT_BONUS_PER_TIER;
+}
 
 // ── 자동 뽑기(Auto Roll) 연구 — 다이아 5000개 1회성 해금. 해금하면 (1) BOT 탭 가챠에서
 // 원하는 최소 등급을 지정해 그 등급(또는 그 이상)이 나올 때까지 자동으로 반복 뽑고,
@@ -1830,15 +1853,19 @@ function applyRegen(row, now) {
   // 버그 수정: 예전엔 에너지/스태미나 회복까지 전부 "HP > 0"(다운 안 됨) 안에 묶여 있어서,
   // 다운되면 HP뿐 아니라 에너지/스태미나까지 같이 멈춰버렸다. 전투 불능과 자원 회복은 서로
   // 다른 개념이라 묶일 이유가 없으므로 항상 회복되게 뺐다.
-  const energyTicks = Math.floor((now - out.last_energy_tick) / ENERGY_TICK_MS);
+  // 환생 버프(회복 속도) — 티어당 틱 간격 -10%(최대 -40%, 즉 그만큼 더 자주 찬다). 회당
+  // 회복량(REGEN_PER_TICK)은 그대로 두고 간격만 줄여서 정수 반올림 오차 없이 깔끔하다.
+  const energyTickMs = rebirthRegenTickMs(ENERGY_TICK_MS, out);
+  const staminaTickMs = rebirthRegenTickMs(STAMINA_TICK_MS, out);
+  const energyTicks = Math.floor((now - out.last_energy_tick) / energyTickMs);
   if (energyTicks > 0) {
     out.energy = Math.min(out.max_energy, out.energy + energyTicks * ENERGY_REGEN_PER_TICK);
-    out.last_energy_tick += energyTicks * ENERGY_TICK_MS;
+    out.last_energy_tick += energyTicks * energyTickMs;
   }
-  const staminaTicks = Math.floor((now - out.last_stamina_tick) / STAMINA_TICK_MS);
+  const staminaTicks = Math.floor((now - out.last_stamina_tick) / staminaTickMs);
   if (staminaTicks > 0) {
     out.stamina = Math.min(out.max_stamina, out.stamina + staminaTicks * STAMINA_REGEN_PER_TICK);
-    out.last_stamina_tick += staminaTicks * STAMINA_TICK_MS;
+    out.last_stamina_tick += staminaTicks * staminaTickMs;
   }
   // HP도 이제 다운(0) 상태든 오프라인이든 상관없이 자연 회복된다(요청 반영 — 예전엔 다운되면
   // 아이템으로만 회복 가능하게 일부러 막아뒀었는데, 그러면 자리를 비운 사이 회복이 전혀 안
@@ -1873,10 +1900,12 @@ function applyXpAndLevel(row, xpGain) {
   row.xp += xpGain;
   let leveledUp = false;
   let pointsGained = 0;
+  // 환생 버프(성장 가속) — 레벨업 1회당 스탯 포인트 +1/티어(최대 +4).
+  const rebirthPointBonus = rebirthTier(row.rebirth_count) * REBIRTH_STAT_POINT_BONUS_PER_TIER;
   while (row.xp >= nextExpFor(row.level)) {
     row.xp -= nextExpFor(row.level);
     row.level += 1;
-    pointsGained += statPointsForLevel(row.level);
+    pointsGained += statPointsForLevel(row.level) + rebirthPointBonus;
     leveledUp = true;
   }
   if (leveledUp) {
@@ -2057,8 +2086,9 @@ function publicState(row, combat) {
   const equippedTitleInfo = lookupTitleInfo(row.equipped_title_id);
   // HP도 이제 0(다운)이든 아니든 자연 회복되므로(applyRegen 참고) 항상 완충 예상 시간을 준다.
   const hpFullInMs = msUntilFull(row.hp, row.max_hp, HP_REGEN_PER_TICK, HP_TICK_MS, row.last_hp_tick, now);
-  const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, ENERGY_TICK_MS, row.last_energy_tick, now);
-  const staminaFullInMs = msUntilFull(row.stamina, row.max_stamina, STAMINA_REGEN_PER_TICK, STAMINA_TICK_MS, row.last_stamina_tick, now);
+  // 환생 버프(회복 속도)가 적용된 실제 틱 간격 기준으로 계산해야 "완전 회복까지" 표시가 맞다.
+  const energyFullInMs = msUntilFull(row.energy, row.max_energy, ENERGY_REGEN_PER_TICK, rebirthRegenTickMs(ENERGY_TICK_MS, row), row.last_energy_tick, now);
+  const staminaFullInMs = msUntilFull(row.stamina, row.max_stamina, STAMINA_REGEN_PER_TICK, rebirthRegenTickMs(STAMINA_TICK_MS, row), row.last_stamina_tick, now);
   return {
     userId: row.user_id, realName: row.real_name,
     level: row.level, xp: row.xp, nextExp: nextExpFor(row.level),
@@ -2155,6 +2185,8 @@ async function pendingPropertyIncome(env, row) {
     const dev = PROPERTY_DEVICES[r.device_id];
     if (dev) ratePerHour += dev.coinsPerHour * r.qty;
   }
+  // 환생 버프(패시브 수입) — 티어당 +3%(최대 +12%).
+  ratePerHour = Math.round(ratePerHour * (1 + rebirthTier(row.rebirth_count) * REBIRTH_PROPERTY_INCOME_BONUS_PER_TIER));
   const elapsedMs = Math.min(Date.now() - (row.last_property_collect || row.created_at), PROPERTY_MAX_ACCRUAL_MS);
   const pendingCoins = Math.floor(ratePerHour * (elapsedMs / 3600000));
   return { ratePerHour: ratePerHour, pendingCoins: pendingCoins, owned: results };
@@ -2347,10 +2379,12 @@ export default {
         // 멈추고 그때까지 적용된 만큼만 반영한다(1개도 못 사면 에러). 1000회 상한은 실수/오작동
         // 방지용 안전장치일 뿐 실제로 그만큼 살 수 있는 유저는 없다.
         const qty = Math.max(1, Math.min(1000, parseInt(body.qty, 10) || 1));
+        // 환생 버프(자원 효율) — 티어당 -5%(최대 -20%), 최소 1은 보장.
+        const costMult = rebirthCostMult(row);
         let applied = 0, totalCost = 0;
         for (let i = 0; i < qty; i++) {
           const currentMax = row[cfg.column];
-          const cost = statUpgradeCost(stat, currentMax);
+          const cost = Math.max(1, Math.round(statUpgradeCost(stat, currentMax) * costMult));
           if (row.stat_points < cost) break;
           row.stat_points -= cost;
           row[cfg.column] = currentMax + cfg.increment;
@@ -2358,7 +2392,7 @@ export default {
           totalCost += cost;
           applied++;
         }
-        if (applied === 0) return json({ error: "스탯 포인트가 부족합니다. (필요 " + statUpgradeCost(stat, row[cfg.column]) + ")" }, 400);
+        if (applied === 0) return json({ error: "스탯 포인트가 부족합니다. (필요 " + Math.max(1, Math.round(statUpgradeCost(stat, row[cfg.column]) * costMult)) + ")" }, 400);
 
         await env.DB.prepare(
           "UPDATE arena_users SET stat_points=?, " + cfg.column + "=?, " + stat + "=? WHERE user_id=?"
@@ -2516,9 +2550,11 @@ export default {
         // 것이었는데, 이제 nextExpFor가 레벨 100~300 구간에서 계속 더 가팔라지고 300 이후론
         // 아예 제곱적으로 폭증하므로 아무리 빨리 반복해도 레벨업 자체가 충분히 어려워졌다 —
         // 즉 근본 원인(경험치 곡선)이 해결됐으니 여기 있던 인위적 제한은 더 이상 필요 없다.
-        if (row.energy < tier.energyCost) return json({ error: "에너지가 부족합니다." }, 400);
+        // 환생 버프(자원 효율) — 티어당 -5%(최대 -20%), 최소 1은 보장.
+        const jobEnergyCost = Math.max(1, Math.round(tier.energyCost * rebirthCostMult(row)));
+        if (row.energy < jobEnergyCost) return json({ error: "에너지가 부족합니다." }, 400);
 
-        row.energy -= tier.energyCost;
+        row.energy -= jobEnergyCost;
         const clubBonus = await clubCoinBonusMult(env, user.userId);
         const boostMult = activityBoostMult(row);
         const coinsGained = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
@@ -3986,7 +4022,7 @@ export default {
           // Property 슬롯 확장 — 딱 3단계, 다이아 1000/2000/4000. 레벨당 보유 가능 기기 +1개.
           propertySlotsLevel: row.research_property_slots_level || 0,
           propertySlotsMaxLevel: PROPERTY_SLOTS_MAX_LEVEL,
-          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level || 0),
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count),
           propertySlotsUpgradeCost: propertySlotsUpgradeCost(row.research_property_slots_level || 0),
           // 자동 뽑기 — 다이아 5000개 1회성 해금. 해금하면 BOT 가챠/상점 리롤에 "원하는 등급
           // 나올 때까지 자동 반복" 옵션이 생긴다.
@@ -4087,7 +4123,7 @@ export default {
         await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_property_slots_level=? WHERE user_id=?").bind(row.diamonds, row.research_property_slots_level, row.user_id).run();
         return json({
           ok: true, diamonds: row.diamonds, propertySlotsLevel: row.research_property_slots_level,
-          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level),
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level, row.rebirth_count),
           nextCost: propertySlotsUpgradeCost(row.research_property_slots_level),
         });
       }
@@ -4273,7 +4309,7 @@ export default {
           .map(function (id) { return [id, PROPERTY_DEVICES[id]]; })
           .sort(function (a, b) { return a[1].price - b[1].price; })
           .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
-        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0);
+        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
         return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 
@@ -4283,7 +4319,7 @@ export default {
         if (!device) return json({ error: "알 수 없는 기기입니다." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
-        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0);
+        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0, row.rebirth_count);
         const ownedRes = await env.DB.prepare("SELECT qty FROM arena_devices WHERE user_id = ?").bind(user.userId).all();
         const totalOwned = ownedRes.results.reduce(function (sum, r) { return sum + r.qty; }, 0);
         if (totalOwned >= maxDevices) return json({ error: "기기는 최대 " + maxDevices + "개까지만 보유할 수 있습니다." }, 400);

@@ -192,6 +192,20 @@
       rebirthTag.textContent = "🔄 환생 " + toRoman(state.rebirthCount) + (tierName ? " · " + tierName : "") + " (전투력 +" + state.rebirthBonusPct.toFixed(0) + "%)";
       rebirthTag.className = "rebirth-tag tier-" + state.rebirthTier;
       rebirthTag.style.display = "";
+      // 환생 등급별 특권 전체 목록을 마우스 오버로 보여준다 — "환생 버프가 너무 적어 보인다"는
+      // 요청 반영으로 4가지를 새로 추가했는데, 어디에도 안 적혀 있으면 체감이 안 되니 여기 요약.
+      const t = state.rebirthTier;
+      rebirthTag.title = t > 0
+        ? "환생 특권(현재 " + tierName + " 등급)\n" +
+          "· ATK/DEF +" + state.rebirthBonusPct.toFixed(0) + "%\n" +
+          "· 인챈트 최대 레벨 +" + (t * 2) + "\n" +
+          "· 봇 모집 한도 +" + t + "\n" +
+          "· 공격 쿨다운 -" + (t * 4) + "초\n" +
+          "· Jobs 에너지 소모 / 스탯 강화 비용 -" + (t * 5) + "%\n" +
+          "· 에너지·스태미나 회복 속도 +" + (t * 10) + "%\n" +
+          "· Property 슬롯 +" + t + " · 수익 +" + (t * 3) + "%\n" +
+          "· 레벨업 스탯 포인트 +" + t
+        : "";
     } else rebirthTag.style.display = "none";
     if (state.rebirthReady) { rebirthBtn.style.display = ""; rebirthBtn.disabled = false; }
     else if (state.level >= state.rebirthLevelRequirement - 20) { rebirthBtn.style.display = ""; rebirthBtn.disabled = true; rebirthBtn.textContent = "🔄 환생 (Lv." + state.rebirthLevelRequirement + " 필요)"; }
@@ -238,8 +252,12 @@
   ];
   // 서버 statUpgradeCost와 동일한 공식(상한 없이 계속 증가) — 예전엔 5에서 상한이 걸려서
   // 5배를 넘긴 뒤로는 여기서도 계속 "5P"라고만 떴었다(요청 반영: 그 표기 수정).
+  // 환생 버프(자원 효율, 티어당 -5%/최대 -20%)도 서버와 동일하게 반영 — 안 그러면 미리보기
+  // 비용이 실제보다 비싸 보인다.
   function statUpgradeCostPreview(base, current) {
-    return Math.max(2, Math.floor(current / base));
+    const raw = Math.max(2, Math.floor(current / base));
+    const mult = 1 - rebirthTier(state.rebirthCount) * 0.05;
+    return Math.max(1, Math.round(raw * mult));
   }
 
   function renderStatModal() {
@@ -361,15 +379,18 @@
     if (!state) return; // /state 조회가 아직 안 끝났거나 실패한 경우 — 다음 refreshState 성공 시 재호출됨
     renderDailyWidget();
     const panel = $("panel-jobs");
+    // 환생 버프(자원 효율, 티어당 -5%/최대 -20%) — 서버 rebirthCostMult와 동일 공식.
+    const jobCostMult = 1 - rebirthTier(state.rebirthCount) * 0.05;
     const cards = Object.keys(JOB_TIERS).map((tier) => {
       const t = JOB_TIERS[tier], meta = JOB_META[tier];
+      const effEnergyCost = Math.max(1, Math.round(t.energyCost * jobCostMult));
       const locked = state.level < t.minLevel;
-      const noEnergy = state.energy < t.energyCost;
+      const noEnergy = state.energy < effEnergyCost;
       return (
         '<div class="job-card' + (locked ? " locked" : "") + '">' +
         '<div class="job-card-icon">' + meta.icon + "</div>" +
         '<div class="job-card-title">' + meta.label + "</div>" +
-        '<div class="job-card-sub">필요 Lv.' + t.minLevel + " · 에너지 " + t.energyCost + "</div>" +
+        '<div class="job-card-sub">필요 Lv.' + t.minLevel + " · 에너지 " + effEnergyCost + "</div>" +
         '<div class="job-card-reward">💰 ' + fmt(t.coinMin) + " ~ " + fmt(t.coinMax) + '</div>' +
         '<div class="job-card-reward">⚡ EXP +' + t.xp + "</div>" +
         '<button class="btn-primary" data-tier="' + tier + '"' + (locked || noEnergy ? " disabled" : "") + ">" +
@@ -2815,7 +2836,7 @@
     if (cta) cta.addEventListener("click", () => $("loginNavBtn").click());
     $("rebirthBtn").addEventListener("click", async () => {
       if (!state || !state.rebirthReady) return;
-      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF에 영구 +1%가 붙습니다.\n또한 환생 직후 30분간 해킹 작업/PvP/행성 약탈의 XP·코인이 2배가 됩니다.")) return;
+      if (!confirm("환생하시겠습니까?\n레벨/경험치/스탯 포인트(HP·에너지·스태미나 최대치 포함)가 전부 초기화됩니다.\n코인·다이아·장비·봇·행성·클럽은 그대로 유지되고, ATK/DEF·인챈트 최대 레벨·봇 모집 한도·공격 쿨다운에 더해\nJobs 에너지/스탯 강화 비용 절감, 자원 회복 속도, Property 슬롯/수익, 레벨업 스탯 포인트까지 영구 등급이 오릅니다(등급당 상한 있음, 헤더의 환생 태그에 마우스를 올리면 상세 확인 가능).\n또한 환생 직후 30분간 해킹 작업/PvP/행성 약탈의 XP·코인이 2배가 됩니다.")) return;
       const btn = $("rebirthBtn");
       btn.disabled = true;
       try {
