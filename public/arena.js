@@ -1128,11 +1128,13 @@
       const [data, catalog] = await Promise.all([api("/bots"), getShopCatalog()]);
       botsTabLoadedOnce = true;
 
-      // gachaFallback: 실제 장착 아이템이 없을 때만 쓰이는 "가상 등급" 표시({label,color}) —
-      // 봇 가챠는 이제 이 값만 바꾸고 equippedId(진짜 장착 아이템)는 절대 안 건드린다(요청
-      // 반영: "그 봇 자체의 무기가 아예 바뀌면 안 됨"). 드롭다운 옵션/선택 로직은 기존과
-      // 완전히 동일 — 오직 "지금 뭐가 꽂혀 있는지" 표시 줄만 가상 등급을 보여줄 수 있게 했다.
-      function slotRow(target, slotType, label, equippedId, gachaFallback) {
+      // gachaFallback({label,color})는 지금 안 쓴다 — 한때 "실제 장착 없음" 슬롯 라벨 옆에
+      // "[EPIC 가챠 등급]" 식으로 덧붙였는데, 드롭다운은 여전히 "비어있음"이라 "분명히
+      // 비어있는데 왜 등급이 떠 있냐"는 혼란만 줬다(요청 반영: 그 표시 제거). 봇 카드 맨
+      // 위의 "LEGENDARY GRADE" 배지 하나로 등급은 이미 충분히 보이고, 여기 슬롯 줄은
+      // "지금 실제로 뭐가 꽂혀 있는지"만 있는 그대로 보여주는 게 맞다. 호출부 인자는 남겨
+      // 뒀지만(하위 호환) 여기선 무시한다.
+      function slotRow(target, slotType, label, equippedId) {
         // data.availableItems는 서버 sortedShopEntries가 등급 오름차순(약한 것부터)으로 내려주는데,
         // 봇 장착 드롭다운에서는 제일 좋은 장비를 훑어보기 편하게 반대로(강한 것부터) 보여준다
         // — 다른 탭(상점/인챈트)에서 쓰는 공용 정렬 함수 자체는 안 건드리고 여기서만 뒤집는다.
@@ -1146,13 +1148,8 @@
         let optionsHtml = '<option value="">— 비어있음 —</option>';
         if (equippedId) optionsHtml += '<option value="' + equippedId + '" selected>[' + (currentItem ? currentItem.rarityLabel : "") + "] " + escapeHtml(currentItem ? currentItem.name : equippedId) + " (장착중)</option>";
         options.forEach((it) => { optionsHtml += '<option value="' + it.id + '">[' + it.rarityLabel + "] " + escapeHtml(it.name) + " (+" + it.available + ")</option>"; });
-        // 실제 장착 아이템이 없는데 가챠로 뽑은 가상 등급이 있으면(봇만 해당) "빈 슬롯" 대신
-        // 그 등급을 보여준다 — 실제로는 아무 아이템도 안 꽂혀 있다는 게 헷갈리지 않도록 옆에
-        // 작게 "(가챠 등급, 실제 장착 없음)"이라고 덧붙인다.
-        const gachaNote = !equippedId && gachaFallback
-          ? '<span class="dim" style="color:' + gachaFallback.color + ';margin-left:4px;">[' + gachaFallback.label + " 가챠 등급]</span>" : "";
         return (
-          '<div class="bot-slot slot-' + slotType + '">' + icon + '<span>' + label + gachaNote + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
+          '<div class="bot-slot slot-' + slotType + '">' + icon + '<span>' + label + '</span><select data-target="' + target + '" data-slot="' + slotType + '">' + optionsHtml + "</select></div>"
         );
       }
 
@@ -1225,9 +1222,9 @@
           attrs.tag +
           statLine(b.stats) +
           stationedNote +
-          slotRow(String(b.id), "weapon", "무장", b.equipped_weapon, b.gachaWeaponRarityLabel ? { label: b.gachaWeaponRarityLabel, color: b.gachaWeaponRarityColor } : null) +
-          slotRow(String(b.id), "armor", "방어", b.equipped_armor, b.gachaArmorRarityLabel ? { label: b.gachaArmorRarityLabel, color: b.gachaArmorRarityColor } : null) +
-          slotRow(String(b.id), "core", "코어", b.equipped_core, b.gachaCoreRarityLabel ? { label: b.gachaCoreRarityLabel, color: b.gachaCoreRarityColor } : null) +
+          slotRow(String(b.id), "weapon", "무장", b.equipped_weapon) +
+          slotRow(String(b.id), "armor", "방어", b.equipped_armor) +
+          slotRow(String(b.id), "core", "코어", b.equipped_core) +
           stationRow(b) +
           gachaRow(b.id) +
           "</div>";
