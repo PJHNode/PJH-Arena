@@ -444,6 +444,10 @@
   .bot-gacha-row { display: flex; gap: 6px; margin-top: 10px; }
   .bot-gacha-btn { flex: 1; font-size: 9px; padding: 6px 2px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); text-align: center; line-height: 1.4; }
   .bot-gacha-btn:disabled { opacity: 0.4; }
+  .bot-gacha-auto-row { display: flex; gap: 4px; margin-top: 6px; align-items: center; }
+  .bot-gacha-auto-row select { flex: 1; font-size: 9px; padding: 4px 2px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; }
+  .bot-gacha-auto-btn { flex: 1.2; font-size: 9px; padding: 6px 2px; border: 1px solid var(--accent); background: var(--surface-2); color: var(--accent); text-align: center; line-height: 1.3; }
+  .bot-gacha-auto-btn:disabled { opacity: 0.4; }
   .bot-card-rarity-tag { font-size: 9px; font-weight: bold; margin-bottom: 8px; }
   .bot-card-title { display: flex; justify-content: space-between; align-items: center; }
   .bot-card-title-name { display: flex; align-items: center; gap: 6px; }
@@ -475,7 +479,7 @@
   /* ── 은하 지도 시각화 — "시각적으로 주변 행성들이 보이면 좋겠는데" 요청 반영. 내 홈
      행성을 중심에 두고, 실제 (x,y) 좌표 기반으로 근처 행성들을 점으로 흩뿌려 보여준다. ── */
   .galaxy-starmap-wrap { background: radial-gradient(circle at 50% 50%, rgba(0,255,157,0.05), transparent 70%), var(--surface); border: 1px solid var(--border); margin-bottom: 14px; padding: 8px; }
-  .galaxy-starmap { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; overflow: visible; }
+  .galaxy-starmap { display: block; width: 100%; max-width: 760px; height: auto; margin: 0 auto; overflow: visible; }
   .starmap-radius { fill: none; stroke: var(--border); stroke-dasharray: 3 3; }
   .starmap-dot { cursor: pointer; stroke: rgba(0,0,0,0.4); stroke-width: 0.5; transition: r 0.15s ease; }
   .starmap-dot:hover { stroke: #fff; stroke-width: 1; }
@@ -810,6 +814,14 @@
               <p class="dim" style="margin:0 0 10px;">지금 목록이 마음에 안 들면 다이아 <b id="shopRerollCost">1</b>개로 즉시 다시 뽑기(다음 자연 로테이션 시각은 그대로).</p>
               <button class="btn-primary" id="rerollShopBtn" style="width:100%;">리롤하기</button>
             </div>
+            <div class="diamond-exchange-card" id="shopAutoRerollCard" style="margin-top:14px;border-left-color:var(--accent);display:none;">
+              <div class="diamond-exchange-title" style="color:var(--accent);">🎯 자동 리롤</div>
+              <p class="dim" style="margin:0 0 10px;">원하는 등급의 아이템이 뜰 때까지 다이아를 계속 써서 자동으로 리롤합니다(등급당 1개).</p>
+              <div class="bank-form" style="margin-bottom:10px;">
+                <select id="shopAutoRerollRarity" style="flex:1;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-family:inherit;padding:8px;"></select>
+              </div>
+              <button class="btn-primary" id="shopAutoRerollBtn" style="width:100%;">목표 등급까지 자동 리롤</button>
+            </div>
           </div>
         </div>
       </div>
@@ -884,6 +896,21 @@
             레벨이 오를수록 노릴 수 있는 최고 등급이 풀리고(현재 <b id="researchProbeUnlockedTier">약함</b>까지),
             도착 시간도 짧아지며 최고 레벨에서는 한 번에 <b id="researchProbeResultCount">1</b>개를 찾아온다.</p>
           <button class="btn-primary" id="researchProbeUpgradeBtn">연구하기 (💎 <span id="researchProbeCost">600</span>)</button>
+        </div>
+        <div class="research-node" id="researchPropertySlotsNode">
+          <div class="research-node-title">🏭 Property 슬롯 확장 연구 <span class="research-level-tag" id="researchPropertySlotsLevelTag">Lv.0</span></div>
+          <p class="dim">Property 탭에서 보유 가능한 기기 최대 개수를 영구 +1(최대 3레벨) · 현재 최대 <b id="researchPropertySlotsCurrent">6</b>개.</p>
+          <button class="btn-primary" id="researchPropertySlotsUpgradeBtn">연구하기 (💎 <span id="researchPropertySlotsCost">1000</span>)</button>
+        </div>
+        <div class="research-node" id="researchAutoRollNode">
+          <div class="research-node-title">🎯 자동 뽑기 연구 <span class="research-level-tag" id="researchAutoRollLevelTag">미해금</span></div>
+          <p class="dim">해금하면 BOT 탭 가챠와 Hardware Shop 리롤에서 원하는 등급을 지정해 그 등급이 나올 때까지 자동으로 반복할 수 있다(1회성 영구 해금).</p>
+          <button class="btn-primary" id="researchAutoRollUnlockBtn">해금하기 (💎 <span id="researchAutoRollCost">5000</span>)</button>
+        </div>
+        <div class="research-node" id="researchShieldBreakerNode">
+          <div class="research-node-title">💥 보호막 파쇄기 연구 <span class="research-level-tag" id="researchShieldBreakerLevelTag">미해금</span></div>
+          <p class="dim">해금하면 PvP에서 보호막 상태인 상대의 보호막을 즉시 제거할 수 있다(상대는 10분간 보호막 재사용 불가) · 사용 후 24시간 쿨타임(1회성 영구 해금).</p>
+          <button class="btn-primary" id="researchShieldBreakerUnlockBtn">해금하기 (💎 <span id="researchShieldBreakerCost">10000</span>)</button>
         </div>
       </div>
 

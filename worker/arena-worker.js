@@ -174,35 +174,42 @@ function attackCooldownMsFor(row) { return Math.max(14000, ATTACK_COOLDOWN_MS - 
 function rebirthStonesForCount(newCount) { return 15 + Math.max(1, newCount) * 5; }
 
 // 코인 보상은 전부 x15 — Property 수익이 가격의 1/4(예전 대비 약 15배)로 오른 것과 밸런스를
-// 맞추기 위함. 에너지 소모/필요 레벨/XP는 그대로 둔다.
+// 맞추기 위함. 필요 레벨/XP는 그대로 둔다.
+//
+// energyCost는 더 이상 손으로 튜닝한 값이 아니라 "그 작업의 필요 레벨까지 레벨업으로 실제
+// 벌 수 있는 스탯 포인트 총량"의 1/6로 다시 계산했다(요청 반영). 즉 1레벨부터 minLevel까지
+// statPointsForLevel(lv, 아래 참고)를 전부 더한 값의 1/6을 반올림한 값 — 레벨이 오를수록
+// 10레벨 구간마다 지급량 자체가 2씩 늘어나므로(statPointsForLevel 참고) 누적치는 선형보다
+// 가파르게 커지고, 그만큼 고레벨 작업의 에너지 요구량도 예전보다 훨씬 커졌다(예: Abyssal
+// 98 → 233, Genesis 160 → 1700).
 const JOB_TIERS = {
-  trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 5,  coinMin: 600,   coinMax: 900,   xp: 8 },
-  low:       { label: "Low",       minLevel: 1,  energyCost: 10, coinMin: 1500,  coinMax: 2250,  xp: 15 },
-  guarded:   { label: "Guarded",   minLevel: 3,  energyCost: 15, coinMin: 2700,  coinMax: 3750,  xp: 25 },
-  medium:    { label: "Medium",    minLevel: 5,  energyCost: 20, coinMin: 3750,  coinMax: 5250,  xp: 35 },
-  corporate: { label: "Corporate", minLevel: 8,  energyCost: 28, coinMin: 6000,  coinMax: 8250,  xp: 55 },
-  high:      { label: "High",      minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
-  fortress:  { label: "Fortress",  minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
-  master:    { label: "Master",    minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
+  trivial:   { label: "Trivial",   minLevel: 1,  energyCost: 1,    coinMin: 600,   coinMax: 900,   xp: 8 },
+  low:       { label: "Low",       minLevel: 1,  energyCost: 1,    coinMin: 1500,  coinMax: 2250,  xp: 15 },
+  guarded:   { label: "Guarded",   minLevel: 3,  energyCost: 3,    coinMin: 2700,  coinMax: 3750,  xp: 25 },
+  medium:    { label: "Medium",    minLevel: 5,  energyCost: 4,    coinMin: 3750,  coinMax: 5250,  xp: 35 },
+  corporate: { label: "Corporate", minLevel: 8,  energyCost: 7,    coinMin: 6000,  coinMax: 8250,  xp: 55 },
+  high:      { label: "High",      minLevel: 10, energyCost: 8,    coinMin: 7500,  coinMax: 10500, xp: 70 },
+  fortress:  { label: "Fortress",  minLevel: 15, energyCost: 14,   coinMin: 10500, coinMax: 14250, xp: 95 },
+  master:    { label: "Master",    minLevel: 20, energyCost: 20,   coinMin: 13500, coinMax: 19500, xp: 120 },
   // 레벨 35(legendary) 이후로 갈 곳이 없었다 — 아이템 등급 이름을 그대로 가져와서(장비가 mythic
   // ~abyssal까지 있는데 작업은 legendary에서 끝나는 게 안 맞았음) 레벨 100(환생 조건과 동일)까지
   // 이어지도록 4단계를 더 얹었다. 성장률은 legendary까지의 패턴(단계마다 최대 보상 ~1.5~1.7배)을
-  // 그대로 이어간다. energyCost는 원래 master(50)부터 쭉 상한이었는데 "뒤로 갈수록 에너지가
-  // 더 들어야지 왜 다 50이냐"는 피드백 반영 — apex부터 다시 계속 오르도록 고쳤다.
-  apex:      { label: "Apex",      minLevel: 28, energyCost: 58, coinMin: 22500, coinMax: 30000, xp: 180 },
-  legendary: { label: "Legendary", minLevel: 35, energyCost: 66, coinMin: 37500,  coinMax: 51000,  xp: 260 },
-  mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 74, coinMin: 60000,  coinMax: 82500,  xp: 380 },
-  secret:    { label: "Secret",    minLevel: 60,  energyCost: 82, coinMin: 97500,  coinMax: 135000, xp: 550 },
-  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 90, coinMin: 157500, coinMax: 217500, xp: 800 },
-  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 98, coinMin: 255000, coinMax: 352500, xp: 1200 },
+  // 그대로 이어간다.
+  apex:      { label: "Apex",      minLevel: 28, energyCost: 32,   coinMin: 22500, coinMax: 30000, xp: 180 },
+  legendary: { label: "Legendary", minLevel: 35, energyCost: 44,   coinMin: 37500,  coinMax: 51000,  xp: 260 },
+  mythic:    { label: "Mythic",    minLevel: 45,  energyCost: 64,  coinMin: 60000,  coinMax: 82500,  xp: 380 },
+  secret:    { label: "Secret",    minLevel: 60,  energyCost: 100, coinMin: 97500,  coinMax: 135000, xp: 550 },
+  forbidden: { label: "Forbidden", minLevel: 75,  energyCost: 144, coinMin: 157500, coinMax: 217500, xp: 800 },
+  abyssal:   { label: "Abyssal",   minLevel: 100, energyCost: 233, coinMin: 255000, coinMax: 352500, xp: 1200 },
   // 레벨 상한이 없어져서(100 넘어서도 계속 성장, 300부터는 제곱적으로 폭증 — nextExpFor 참고)
   // abyssal(레벨100) 이후로 200레벨어치나 되는 구간 내내 똑같은 작업만 반복하는 게 심심하다는
   // 피드백 반영 — 새 마일스톤 레벨(150/200/250/300, 후자 둘은 각각 초월적/궁극의 해커 업적과
-  // 겹침)에 맞춰 4단계를 더 얹었다. energyCost/coin/xp 모두 같은 ~1.5~1.6배 성장률로 계속 이어감.
-  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 110, coinMin: 400000,  coinMax: 560000,  xp: 1900 },
-  singularity: { label: "Singularity", minLevel: 200, energyCost: 124, coinMin: 650000,  coinMax: 900000,  xp: 3050 },
-  omega:       { label: "Omega",       minLevel: 250, energyCost: 140, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
-  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 160, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
+  // 겹침)에 맞춰 4단계를 더 얹었다. coin/xp는 같은 ~1.5~1.6배 성장률로 계속 이어가고,
+  // energyCost는 위 누적 스탯 포인트/6 공식을 그대로 이어서 계산했다.
+  voidwalker:  { label: "Voidwalker",  minLevel: 150, energyCost: 475,  coinMin: 400000,  coinMax: 560000,  xp: 1900 },
+  singularity: { label: "Singularity", minLevel: 200, energyCost: 800,  coinMin: 650000,  coinMax: 900000,  xp: 3050 },
+  omega:       { label: "Omega",       minLevel: 250, energyCost: 1208, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
+  genesis:     { label: "Genesis",     minLevel: 300, energyCost: 1700, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
 };
 
 // ── 레벨업 스탯 포인트 — 10레벨 구간마다 레벨당 지급량이 5→7→9…로 2씩 늘어난다(그만큼
@@ -210,10 +217,13 @@ const JOB_TIERS = {
 function statPointsForLevel(level) { return 5 + 2 * Math.floor((level - 1) / 10); }
 
 // ── 스탯 강화 비용 — 세 스탯 모두 "1회 강화 = 시작값의 일정 비율만큼 증가"로 통일하고,
-//    강화 비용은 현재 최대치가 시작값의 3배/4배/5배를 넘을 때마다 1포인트씩 올라간다
-//    (2→3→4→5, 5에서 상한). 예: 에너지는 시작 50이라 150/200/250을 넘을 때마다 비용이
-//    오른다(기획서에 나온 예시 그대로). 스태미나(시작10→30/40/50)와 HP(시작100→300/400/500)도
-//    같은 배율을 적용해 자연스럽게 확장했다. ──
+//    강화 비용은 현재 최대치가 시작값의 배수를 넘을 때마다 1포인트씩 계속 올라간다(2→3→
+//    4→5→6→7…, 끝없이 증가). 예전엔 5에서 상한을 걸어놨었는데("최대 필요가 5에서 멈춘다"),
+//    그러면 5배를 넘긴 뒤부터는 포인트를 아무리 많이 넣어도 회당 비용이 영원히 5로 고정돼
+//    버려서, 오래 플레이한(레벨이 아주 높은) 유저일수록 상대적으로 거저 스탯을 무한히
+//    찍을 수 있는 구조였다(요청 반영: "계속 끝없이 늘어나면 좋겠어" — 아래
+//    MIGRATE_STAT_COST_CURVE 참고, 이 상한 때문에 이미 비정상적으로 높아진 기존 유저
+//    스탯도 이 변경과 함께 한 번 재계산해서 바로잡는다). ──
 const STAT_CONFIG = {
   hp:      { base: BASE_MAX_HP,      increment: 20, column: "max_hp" },
   energy:  { base: BASE_MAX_ENERGY,  increment: 10, column: "max_energy" },
@@ -221,10 +231,32 @@ const STAT_CONFIG = {
 };
 function statUpgradeCost(stat, currentMax) {
   const base = STAT_CONFIG[stat].base;
+  return Math.max(2, Math.floor(currentMax / base));
+}
+// 아래는 지금은 안 쓰는 "5에서 상한 걸리던" 옛 비용표 — 마이그레이션이 "그때까지 실제로
+// 쓴 포인트 총량"을 역산할 때만 참고용으로 쓴다(위 statUpgradeCost는 절대 이걸 안 씀).
+function statUpgradeCostLegacyCapped(base, currentMax) {
   if (currentMax >= base * 5) return 5;
   if (currentMax >= base * 4) return 4;
   if (currentMax >= base * 3) return 3;
   return 2;
+}
+// ── 옛 상한(5) 때문에 비정상적으로 부풀려진 기존 유저의 max_hp/energy/stamina를 한 번
+// 재계산한다 — "그동안 실제로 이 스탯에 쓴 포인트 총량"(옛 비용표로 역산)은 그대로 존중해서
+// 잃는 포인트가 없게 하고, 그 예산으로 새(끝없이 증가하는) 비용표에서는 어디까지 갈 수
+// 있었는지 다시 계산해 그 값으로 낮춘다. 차액은 stat_points로 환불해 원하는 다른 스탯에
+// 다시 쓸 수 있게 한다. arena_users.stat_cost_curve_migrated=0인 행에만 1회 적용된다. ──
+function recomputeStatUnderNewCostCurve(base, increment, currentMax) {
+  const purchases = Math.max(0, Math.round((currentMax - base) / increment));
+  let spent = 0, m = base;
+  for (let i = 0; i < purchases; i++) { spent += statUpgradeCostLegacyCapped(base, m); m += increment; }
+  let budget = spent, newMax = base;
+  while (true) {
+    const cost = Math.max(2, Math.floor(newMax / base));
+    if (budget < cost) return { newMax: newMax, refund: budget };
+    budget -= cost;
+    newMax += increment;
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -320,7 +352,7 @@ const SHOP_ITEMS = {
   adrenaline_shot:  { name: "아드레날린 샷",            type: "consumable", rarity: "rare",      price: 400,  effect: "stamina", value: 5 },
   stealth_cloak:    { name: "스텔스 클로크",            type: "consumable", rarity: "epic",      price: 1200, effect: "self_shield", value: 3600000 },
   nano_cloud:       { name: "메가 회복 나노클라우드",     type: "consumable", rarity: "legendary", price: 3000, effect: "heal_and_energy", value: 150, value2: 80 },
-  dimension_veil:   { name: "차원 은신 프로토콜",        type: "consumable", rarity: "mythic",    price: 8000, effect: "self_shield", value: 21600000 },
+  dimension_veil:   { name: "차원 은신 프로토콜",        type: "consumable", rarity: "mythic",    price: 100000000, effect: "self_shield", value: 21600000 },
 };
 
 // ── 상자(Box) — 상점에 "가끔" 뜨는 특수 아이템(요청 반영). 등급별로 셋 중 하나가 나온다:
@@ -669,6 +701,34 @@ const EXP_BOOSTER_COSTS = [500, 750, 1000]; // 인덱스 = 현재 레벨(0→1, 
 const EXP_BOOSTER_MULTS = [1, 1.2, 1.5, 2]; // 인덱스 = 레벨(0 = 아직 연구 안 함)
 function expBoosterMult(row) { return EXP_BOOSTER_MULTS[Math.min(row.research_exp_booster_level || 0, EXP_BOOSTER_MAX_LEVEL)]; }
 function expBoosterUpgradeCost(level) { return level >= EXP_BOOSTER_MAX_LEVEL ? null : EXP_BOOSTER_COSTS[level]; }
+
+// ── Property 슬롯 확장 연구 — "다이아 1000/2000/4000으로 얻을 수 있게" 요청 반영. EXP
+// 부스터와 같은 방식(딱 3단계, 고정 비용표)으로 레벨당 보유 가능 기기 +1개(기본 6개 →
+// 최대 9개). PROPERTY_MAX_DEVICES 상수 자체는 "기본값"으로 그대로 두고, 실제 판정은
+// 항상 이 effectivePropertyMaxDevices를 거친다.
+const PROPERTY_SLOTS_MAX_LEVEL = 3;
+const PROPERTY_SLOTS_COSTS = [1000, 2000, 4000]; // 인덱스 = 현재 레벨(0→1, 1→2, 2→3 비용), 다이아
+function propertySlotsUpgradeCost(level) { return level >= PROPERTY_SLOTS_MAX_LEVEL ? null : PROPERTY_SLOTS_COSTS[level]; }
+function effectivePropertyMaxDevices(level) { return PROPERTY_MAX_DEVICES + Math.min(level || 0, PROPERTY_SLOTS_MAX_LEVEL); }
+
+// ── 자동 뽑기(Auto Roll) 연구 — 다이아 5000개 1회성 해금. 해금하면 (1) BOT 탭 가챠에서
+// 원하는 최소 등급을 지정해 그 등급(또는 그 이상)이 나올 때까지 자동으로 반복 뽑고,
+// (2) 상점에서도 원하는 등급의 아이템이 뜰 때까지 자동으로 리롤한다. 두 경우 모두 서버가
+// 한 요청 안에서 반복(각 회차는 순수 연산이라 매우 빠름)하고 DB는 최종 결과 한 번만 쓴다 —
+// 재화(코인/다이아)가 바닥나거나 시행 횟수 상한(MAX_AUTO_*_ATTEMPTS)에 닿으면 그 시점에서
+// 멈추고 "아직 못 찾음" 상태로 결과를 돌려준다(추가로 다시 요청하면 이어서 계속됨).
+const AUTO_ROLL_UNLOCK_COST = 5000; // 다이아, 1회성
+const MAX_AUTO_GACHA_ATTEMPTS = 3000;
+const MAX_AUTO_SHOP_REROLL_ATTEMPTS = 2000;
+
+// ── 보호막 파쇄기 연구 — 다이아 10000개 1회성 해금. 해금하면 PvP에서 현재 보호막
+// (shield_until) 상태인 상대를 지정해 그 보호막을 즉시 제거할 수 있다. 파쇄당한 사람은
+// SHIELD_BREAKER_BLOCK_MS(10분) 동안 새 보호막을 못 쓴다(소비재 self_shield 사용 시
+// shield_block_until 체크로 막음). 파쇄기 자체는 사용자(공격자)마다
+// SHIELD_BREAKER_COOLDOWN_MS(24시간) 쿨타임이 있다(shield_breaker_used_at 컬럼으로 추적).
+const SHIELD_BREAKER_UNLOCK_COST = 10000; // 다이아, 1회성
+const SHIELD_BREAKER_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const SHIELD_BREAKER_BLOCK_MS = 10 * 60 * 1000;
 
 // KST(UTC+9) 기준 날짜 문자열 — 일일 출석/퀘스트 리셋 경계로 쓴다(PJH-Hub board-worker.js의
 // kstDateString과 동일한 방식).
@@ -1343,6 +1403,11 @@ async function ensureSchema(env) {
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shop_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_count INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN rebirth_boost_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_property_slots_level INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_auto_roll_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN research_shield_breaker_unlocked INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_breaker_used_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN shield_block_until INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
   );
@@ -1594,6 +1659,40 @@ async function ensureSchema(env) {
   // 있게 한다. PJH-Hub와 공유하는 SESSIONS/USERS KV에는 절대 안 쓴다는 원칙이 있어서
   // (파일 맨 위 주석 참고) Arena 전용 D1에 새 테이블로 둔다.
   await env.DB.exec("CREATE TABLE IF NOT EXISTS arena_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+
+  // ── 스탯 강화 비용 상한(5) 폐지 마이그레이션 — 옛 비용표는 시작값의 5배를 넘으면 회당
+  // 비용이 영원히 5로 고정돼서, 레벨이 아주 높은(오래 플레이한) 유저는 그 뒤로 사실상
+  // 거저 에너지/스태미나를 무한히 찍을 수 있었다(바로 위 "긴급 정지" 배경이 된 유제민/
+  // 이윤규 계정 건도 이 구조 때문에 스탯이 비정상적으로 부풀었었다). 이제 비용이 끝없이
+  // 오르는 새 공식으로 바꾸면서, 기존에 이미 부풀려진 값도 함께 바로잡는다 — "그동안 실제로
+  // 쓴 포인트 총량"(옛 비용표로 역산)은 그대로 존중해서 잃는 포인트가 없게 하고, 그 예산으로
+  // 새 비용표에서는 어디까지 갈 수 있었는지 다시 계산해 낮춘 뒤, 차액을 stat_points로
+  // 환불한다(다른 스탯에 원하는 대로 다시 쓸 수 있음). stat_cost_curve_migrated=0인 행에만
+  // 1회 적용되고, 끝나면 1로 표시해서 재실행(콜드스타트마다)돼도 다시 안 건드린다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN stat_cost_curve_migrated INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try {
+    const pending = await env.DB.prepare(
+      "SELECT user_id, hp, max_hp, energy, max_energy, stamina, max_stamina, stat_points FROM arena_users WHERE stat_cost_curve_migrated = 0"
+    ).all();
+    if (pending.results.length) {
+      const writes = pending.results.map(function (u) {
+        const hpFix = recomputeStatUnderNewCostCurve(BASE_MAX_HP, STAT_CONFIG.hp.increment, u.max_hp);
+        const enFix = recomputeStatUnderNewCostCurve(BASE_MAX_ENERGY, STAT_CONFIG.energy.increment, u.max_energy);
+        const stFix = recomputeStatUnderNewCostCurve(BASE_MAX_STAMINA, STAT_CONFIG.stamina.increment, u.max_stamina);
+        const refund = hpFix.refund + enFix.refund + stFix.refund;
+        return env.DB.prepare(
+          "UPDATE arena_users SET max_hp=?, hp=?, max_energy=?, energy=?, max_stamina=?, stamina=?, stat_points=?, stat_cost_curve_migrated=1 WHERE user_id=?"
+        ).bind(
+          hpFix.newMax, Math.min(u.hp, hpFix.newMax),
+          enFix.newMax, Math.min(u.energy, enFix.newMax),
+          stFix.newMax, Math.min(u.stamina, stFix.newMax),
+          (u.stat_points || 0) + refund, u.user_id
+        );
+      });
+      await env.DB.batch(writes);
+    }
+  } catch (e) {}
+
   schemaReady = true;
 }
 
@@ -1921,6 +2020,8 @@ function publicState(row, combat) {
     atk: combat.atk, def: combat.def, crit: combat.crit, botCount: combat.botCount,
     equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core,
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
+    // 보호막 파쇄기에 당한 직후 — 이 시간까지는 새 보호막 아이템을 못 쓴다(POST /inventory/use 참고).
+    shieldBlockUntil: row.shield_block_until || 0, shieldBlocked: (row.shield_block_until || 0) > Date.now(),
     plunderWins: row.plunder_wins,
     rebirthCount: row.rebirth_count || 0,
     rebirthBonusPct: Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT * 100,
@@ -2438,7 +2539,11 @@ export default {
             attackable: !shielded && !downed && !attackCapped,
           });
         }
-        return json({ targets: targets, myStamina: me.stamina, stances: STANCES });
+        return json({
+          targets: targets, myStamina: me.stamina, stances: STANCES,
+          shieldBreakerUnlocked: !!me.research_shield_breaker_unlocked,
+          shieldBreakerReadyAt: (me.shield_breaker_used_at || 0) + SHIELD_BREAKER_COOLDOWN_MS,
+        });
       }
 
       if (request.method === "POST" && path === "/arena/scan") {
@@ -2480,10 +2585,45 @@ export default {
           myAtk: myCombat.atk, estimatedVictoryPct: Math.round((wins / rounds) * 100),
           staminaCost: computeAttackStaminaCost(me.level, target.level, online),
           scanStaminaCost: SCAN_STAMINA_COST,
+          shielded: target.shield_until > Date.now(),
+          shieldBreakerUnlocked: !!me.research_shield_breaker_unlocked,
+          shieldBreakerReadyAt: (me.shield_breaker_used_at || 0) + SHIELD_BREAKER_COOLDOWN_MS,
           attacksUsedToday: attacksUsed, attacksMaxPerDay: PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
           attackCapped: attacksUsed >= PVP_MAX_ATTACKS_PER_TARGET_PER_RESET,
           levelGapHigh: Math.abs(me.level - target.level) > 10,
           state: publicState(me, combat),
+        });
+      }
+
+      // ── POST /arena/shield-breaker { targetUserId } — 보호막 파쇄기 연구를 해금한 유저
+      //    전용. 현재 보호막(shield_until) 상태인 상대를 지정하면 그 자리에서 보호막을 즉시
+      //    제거하고, 그 상대는 SHIELD_BREAKER_BLOCK_MS(10분) 동안 새 보호막을 못 쓴다(위
+      //    POST /inventory/use의 self_shield 체크가 이를 막음). 파쇄기 자체는 공격자 기준
+      //    SHIELD_BREAKER_COOLDOWN_MS(24시간) 쿨타임이 있다. ──
+      if (request.method === "POST" && path === "/arena/shield-breaker") {
+        const body = await request.json().catch(function () { return {}; });
+        const targetUserId = String(body.targetUserId || "");
+        if (targetUserId === user.userId) return json({ error: "자기 자신에게는 사용할 수 없습니다." }, 400);
+
+        const attacker = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!attacker.research_shield_breaker_unlocked) return json({ error: "보호막 파쇄기 연구를 먼저 해금하세요." }, 400);
+        const cooldownLeft = (attacker.shield_breaker_used_at || 0) + SHIELD_BREAKER_COOLDOWN_MS - Date.now();
+        if (cooldownLeft > 0) return json({ error: "보호막 파쇄기 쿨타임이 " + Math.ceil(cooldownLeft / 60000) + "분 남았습니다." }, 400);
+
+        const target = await env.DB.prepare("SELECT user_id, real_name, shield_until FROM arena_users WHERE user_id = ?").bind(targetUserId).first();
+        if (!target) return json({ error: "대상을 찾을 수 없습니다." }, 404);
+        if (!(target.shield_until > Date.now())) return json({ error: "대상이 보호막 상태가 아닙니다." }, 400);
+
+        const now = Date.now();
+        const blockUntil = now + SHIELD_BREAKER_BLOCK_MS;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET shield_until = 0, shield_block_until = ? WHERE user_id = ?").bind(blockUntil, targetUserId),
+          env.DB.prepare("UPDATE arena_users SET shield_breaker_used_at = ? WHERE user_id = ?").bind(now, user.userId),
+        ]);
+
+        return json({
+          ok: true, targetUserId: targetUserId, targetName: target.real_name,
+          blockUntil: blockUntil, nextReadyAt: now + SHIELD_BREAKER_COOLDOWN_MS,
         });
       }
 
@@ -3240,6 +3380,35 @@ export default {
         return json({ ok: true, diamonds: row.diamonds });
       }
 
+      // ── POST /shop/reroll-auto { targetRarity } — 자동 뽑기 연구를 해금한 유저 전용.
+      //    원하는 등급의 아이템이 지금 로테이션에 뜰 때까지 다이아 1개씩 써서 서버가 한 요청
+      //    안에서 반복 리롤한다(다이아가 떨어지거나 MAX_AUTO_SHOP_REROLL_ATTEMPTS에 닿으면
+      //    멈추고 found:false로 응답 — 다시 요청하면 이어서 계속됨). ──
+      if (request.method === "POST" && path === "/shop/reroll-auto") {
+        const body = await request.json().catch(function () { return {}; });
+        const targetRarity = body.targetRarity;
+        if (RARITY_ORDER.indexOf(targetRarity) === -1) return json({ error: "알 수 없는 목표 등급입니다." }, 400);
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (!row.research_auto_roll_unlocked) return json({ error: "자동 뽑기 연구를 먼저 해금하세요." }, 400);
+        const exists = Object.keys(SHOP_ITEMS).some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
+        if (!exists) return json({ error: "이 등급의 아이템 자체가 존재하지 않습니다." }, 400);
+
+        let rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
+        let found = rotation.itemIds.some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
+        if (!found && row.diamonds < SHOP_REROLL_DIAMOND_COST) return json({ error: "다이아가 부족합니다. (필요 " + SHOP_REROLL_DIAMOND_COST + ")" }, 400);
+
+        let attempts = 0;
+        while (!found && attempts < MAX_AUTO_SHOP_REROLL_ATTEMPTS && row.diamonds >= SHOP_REROLL_DIAMOND_COST) {
+          attempts++;
+          row.diamonds -= SHOP_REROLL_DIAMOND_COST;
+          row.shop_reroll_nonce += 1;
+          rotation = computeShopRotation(Date.now(), user.userId, row.research_shop_level, row.shop_reroll_nonce, effectiveMinShopItems(row.research_shop_slots_level));
+          found = rotation.itemIds.some(function (id) { return SHOP_ITEMS[id].rarity === targetRarity; });
+        }
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, shop_reroll_nonce=? WHERE user_id=?").bind(row.diamonds, row.shop_reroll_nonce, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds, attempts: attempts, found: found });
+      }
+
       if (request.method === "POST" && path === "/shop/buy") {
         const body = await request.json().catch(function () { return {}; });
         const itemId = body.itemId;
@@ -3320,6 +3489,11 @@ export default {
         }
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
+        // 보호막 파쇄기에 당한 직후(shield_block_until)라면 새 보호막을 못 쓴다 — 여기서
+        // 아이템 소비 자체를 막아야 "파쇄해도 바로 또 사서 두르면 그만"이 안 된다.
+        if (item.effect === "self_shield" && row.shield_block_until > Date.now()) {
+          return json({ error: "보호막 파쇄 효과로 보호막을 사용할 수 없습니다. (" + Math.ceil((row.shield_block_until - Date.now()) / 60000) + "분 남음)" }, 400);
+        }
         // 전부 고정 수치 회복이다 — "100% 채움" 류 소비재는 없다(가격을 내면 낼수록 더 많은 양이
         // 채워질 뿐, 최대치까지 무조건 꽉 채워주는 아이템은 두지 않기로 함).
         if (item.effect === "stamina") row.stamina = Math.min(row.max_stamina, row.stamina + item.value);
@@ -3460,6 +3634,41 @@ export default {
         if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
+
+        // ── 자동 뽑기("원하는 등급이 나올 때까지 뽑기") — research_auto_roll_unlocked를
+        //    해금한 유저만 body.autoTarget(원하는 최소 등급)을 넘길 수 있다. 한 요청 안에서
+        //    코인이 떨어지거나 MAX_AUTO_GACHA_ATTEMPTS에 닿을 때까지 서버가 반복하고, DB에는
+        //    마지막(성공했다면 성공한, 아니면 마지막으로 시도한) 결과 하나만 기록한다 — 중간
+        //    결과들은 어차피 그 자리에서 덮어써질 값이라 저장할 필요가 없다.
+        const autoTarget = body.autoTarget;
+        if (autoTarget) {
+          if (!row.research_auto_roll_unlocked) return json({ error: "자동 뽑기 연구를 먼저 해금하세요." }, 400);
+          const targetIdx = RARITY_ORDER.indexOf(autoTarget);
+          if (targetIdx === -1) return json({ error: "알 수 없는 목표 등급입니다." }, 400);
+          const feasible = RARITY_ORDER.slice(targetIdx).some(function (r) { return (tierDef.table[r] || 0) > 0; });
+          if (!feasible) return json({ error: "이 가챠 등급표에서는 나올 수 없는 목표 등급입니다." }, 400);
+          if (row.pocket_coins < tierDef.price) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(tierDef.price) + ")" }, 400);
+
+          let rolled = null, attempts = 0, autoFound = false;
+          while (attempts < MAX_AUTO_GACHA_ATTEMPTS && row.pocket_coins >= tierDef.price) {
+            attempts++;
+            row.pocket_coins -= tierDef.price;
+            rolled = rollBotGacha(body.tier);
+            if (RARITY_ORDER.indexOf(rolled.bestRarity) >= targetIdx) { autoFound = true; break; }
+          }
+          await env.DB.batch([
+            env.DB.prepare("UPDATE arena_users SET pocket_coins = ? WHERE user_id = ?").bind(row.pocket_coins, row.user_id),
+            env.DB.prepare(
+              "UPDATE arena_bots SET gacha_weapon_rarity=?, gacha_armor_rarity=?, gacha_core_rarity=?, gacha_rarity=? WHERE id=?"
+            ).bind(rolled.weaponRarity, rolled.armorRarity, rolled.coreRarity, rolled.bestRarity, botId),
+          ]);
+          return json({
+            ok: true, pocketCoins: row.pocket_coins, attempts: attempts, autoFound: autoFound,
+            weaponRarity: rolled.weaponRarity, armorRarity: rolled.armorRarity, coreRarity: rolled.coreRarity,
+            bestRarity: rolled.bestRarity, rarityLabel: RARITY_META[rolled.bestRarity].label, rarityColor: RARITY_META[rolled.bestRarity].color,
+          });
+        }
+
         if (row.pocket_coins < tierDef.price) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(tierDef.price) + ")" }, 400);
 
         const rolled = rollBotGacha(body.tier);
@@ -3773,6 +3982,20 @@ export default {
           probeCurrentResultCount: probeLevelInfo(row.research_probe_level).resultCount,
           probeNextTier: (row.research_probe_level || 0) >= PROBE_MAX_LEVEL - 1 ? null : PLANET_BOT_TIERS[probeLevelInfo((row.research_probe_level || 0) + 1).unlockTier].label,
           probeUpgradeCost: probeUpgradeCost(row.research_probe_level || 0),
+          // Property 슬롯 확장 — 딱 3단계, 다이아 1000/2000/4000. 레벨당 보유 가능 기기 +1개.
+          propertySlotsLevel: row.research_property_slots_level || 0,
+          propertySlotsMaxLevel: PROPERTY_SLOTS_MAX_LEVEL,
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level || 0),
+          propertySlotsUpgradeCost: propertySlotsUpgradeCost(row.research_property_slots_level || 0),
+          // 자동 뽑기 — 다이아 5000개 1회성 해금. 해금하면 BOT 가챠/상점 리롤에 "원하는 등급
+          // 나올 때까지 자동 반복" 옵션이 생긴다.
+          autoRollUnlocked: !!row.research_auto_roll_unlocked,
+          autoRollUnlockCost: AUTO_ROLL_UNLOCK_COST,
+          // 보호막 파쇄기 — 다이아 10000개 1회성 해금. 해금 후 PvP에서 사용 가능(쿨타임 24시간).
+          shieldBreakerUnlocked: !!row.research_shield_breaker_unlocked,
+          shieldBreakerUnlockCost: SHIELD_BREAKER_UNLOCK_COST,
+          shieldBreakerCooldownMs: SHIELD_BREAKER_COOLDOWN_MS,
+          shieldBreakerReadyAt: (row.shield_breaker_used_at || 0) + SHIELD_BREAKER_COOLDOWN_MS,
         });
       }
 
@@ -3848,6 +4071,48 @@ export default {
           probeWaitMs: info.waitMs, probeResultCount: info.resultCount,
           nextCost: probeUpgradeCost(row.research_probe_level),
         });
+      }
+
+      // ── POST /research/property-slots-upgrade — 다이아를 써서 Property 최대 보유 기기 수를
+      //    레벨당 +1 늘린다(딱 3단계, 다이아 1000/2000/4000). ──
+      if (request.method === "POST" && path === "/research/property-slots-upgrade") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const level = row.research_property_slots_level || 0;
+        if (level >= PROPERTY_SLOTS_MAX_LEVEL) return json({ error: "이미 최대 레벨입니다." }, 400);
+        const cost = propertySlotsUpgradeCost(level);
+        if (row.diamonds < cost) return json({ error: "다이아가 부족합니다. (필요 " + cost + ")" }, 400);
+        row.diamonds -= cost;
+        row.research_property_slots_level = level + 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_property_slots_level=? WHERE user_id=?").bind(row.diamonds, row.research_property_slots_level, row.user_id).run();
+        return json({
+          ok: true, diamonds: row.diamonds, propertySlotsLevel: row.research_property_slots_level,
+          propertySlotsCurrentMax: effectivePropertyMaxDevices(row.research_property_slots_level),
+          nextCost: propertySlotsUpgradeCost(row.research_property_slots_level),
+        });
+      }
+
+      // ── POST /research/auto-roll-unlock — 다이아 5000개로 자동 뽑기(원하는 등급 나올
+      //    때까지 반복)를 영구 해금한다(1회성, 이미 해금돼 있으면 에러). ──
+      if (request.method === "POST" && path === "/research/auto-roll-unlock") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.research_auto_roll_unlocked) return json({ error: "이미 해금했습니다." }, 400);
+        if (row.diamonds < AUTO_ROLL_UNLOCK_COST) return json({ error: "다이아가 부족합니다. (필요 " + AUTO_ROLL_UNLOCK_COST + ")" }, 400);
+        row.diamonds -= AUTO_ROLL_UNLOCK_COST;
+        row.research_auto_roll_unlocked = 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_auto_roll_unlocked=1 WHERE user_id=?").bind(row.diamonds, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds, autoRollUnlocked: true });
+      }
+
+      // ── POST /research/shield-breaker-unlock — 다이아 10000개로 보호막 파쇄기를 영구
+      //    해금한다(1회성). 실제 사용은 POST /arena/shield-breaker(쿨타임 24시간). ──
+      if (request.method === "POST" && path === "/research/shield-breaker-unlock") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.research_shield_breaker_unlocked) return json({ error: "이미 해금했습니다." }, 400);
+        if (row.diamonds < SHIELD_BREAKER_UNLOCK_COST) return json({ error: "다이아가 부족합니다. (필요 " + SHIELD_BREAKER_UNLOCK_COST + ")" }, 400);
+        row.diamonds -= SHIELD_BREAKER_UNLOCK_COST;
+        row.research_shield_breaker_unlocked = 1;
+        await env.DB.prepare("UPDATE arena_users SET diamonds=?, research_shield_breaker_unlocked=1 WHERE user_id=?").bind(row.diamonds, row.user_id).run();
+        return json({ ok: true, diamonds: row.diamonds, shieldBreakerUnlocked: true });
       }
 
       // ══════════════════════════════════════════════════════════
@@ -4007,7 +4272,8 @@ export default {
           .map(function (id) { return [id, PROPERTY_DEVICES[id]]; })
           .sort(function (a, b) { return a[1].price - b[1].price; })
           .map(function (pair) { return Object.assign({ id: pair[0] }, pair[1], { owned: ownedMap[pair[0]] || 0, tierColor: propertyTierColor(pair[0]) }); });
-        return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: PROPERTY_MAX_DEVICES, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
+        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0);
+        return json({ devices: devices, ratePerHour: info.ratePerHour, pendingCoins: info.pendingCoins, totalOwned: totalOwned, maxDevices: maxDevices, maxAccrualHours: PROPERTY_MAX_ACCRUAL_MS / 3600000 });
       }
 
       if (request.method === "POST" && path === "/property/buy") {
@@ -4015,11 +4281,12 @@ export default {
         const device = PROPERTY_DEVICES[body.deviceId];
         if (!device) return json({ error: "알 수 없는 기기입니다." }, 400);
 
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const maxDevices = effectivePropertyMaxDevices(row.research_property_slots_level || 0);
         const ownedRes = await env.DB.prepare("SELECT qty FROM arena_devices WHERE user_id = ?").bind(user.userId).all();
         const totalOwned = ownedRes.results.reduce(function (sum, r) { return sum + r.qty; }, 0);
-        if (totalOwned >= PROPERTY_MAX_DEVICES) return json({ error: "기기는 최대 " + PROPERTY_MAX_DEVICES + "개까지만 보유할 수 있습니다." }, 400);
+        if (totalOwned >= maxDevices) return json({ error: "기기는 최대 " + maxDevices + "개까지만 보유할 수 있습니다." }, 400);
 
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
         await collectProperty(env, row);
         if (row.pocket_coins < device.price) return json({ error: "코인이 부족합니다." }, 400);
 

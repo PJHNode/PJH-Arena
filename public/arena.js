@@ -29,25 +29,26 @@
     genesis:     { label: "GENESIS",     icon: "🌠" },
   };
   // 서버 상수와 동일한 값(표시용) — 실제 검증/보상 롤은 항상 서버에서 다시 계산한다.
+  // energyCost는 "그 작업의 필요 레벨까지 누적 스탯 포인트의 1/6"로 재계산됨(요청 반영).
   const JOB_TIERS = {
-    trivial:   { minLevel: 1,  energyCost: 5,  coinMin: 600,   coinMax: 900,   xp: 8 },
-    low:       { minLevel: 1,  energyCost: 10, coinMin: 1500,  coinMax: 2250,  xp: 15 },
-    guarded:   { minLevel: 3,  energyCost: 15, coinMin: 2700,  coinMax: 3750,  xp: 25 },
-    medium:    { minLevel: 5,  energyCost: 20, coinMin: 3750,  coinMax: 5250,  xp: 35 },
-    corporate: { minLevel: 8,  energyCost: 28, coinMin: 6000,  coinMax: 8250,  xp: 55 },
-    high:      { minLevel: 10, energyCost: 35, coinMin: 7500,  coinMax: 10500, xp: 70 },
-    fortress:  { minLevel: 15, energyCost: 42, coinMin: 10500, coinMax: 14250, xp: 95 },
-    master:    { minLevel: 20, energyCost: 50, coinMin: 13500, coinMax: 19500, xp: 120 },
-    apex:      { minLevel: 28, energyCost: 58, coinMin: 22500, coinMax: 30000, xp: 180 },
-    legendary: { minLevel: 35, energyCost: 66, coinMin: 37500,  coinMax: 51000,  xp: 260 },
-    mythic:    { minLevel: 45,  energyCost: 74, coinMin: 60000,  coinMax: 82500,  xp: 380 },
-    secret:    { minLevel: 60,  energyCost: 82, coinMin: 97500,  coinMax: 135000, xp: 550 },
-    forbidden: { minLevel: 75,  energyCost: 90, coinMin: 157500, coinMax: 217500, xp: 800 },
-    abyssal:   { minLevel: 100, energyCost: 98, coinMin: 255000, coinMax: 352500, xp: 1200 },
-    voidwalker:  { minLevel: 150, energyCost: 110, coinMin: 400000,  coinMax: 560000,  xp: 1900 },
-    singularity: { minLevel: 200, energyCost: 124, coinMin: 650000,  coinMax: 900000,  xp: 3050 },
-    omega:       { minLevel: 250, energyCost: 140, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
-    genesis:     { minLevel: 300, energyCost: 160, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
+    trivial:   { minLevel: 1,  energyCost: 1,    coinMin: 600,   coinMax: 900,   xp: 8 },
+    low:       { minLevel: 1,  energyCost: 1,    coinMin: 1500,  coinMax: 2250,  xp: 15 },
+    guarded:   { minLevel: 3,  energyCost: 3,    coinMin: 2700,  coinMax: 3750,  xp: 25 },
+    medium:    { minLevel: 5,  energyCost: 4,    coinMin: 3750,  coinMax: 5250,  xp: 35 },
+    corporate: { minLevel: 8,  energyCost: 7,    coinMin: 6000,  coinMax: 8250,  xp: 55 },
+    high:      { minLevel: 10, energyCost: 8,    coinMin: 7500,  coinMax: 10500, xp: 70 },
+    fortress:  { minLevel: 15, energyCost: 14,   coinMin: 10500, coinMax: 14250, xp: 95 },
+    master:    { minLevel: 20, energyCost: 20,   coinMin: 13500, coinMax: 19500, xp: 120 },
+    apex:      { minLevel: 28, energyCost: 32,   coinMin: 22500, coinMax: 30000, xp: 180 },
+    legendary: { minLevel: 35, energyCost: 44,   coinMin: 37500,  coinMax: 51000,  xp: 260 },
+    mythic:    { minLevel: 45,  energyCost: 64,  coinMin: 60000,  coinMax: 82500,  xp: 380 },
+    secret:    { minLevel: 60,  energyCost: 100, coinMin: 97500,  coinMax: 135000, xp: 550 },
+    forbidden: { minLevel: 75,  energyCost: 144, coinMin: 157500, coinMax: 217500, xp: 800 },
+    abyssal:   { minLevel: 100, energyCost: 233, coinMin: 255000, coinMax: 352500, xp: 1200 },
+    voidwalker:  { minLevel: 150, energyCost: 475,  coinMin: 400000,  coinMax: 560000,  xp: 1900 },
+    singularity: { minLevel: 200, energyCost: 800,  coinMin: 650000,  coinMax: 900000,  xp: 3050 },
+    omega:       { minLevel: 250, energyCost: 1208, coinMin: 1040000, coinMax: 1440000, xp: 4900 },
+    genesis:     { minLevel: 300, energyCost: 1700, coinMin: 1670000, coinMax: 2310000, xp: 7850 },
   };
 
   function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -473,8 +474,9 @@
     const listEl = panel.querySelector(".pvp-list");
     listEl.innerHTML = '<p class="dim">타겟 스캔 중...</p>';
     try {
-      const { targets } = await api("/arena/targets");
+      const { targets, shieldBreakerUnlocked, shieldBreakerReadyAt } = await api("/arena/targets");
       if (!targets.length) { listEl.innerHTML = '<p class="dim">현재 공격 가능한 대상이 없습니다.</p>'; return; }
+      const breakerReady = shieldBreakerUnlocked && shieldBreakerReadyAt <= Date.now();
       listEl.innerHTML = targets.map((t) => {
         // 지금 당장 공격은 못 해도(보호막/다운/한도 초과) 목록에서 사라지진 않는다 — 이유만 표시.
         // 레벨 차이는 이제 공격을 막지 않는다 — ±10 넘으면 스태미나만 더 들어서 배지로만 알려준다.
@@ -483,6 +485,11 @@
           : t.levelGapHigh ? '<span style="color:var(--stamina);"> ⚠️ 레벨차 큼(스태미나 ↑)</span>' : "";
         const attackDisabled = state.stamina < t.staminaCost || !t.attackable;
         const attackLabel = t.shielded ? "보호막" : t.downed ? "다운" : t.attackCapped ? "한도 도달" : "ATTACK";
+        // 보호막 파쇄기(연구 해금 시) — 지금 보호막 중인 상대에게만 노출된다. 파쇄기 자체
+        // 쿨타임(24시간) 중이면 버튼은 보이되 비활성화된다.
+        const breakerBtn = (t.shielded && shieldBreakerUnlocked)
+          ? '<button class="btn-ghost" data-break="' + t.userId + '"' + (breakerReady ? "" : " disabled") + ' title="10분간 상대의 보호막 재사용을 막습니다(파쇄기 쿨타임 24시간)">' + (breakerReady ? "💥 파쇄" : "💥 대기중") + "</button>"
+          : "";
         // 이름 주변 아우라/파티클 — 레벨/환생 횟수/장착 무기 등급 중 가장 높은 걸로 서버가
         // 판정한 auraTier를 그대로 시각화(요청 반영). 평범한 상대는 기존과 완전히 동일.
         // 칭호 배지/환생 표기는 리더보드와 완전히 같은 함수(titleBadgeHtml/rebirthBadgeHtml)를
@@ -498,6 +505,7 @@
         '<div class="pvp-stat">승률 ' + t.estimatedVictoryPct + "% <span class=\"dim\">(" + t.attacksUsedToday + "/" + t.attacksMaxPerDay + ")</span></div>" +
         '<div class="pvp-stat">⚡' + t.staminaCost + "</div>" +
         '<button class="btn-ghost" data-scan="' + t.userId + '">SCAN</button>' +
+        breakerBtn +
         '<button class="btn-danger" data-attack="' + t.userId + '"' + (attackDisabled ? " disabled" : "") + ">" + attackLabel + "</button>" +
         "</div>"
         );
@@ -508,6 +516,16 @@
       listEl.querySelectorAll("button[data-attack]").forEach((btn) => {
         const t = targets.find((x) => x.userId === btn.dataset.attack);
         btn.addEventListener("click", () => openAttackSequence(t));
+      });
+      listEl.querySelectorAll("button[data-break]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const r = await api("/arena/shield-breaker", { method: "POST", body: { targetUserId: btn.dataset.break } });
+            toast("💥 " + r.targetName + "의 보호막을 파쇄했습니다! (10분간 재사용 불가)");
+            renderPvpTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
       });
     } catch (e) { listEl.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
@@ -528,8 +546,22 @@
         '<div class="scan-row">공격 시 소모 스태미나 <b' + (r.levelGapHigh ? ' style="color:var(--stamina);"' : '') + '>' + r.staminaCost + (r.levelGapHigh ? " (레벨차 큼)" : "") + "</b></div>" +
         '<div class="scan-row">공격 횟수(최근 8시간 내) <b' + (r.attackCapped ? ' style="color:var(--danger);"' : '') + '>' + r.attacksUsedToday + " / " + r.attacksMaxPerDay + "</b></div>" +
         '<div class="scan-winrate">예상 승률<br><span>' + r.estimatedVictoryPct + "%</span></div>" +
-        '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>';
+        '<p class="dim" style="text-align:center;margin-top:8px;">(정찰 비용: 스태미나 ' + r.scanStaminaCost + ')</p>' +
+        (r.shielded && r.shieldBreakerUnlocked
+          ? '<button class="btn-primary" id="scanBreakShieldBtn" style="width:100%;margin-top:8px;"' + (r.shieldBreakerReadyAt > Date.now() ? " disabled" : "") + '>' +
+            (r.shieldBreakerReadyAt > Date.now() ? "💥 보호막 파쇄기 쿨타임 중" : "💥 보호막 파쇄") + "</button>"
+          : "");
       $("scanModal").style.display = "flex";
+      const breakBtn = $("scanBreakShieldBtn");
+      if (breakBtn) breakBtn.addEventListener("click", async () => {
+        breakBtn.disabled = true;
+        try {
+          const br = await api("/arena/shield-breaker", { method: "POST", body: { targetUserId } });
+          toast("💥 " + br.targetName + "의 보호막을 파쇄했습니다! (10분간 재사용 불가)");
+          $("scanModal").style.display = "none";
+          renderPvpTab();
+        } catch (e) { toast(e.message, true); breakBtn.disabled = false; }
+      });
     } catch (e) { toast(e.message, true); }
   }
 
@@ -1096,13 +1128,27 @@
     const grid = panel.querySelector(".shop-grid");
     grid.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
-      const { items, nextRotationAt, diamonds, diamondExchangeCost, rerollCost } = await api("/shop");
+      const [{ items, nextRotationAt, diamonds, diamondExchangeCost, rerollCost }, research] = await Promise.all([api("/shop"), api("/research")]);
       shopNextRotationAt = nextRotationAt;
       shopDiamondExchangeCost = diamondExchangeCost;
       $("shopDiamondBalance").textContent = "💎 " + fmt(diamonds);
       $("shopExchangeCost").textContent = fmt(diamondExchangeCost);
       $("shopRerollCost").textContent = fmt(rerollCost);
       updateExchangeTotalCost();
+
+      // 자동 리롤(연구 해금 시에만 노출) — 원하는 등급의 아이템이 뜰 때까지 다이아를 계속
+      // 써서 서버가 알아서 반복 리롤한다.
+      const autoCard = $("shopAutoRerollCard");
+      if (autoCard) {
+        autoCard.style.display = research.autoRollUnlocked ? "" : "none";
+        if (research.autoRollUnlocked) {
+          const raritySel = $("shopAutoRerollRarity");
+          if (raritySel && !raritySel.dataset.filled) {
+            raritySel.innerHTML = RARITY_ORDER_CLIENT.map((rr) => '<option value="' + rr + '">' + research.rarityLabels[rr] + "</option>").join("");
+            raritySel.dataset.filled = "1";
+          }
+        }
+      }
       grid.innerHTML = items.map((it) => {
         const capped = it.maxOwned && it.owned >= it.maxOwned;
         const soldOut = it.totalStock != null && it.remainingStock <= 0;
@@ -1172,6 +1218,21 @@
         renderShopTab();
       } catch (e) { toast(e.message, true); }
       rerollBtn.disabled = false;
+    });
+    const autoRerollBtn = $("shopAutoRerollBtn");
+    if (autoRerollBtn) autoRerollBtn.addEventListener("click", async () => {
+      const raritySel = $("shopAutoRerollRarity");
+      autoRerollBtn.disabled = true;
+      const original = autoRerollBtn.textContent;
+      autoRerollBtn.textContent = "자동 리롤 중...";
+      try {
+        const r = await api("/shop/reroll-auto", { method: "POST", body: { targetRarity: raritySel.value } });
+        if (r.found) toast("🎯 자동 리롤 성공! " + fmt(r.attempts) + "회 만에 목표 등급을 찾았습니다.");
+        else toast("자동 리롤 " + fmt(r.attempts) + "회 시도했지만 목표 등급을 못 찾았습니다(다이아 부족 또는 시도 한도 도달) — 다이아를 모아 다시 시도하세요.", true);
+        renderShopTab();
+      } catch (e) { toast(e.message, true); }
+      autoRerollBtn.disabled = false;
+      autoRerollBtn.textContent = original;
     });
   }
 
@@ -1251,7 +1312,7 @@
     // 기존 화면을 그대로 둔 채 새 데이터가 준비되면 한 번에 갈아끼운다.
     if (!botsTabLoadedOnce) el.innerHTML = '<p class="dim">불러오는 중...</p>';
     try {
-      const [data, catalog] = await Promise.all([api("/bots"), getShopCatalog()]);
+      const [data, catalog, research] = await Promise.all([api("/bots"), getShopCatalog(), api("/research")]);
       botsTabLoadedOnce = true;
 
       // gachaFallback({label,color})는 지금 안 쓴다 — 한때 "실제 장착 없음" 슬롯 라벨 옆에
@@ -1298,10 +1359,22 @@
         };
       }
       function gachaRow(botId) {
-        return '<div class="bot-gacha-row">' + Object.keys(BOT_GACHA_META).map((tier) => {
+        let html = '<div class="bot-gacha-row">' + Object.keys(BOT_GACHA_META).map((tier) => {
           const m = BOT_GACHA_META[tier];
           return '<button class="bot-gacha-btn" data-gacha="' + botId + '" data-tier="' + tier + '"' + (state.pocketCoins < m.price ? " disabled" : "") + ">" + m.label + "<br>💰" + fmt(m.price) + "</button>";
         }).join("") + "</div>";
+        // 자동 뽑기(연구 해금 시에만 노출) — 가챠 등급 + 목표 등급을 골라 그 등급이 나올
+        // 때까지 서버가 알아서 반복한다. 실제 장착 아이템(equipped_*)은 여전히 안 건드린다.
+        if (research.autoRollUnlocked) {
+          const tierOptions = Object.keys(BOT_GACHA_META).map((tier) => '<option value="' + tier + '">' + BOT_GACHA_META[tier].label + "</option>").join("");
+          const rarityOptions = RARITY_ORDER_CLIENT.map((rr) => '<option value="' + rr + '">' + research.rarityLabels[rr] + "</option>").join("");
+          html += '<div class="bot-gacha-auto-row">' +
+            '<select data-auto-tier="' + botId + '">' + tierOptions + "</select>" +
+            '<select data-auto-rarity="' + botId + '">' + rarityOptions + "</select>" +
+            '<button class="bot-gacha-auto-btn" data-auto-gacha="' + botId + '">🎯 목표까지 자동</button>' +
+            "</div>";
+        }
+        return html;
       }
       function statLine(stats) {
         return '<div class="bot-stat-line"><span>⚔️ ATK <b>' + stats.atk + '</b></span><span>🛡️ DEF <b>' + stats.def + '</b></span><span>💥 CRIT <b>' + stats.crit + '%</b></span></div>';
@@ -1398,6 +1471,25 @@
             toast("🎰 가챠 결과: [" + r.rarityLabel + "] 등급! (실제 장착 장비는 그대로, 등급 보너스만 갱신됨)");
             state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
           } catch (e) { toast(e.message, true); btn.disabled = false; }
+        });
+      });
+      el.querySelectorAll("button[data-auto-gacha]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const botId = btn.dataset.autoGacha;
+          const tierSel = el.querySelector('select[data-auto-tier="' + botId + '"]');
+          const raritySel = el.querySelector('select[data-auto-rarity="' + botId + '"]');
+          btn.disabled = true;
+          const original = btn.textContent;
+          btn.textContent = "자동 뽑는 중...";
+          try {
+            const r = await api("/bots/gacha", { method: "POST", body: { botId: botId, tier: tierSel.value, autoTarget: raritySel.value } });
+            if (r.autoFound) {
+              toast("🎯 자동 뽑기 성공! " + fmt(r.attempts) + "회 만에 [" + r.rarityLabel + "] 등급 획득 (실제 장착 장비는 그대로)");
+            } else {
+              toast("자동 뽑기 " + fmt(r.attempts) + "회 시도했지만 목표 등급을 못 얻었습니다(코인 부족 또는 시도 한도 도달) — 코인을 모아 다시 시도하세요.", true);
+            }
+            state.pocketCoins = r.pocketCoins; renderHeader(); renderBotsTab();
+          } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = original; }
         });
       });
       el.querySelectorAll("button[data-sell]").forEach((btn) => {
@@ -1554,6 +1646,42 @@
         probeBtn.innerHTML = "연구하기 → " + escapeHtml(r.probeNextTier || "") + " 해금 (💎 <span>" + fmt(r.probeUpgradeCost) + "</span>)";
         probeBtn.disabled = r.diamonds < r.probeUpgradeCost;
       }
+
+      // Property 슬롯 확장 — 딱 3레벨, 다이아 1000/2000/4000으로 최대 보유 기기 +1개씩.
+      setText("researchPropertySlotsLevelTag", "Lv." + r.propertySlotsLevel);
+      setText("researchPropertySlotsCurrent", r.propertySlotsCurrentMax);
+      const propSlotsBtn = $("researchPropertySlotsUpgradeBtn");
+      if (r.propertySlotsUpgradeCost == null) {
+        propSlotsBtn.disabled = true;
+        propSlotsBtn.textContent = "최대 레벨 (최대 " + r.propertySlotsCurrentMax + "개)";
+      } else {
+        propSlotsBtn.innerHTML = "연구하기 (💎 <span>" + fmt(r.propertySlotsUpgradeCost) + "</span>)";
+        propSlotsBtn.disabled = r.diamonds < r.propertySlotsUpgradeCost;
+      }
+
+      // 자동 뽑기 — 다이아 5000개 1회성 해금.
+      const autoRollBtn = $("researchAutoRollUnlockBtn");
+      if (r.autoRollUnlocked) {
+        setText("researchAutoRollLevelTag", "해금됨");
+        autoRollBtn.disabled = true;
+        autoRollBtn.textContent = "해금 완료";
+      } else {
+        setText("researchAutoRollLevelTag", "미해금");
+        autoRollBtn.innerHTML = "해금하기 (💎 <span>" + fmt(r.autoRollUnlockCost) + "</span>)";
+        autoRollBtn.disabled = r.diamonds < r.autoRollUnlockCost;
+      }
+
+      // 보호막 파쇄기 — 다이아 10000개 1회성 해금.
+      const shieldBreakerBtn = $("researchShieldBreakerUnlockBtn");
+      if (r.shieldBreakerUnlocked) {
+        setText("researchShieldBreakerLevelTag", "해금됨");
+        shieldBreakerBtn.disabled = true;
+        shieldBreakerBtn.textContent = "해금 완료";
+      } else {
+        setText("researchShieldBreakerLevelTag", "미해금");
+        shieldBreakerBtn.innerHTML = "해금하기 (💎 <span>" + fmt(r.shieldBreakerUnlockCost) + "</span>)";
+        shieldBreakerBtn.disabled = r.diamonds < r.shieldBreakerUnlockCost;
+      }
     } catch (e) { panel.querySelector(".research-node").insertAdjacentHTML("afterend", '<p class="dim">' + escapeHtml(e.message) + "</p>"); }
   }
 
@@ -1593,6 +1721,33 @@
         toast("🛸 정찰 탐사선 Lv." + r.probeLevel + " 달성!");
         renderResearchTab();
       } catch (e) { toast(e.message, true); probeBtn.disabled = false; }
+    });
+    const propSlotsBtn = $("researchPropertySlotsUpgradeBtn");
+    if (propSlotsBtn) propSlotsBtn.addEventListener("click", async () => {
+      propSlotsBtn.disabled = true;
+      try {
+        const r = await api("/research/property-slots-upgrade", { method: "POST" });
+        toast("🏭 Property 슬롯 확장 Lv." + r.propertySlotsLevel + " 달성! (최대 " + r.propertySlotsCurrentMax + "개)");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); propSlotsBtn.disabled = false; }
+    });
+    const autoRollBtn = $("researchAutoRollUnlockBtn");
+    if (autoRollBtn) autoRollBtn.addEventListener("click", async () => {
+      autoRollBtn.disabled = true;
+      try {
+        await api("/research/auto-roll-unlock", { method: "POST" });
+        toast("🎯 자동 뽑기를 해금했습니다! BOT 탭/Hardware Shop에서 사용할 수 있습니다.");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); autoRollBtn.disabled = false; }
+    });
+    const shieldBreakerBtn = $("researchShieldBreakerUnlockBtn");
+    if (shieldBreakerBtn) shieldBreakerBtn.addEventListener("click", async () => {
+      shieldBreakerBtn.disabled = true;
+      try {
+        await api("/research/shield-breaker-unlock", { method: "POST" });
+        toast("💥 보호막 파쇄기를 해금했습니다! PvP 탭에서 사용할 수 있습니다.");
+        renderResearchTab();
+      } catch (e) { toast(e.message, true); shieldBreakerBtn.disabled = false; }
     });
   }
 
