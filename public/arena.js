@@ -425,9 +425,16 @@
         '<div class="job-card-sub">필요 Lv.' + t.minLevel + " · 에너지 " + effEnergyCost + "</div>" +
         '<div class="job-card-reward">💰 ' + fmt(t.coinMin) + " ~ " + fmt(t.coinMax) + '</div>' +
         '<div class="job-card-reward">⚡ EXP +' + t.xp + "</div>" +
+        '<div class="job-card-btns">' +
         '<button class="btn-primary" data-tier="' + tier + '"' + (locked || noEnergy ? " disabled" : "") + ">" +
         (locked ? "LV." + t.minLevel + " 필요" : noEnergy ? "에너지 부족" : "실행") +
-        "</button></div>"
+        "</button>" +
+        // 일괄 실행 — 에너지가 허락하는 만큼(또는 서버 안전 상한) 이 등급 작업을 한 번에
+        // 반복한다(요청 반영: "일괄로 jobs를 할 수 있게 하는 버튼"). 몇 번이나 도는지는
+        // 실행 전엔 알 수 없어서(레벨업으로 에너지가 도중에 다시 차기도 하므로) 버튼 문구는
+        // 고정하고, 결과는 토스트로 "실행 N회" 요약해서 보여준다.
+        '<button class="btn-ghost" data-bulk-tier="' + tier + '"' + (locked || noEnergy ? " disabled" : "") + '>🔁 일괄 실행</button>' +
+        "</div></div>"
       );
     }).join("");
     panel.querySelector(".job-grid").innerHTML = cards;
@@ -442,7 +449,35 @@
         finally { btn.disabled = false; }
       });
     });
+    panel.querySelectorAll("button[data-bulk-tier]").forEach((btn) => {
+      btn.addEventListener("click", () => runBulkJob(btn.dataset.bulkTier, btn));
+    });
     renderMiningGraph();
+  }
+
+  // ── 일괄 실행 — /hack-job/bulk를 호출하고, 서버가 "더 돌릴 수 있다"(moreAvailable)고
+  // 하는 동안은 자동으로 이어서 호출한다(HACK_JOB_BULK_MAX_RUNS에 걸릴 만큼 에너지가 아주
+  // 많은 극소수 경우에만 두 번 이상 왕복한다 — 사용자 입장에선 버튼 한 번으로 끝까지 돈다). ──
+  async function runBulkJob(tier, btn) {
+    if (btn) btn.disabled = true;
+    let totalRuns = 0, totalCoins = 0, totalXp = 0, anyBoosted = false, anyLeveledUp = false;
+    try {
+      for (;;) {
+        const r = await api("/hack-job/bulk", { method: "POST", body: { tier: tier } });
+        totalRuns += r.runs; totalCoins += r.coinsGained; totalXp += r.xpGained;
+        if (r.boosted) anyBoosted = true;
+        if (r.leveledUp) anyLeveledUp = true;
+        state = r.state; renderHeader();
+        if (!r.moreAvailable) break;
+      }
+      if (totalRuns > 0) {
+        toast((anyBoosted ? "🔥 " : "") + "🔁 일괄 실행 " + totalRuns + "회 · 💰 +" + fmt(totalCoins) + " 코인 · EXP +" + totalXp + (anyLeveledUp ? " · 🎉 LEVEL UP!" : ""));
+      }
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      renderJobsTab(); renderMiningGraph();
+    }
   }
 
   // ── 신호 감청 — 자원(에너지/스태미나) 소모 없이 10분 쿨다운만으로 도는 수입원("hacking

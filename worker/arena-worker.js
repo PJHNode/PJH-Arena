@@ -302,6 +302,11 @@ const JOB_TIERS = {
 // 환산하면(6회/시간) Jobs 최저 등급보다도 한참 낮게 잡아서(레벨1 기준 시간당 약 3,300코인)
 // 기존 수입원을 대체하지 않고 "무자원 상태의 최저 생계선" 정도로만 보완한다.
 const SIGNAL_INTERCEPT_COOLDOWN_MS = 10 * 60 * 1000;
+// 일괄 실행 한 번(HTTP 요청 한 번)이 서버에서 도는 최대 반복 횟수 — 실제 CPU 부담은
+// 미미하지만(순수 메모리 연산 후 DB write 1회) 응답 크기/이상 요청을 막는 안전판이다.
+// 이 값을 넘길 만큼 큰 에너지 풀을 가진 유저는 프론트가 moreAvailable을 보고 이어서
+// 자동으로 다시 호출한다(사용자 입장에선 버튼 한 번으로 그대로 끝까지 실행된다).
+const HACK_JOB_BULK_MAX_RUNS = 2000;
 function signalInterceptReward(level) {
   return { coins: Math.round(500 + (level || 1) * 60), xp: Math.round(15 + (level || 1) * 1.5) };
 }
@@ -2274,10 +2279,10 @@ async function allDailyQuestsClaimed(env, userId) {
 }
 // 미션 카운터 +1 — 실패해도(테이블이 아직 없다거나) 본 기능(전투/작업/구매)을 막으면 안 되므로
 // 에러는 그냥 삼킨다.
-async function bumpDailyProgress(env, userId, field) {
+async function bumpDailyProgress(env, userId, field, amount) {
   try {
     await ensureDailyProgress(env, userId);
-    await env.DB.prepare("UPDATE arena_daily_progress SET " + field + " = " + field + " + 1 WHERE user_id = ? AND date = ?").bind(userId, kstDateString()).run();
+    await env.DB.prepare("UPDATE arena_daily_progress SET " + field + " = " + field + " + ? WHERE user_id = ? AND date = ?").bind(amount || 1, userId, kstDateString()).run();
   } catch (e) {}
 }
 
@@ -3070,6 +3075,61 @@ export default {
 
         const combat = await totalCombatStats(env, row);
         return json({ ok: true, coinsGained: coinsGained, xpGained: xpGained, leveledUp: leveledUp, boosted: boostMult > 1, state: publicState(row, combat) });
+      }
+
+      // ── POST /hack-job/bulk { tier, count? } — "일괄로 job을 할 수 있게" 요청 반영.
+      //    기존 단일 실행(/hack-job)을 여러 번 반복한 것과 정확히 같은 결과를 한 번의
+      //    요청으로 낸다 — 실행마다 코인은 독립적으로 랜덤을 굴리고, 레벨업도 그때그때
+      //    반영해서(레벨업 시 에너지 전액 회복이 중간에 끼면 그만큼 더 돌아간다) 여러 번
+      //    따로 누른 것과 완전히 동일하다. count를 안 주면 "에너지가 허락하는 만큼 전부",
+      //    주면 그 횟수까지만(도중에 에너지가 떨어지면 거기서 멈춘다). moreAvailable로
+      //    "이 회차 이후에도 더 돌릴 수 있는지" 알려줘서, HACK_JOB_BULK_MAX_RUNS에 걸렸거나
+      //    count가 남았는데 이번 응답만으론 다 못 채웠을 때 프론트가 이어서 호출한다. ──
+      if (request.method === "POST" && path === "/hack-job/bulk") {
+        const body = await request.json().catch(function () { return {}; });
+        const tier = JOB_TIERS[body.tier];
+        if (!tier) return json({ error: "알 수 없는 작업입니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.hp <= 0) return json({ error: "HP가 0입니다. 회복 후 다시 시도하세요." }, 400);
+        if (row.level < tier.minLevel) return json({ error: "레벨이 부족합니다. (필요 Lv." + tier.minLevel + ")" }, 400);
+
+        const jobEnergyCost = Math.max(1, Math.round(tier.energyCost * rebirthCostMult(row)));
+        if (row.energy < jobEnergyCost) return json({ error: "에너지가 부족합니다." }, 400);
+
+        const requestedCount = Number.isInteger(body.count) && body.count > 0 ? body.count : null;
+        // 클럽 보너스/부스트/EXP부스터는 이 요청이 도는 동안 바뀌지 않는 값들이라(전부 시간창이나
+        // 레벨과 무관한 연구 레벨 기준) 반복마다 다시 조회/계산하지 않고 한 번만 구해서 재사용한다.
+        const clubBonus = await clubCoinBonusMult(env, user.userId);
+        const boostMult = activityBoostMult(row);
+        const xpMult = expBoosterMult(row);
+
+        let runs = 0, coinsGained = 0, xpGained = 0, leveledUp = false;
+        while (row.energy >= jobEnergyCost && runs < HACK_JOB_BULK_MAX_RUNS && (requestedCount == null || runs < requestedCount)) {
+          row.energy -= jobEnergyCost;
+          const coins = Math.round(randInt(tier.coinMin, tier.coinMax) * clubBonus * boostMult);
+          row.pocket_coins += coins;
+          coinsGained += coins;
+          const xp = Math.round(tier.xp * boostMult * xpMult);
+          xpGained += xp;
+          if (applyXpAndLevel(row, xp)) leveledUp = true;
+          runs++;
+        }
+
+        await env.DB.prepare(
+          "UPDATE arena_users SET energy=?, stamina=?, hp=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
+          "pocket_coins=?, xp=?, level=?, stat_points=? WHERE user_id=?"
+        ).bind(row.energy, row.stamina, row.hp, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick,
+               row.pocket_coins, row.xp, row.level, row.stat_points, row.user_id).run();
+        await insertLog(env, user.userId, "job", null, tier.label + " x" + runs, "success", coinsGained, 0);
+        await bumpDailyProgress(env, user.userId, "jobs", runs);
+
+        const combat = await totalCombatStats(env, row);
+        return json({
+          ok: true, runs: runs, coinsGained: coinsGained, xpGained: xpGained, leveledUp: leveledUp,
+          boosted: boostMult > 1, moreAvailable: row.energy >= jobEnergyCost,
+          state: publicState(row, combat),
+        });
       }
 
       // ── 신호 감청(Signal Intercept) — "hacking jobs/property 말고는 돈 벌 수단이 없다"는
