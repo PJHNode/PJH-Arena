@@ -1467,6 +1467,16 @@ function effectivePlanetTier(userId, slotIndex, nowMs, homeXY, slotCoords) {
 // effectivePlanetTier를 "근처 제한 등급" 반영해서 정확히 판정하려면 내 홈 좌표 + 48슬롯
 // 좌표가 다 필요한데, 이미 그 데이터를 갖고 있는 호출부(GET /planets, probe/collect)는
 // 굳이 다시 안 부르고, 그렇지 않은 곳(resolvePlanetCombat)만 이 헬퍼로 새로 조회한다.
+// ── 이긴 행성은 사라진다(요청 반영: "공격 성공한 곳은 그 행성이 사라져야") — 예전엔 이겨도
+// 행성이 그대로 남아서, 같은 10시간 구간 동안 초월/극한 행성 하나를 스태미나가 허락하는 만큼
+// 계속 반복 약탈할 수 있었다. 이제 이긴 행성은 그 유저 기준으로 이번 리롤 구간 동안 지도와
+// 탐사선 결과에서 빠지고, 다음 리롤(PLANET_REROLL_MS) 때 새 난이도로 다시 나타난다. 봇 구역은
+// 유저마다 난이도 덱이 따로 섞이는 개인 콘텐츠라 "사라짐"도 유저별로 기록한다. ──
+async function clearedPlanetIds(env, userId, bucket) {
+  const res = await env.DB.prepare("SELECT planet_id FROM arena_planet_clears WHERE user_id = ? AND bucket = ?").bind(userId, bucket).all();
+  return new Set(res.results.map(function (r) { return r.planet_id; }));
+}
+
 async function planetNearbyContext(env, userId) {
   const [homeRow, slotsRes] = await Promise.all([
     env.DB.prepare("SELECT x, y FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(userId).first(),
@@ -1871,6 +1881,12 @@ async function ensureSchema(env) {
     "PRIMARY KEY (raid_id, user_id))"
   );
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_world_raid_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 은하 지도에서 이긴 봇 행성 — (유저, 행성, 리롤 구간)당 한 행. 같은 구간 동안은 그 유저의 지도/탐사선
+  // 결과에서 빠지고 다시 공격할 수 없다. 리롤 구간이 바뀌면 조건에 안 걸려서 자연히 다시 나타난다.
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_planet_clears (user_id TEXT NOT NULL, planet_id INTEGER NOT NULL, bucket INTEGER NOT NULL, " +
+    "cleared_at INTEGER NOT NULL, PRIMARY KEY (user_id, planet_id, bucket))"
+  );
 
   // ── 증권거래소 폐지(요청 반영) — 남아 있던 보유 주식을 전부 코인으로 환급하고 테이블을 지운다.
   // 강제 청산이라 유저가 손해 보지 않게 "현재가 평가액"과 "매수 원가" 중 큰 쪽으로, 수수료 없이,
@@ -5047,6 +5063,7 @@ export default {
         const rerollBucket = planetRerollBucket(now);
         const nextRerollAt = (rerollBucket + 1) * PLANET_REROLL_MS;
         const res = await env.DB.prepare("SELECT * FROM arena_planets WHERE is_home = 0 OR owner_user_id = ? ORDER BY is_home DESC, slot_index ASC").bind(user.userId).all();
+        const clearedIds = await clearedPlanetIds(env, user.userId, rerollBucket);
         const meRow = await loadOrCreateUser(env, user.userId, user.realName);
         const myCombat = await totalCombatStats(env, meRow);
         // 근처 제한 등급(극한/초월) 판정에 필요한 좌표표 — 이미 위 쿼리로 48슬롯 좌표를 전부
@@ -5056,6 +5073,7 @@ export default {
         const planets = res.results
           .filter(function (p) {
             if (p.is_home) return true; // 내 홈 행성은 항상 포함(쿼리 조건상 항상 "내" 것)
+            if (clearedIds.has(p.id)) return false; // 이번 리롤 구간에 이미 이긴 행성은 지도에서 사라진다
             return planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS;
           })
           .map(function (p) {
@@ -5102,7 +5120,7 @@ export default {
         };
         return json({
           planets: planets, stances: STANCES,
-          nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS,
+          nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS, attackStaminaCost: PLANET_ATTACK_STAMINA_COST,
           homeInvulnerableLevel: HOME_PLANET_INVULNERABLE_UNTIL_LEVEL,
           nearbyRadius: PLANET_NEARBY_RADIUS, galaxySize: PLANET_GALAXY_SIZE,
           myHome: { x: myHome.x, y: myHome.y },
@@ -5155,12 +5173,14 @@ export default {
         const now = Date.now();
         const myHome = await env.DB.prepare("SELECT x, y FROM arena_planets WHERE owner_user_id = ? AND is_home = 1").bind(user.userId).first();
         const allSlots = await env.DB.prepare("SELECT id, name, slot_index, x, y FROM arena_planets WHERE is_home = 0").all();
+        const clearedIds = await clearedPlanetIds(env, user.userId, planetRerollBucket(now));
         const slotCoordsForTier = {};
         allSlots.results.forEach(function (p) { slotCoordsForTier[p.slot_index] = { x: p.x, y: p.y }; });
         const matches = [];
         for (const p of allSlots.results) {
           if (effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier) !== targetTier) continue;
           if (myHome && planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS) continue; // 이미 그냥 보이는 건 패스
+          if (clearedIds.has(p.id)) continue; // 이번 리롤 구간에 이미 이긴 행성은 다시 찾아오지 않는다
           matches.push(p);
         }
         for (let i = matches.length - 1; i > 0; i--) { // Fisher-Yates로 무작위 추출
@@ -5293,6 +5313,12 @@ export default {
         const planet = await env.DB.prepare("SELECT * FROM arena_planets WHERE id = ?").bind(planetId).first();
         if (!planet) return json({ error: "존재하지 않는 행성입니다." }, 404);
         if (planet.owner_user_id === user.userId) return json({ error: "이미 내 행성입니다." }, 400);
+        const planetBucket = planetRerollBucket(Date.now());
+        if (!planet.is_home) {
+          const alreadyCleared = await env.DB.prepare("SELECT 1 AS ok FROM arena_planet_clears WHERE user_id = ? AND planet_id = ? AND bucket = ?")
+            .bind(user.userId, planet.id, planetBucket).first();
+          if (alreadyCleared) return json({ error: "이미 정복한 행성입니다. 다음 리롤 때 새 행성이 나타납니다." }, 400);
+        }
         // 같은 유저의 행성들(홈 + 강등된 야생 전부)을 최근 8시간 안에 너무 많이 노리는 것만 막는다
         // — opponent_id가 소유자 한 명으로 고정이라 그 사람 행성이 몇 개든 합쳐서 센다.
         if (planet.owner_user_id) {
@@ -5304,6 +5330,19 @@ export default {
 
         const result = await resolvePlanetCombat(env, user, attacker, planet, stanceId, timingScores);
         if (result.error) return json({ error: result.error }, 400);
+        // 봇 행성 승리는 여기서 "사라짐"을 먼저 확정한다 — PK 충돌이면(같은 행성에 동시에 두 번
+        // 이긴 요청) 이 요청은 아무것도 저장하지 않고 끝내서 보상이 두 번 나가지 않는다.
+        // resolvePlanetCombat는 봇 행성일 때 DB를 전혀 안 건드리므로 여기서 끝내도 안전하다.
+        let planetCleared = false;
+        if (result.isBotPlanet && result.attackerWins) {
+          const clearRes = await env.DB.batch([
+            env.DB.prepare("INSERT OR IGNORE INTO arena_planet_clears (user_id, planet_id, bucket, cleared_at) VALUES (?, ?, ?, ?)")
+              .bind(user.userId, planet.id, planetBucket, Date.now()),
+            env.DB.prepare("DELETE FROM arena_planet_clears WHERE user_id = ? AND bucket < ?").bind(user.userId, planetBucket),
+          ]);
+          if (!clearRes[0].meta.changes) return json({ error: "이미 정복한 행성입니다. 다음 리롤 때 새 행성이 나타납니다." }, 400);
+          planetCleared = true;
+        }
 
         // 경험치 — PvP 직접 공격과 동일한 원칙(이겨도 져도 지급, 레벨업 시 hp/energy/stamina
         // 전액 회복이 전투 피해 반영 이후에 적용되도록 반드시 마지막에 호출).
@@ -5330,7 +5369,7 @@ export default {
         return json({
           ok: true, attackerWins: result.attackerWins, sweep: result.sweep, lootCoins: result.lootCoins,
           xpGained: xpGain, leveledUp: leveledUp,
-          planetName: planet.name, isHome: !!planet.is_home,
+          planetName: planet.name, isHome: !!planet.is_home, planetId: planet.id, planetCleared: planetCleared,
           rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
           myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
           state: publicState(attacker, combat),

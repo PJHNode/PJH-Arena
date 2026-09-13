@@ -703,7 +703,7 @@
       const tierLine = p.botTier ? '<div class="planet-card-tier">🤖 ' + p.botTierLabel + "</div>" : "";
       const rateLine = !p.isHome ? '<div class="planet-card-rate">💰 보상 ' + fmt(p.rewardCoins) + " 코인</div>" : "<div class=\"planet-card-rate\">&nbsp;</div>";
       const attackBtn = !withButton ? "" : p.attackable
-        ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < 2 ? " disabled" : "") + ">ATTACK (⚡2)</button>"
+        ? '<button class="btn-danger" data-planet="' + p.id + '"' + (state.stamina < (data.attackStaminaCost || 1) ? " disabled" : "") + ">ATTACK (⚡" + (data.attackStaminaCost || 1) + ")</button>"
         : '<button class="btn-ghost" disabled>' + (p.homeInvulnerable ? "🛡️ 무적 (Lv." + (data.homeInvulnerableLevel || 20) + " 미만)" : p.isHome ? "내 홈 행성" : "내 행성") + "</button>";
       return (
         '<div class="planet-card ' + cls + '">' +
@@ -1002,7 +1002,7 @@
     // 승리 보상을 미리 보여준다(요청 반영: "돈벌기 수단이 안 보인다" — 이겨야만 토스트로
     // 알려주던 것을 공격 전에도 확인할 수 있게 해서 이게 실제 수입원이라는 걸 알린다).
     const hint = planet.botTier
-      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이겨도 소유권은 안 넘어가고 그 자리에서 <b style=\"color:var(--stamina);\">+" + fmt(planet.rewardCoins) + " 코인</b> 약탈만 합니다(스태미나 1 소모)."
+      ? "PVE 봇(" + planet.botTierLabel + ")이 지키고 있습니다. 이기면 그 자리에서 <b style=\"color:var(--stamina);\">+" + fmt(planet.rewardCoins) + " 코인</b>을 약탈하고, 이 행성은 다음 리롤까지 은하 지도에서 사라집니다(스태미나 1 소모)."
       : "현재 소유자: <b>" + escapeHtml(planet.ownerName || "?") + "</b>의 홈 행성 — 공격력/방어력이 실전의 1.1배인 요새입니다. 뚫으면 포켓 코인 20%를 몰수합니다(행성은 뺏지 않음).";
     renderStanceStep({ mode: "planet", planetId: planet.id, planetName: planet.name }, planet.name, hint);
   }
@@ -1098,12 +1098,12 @@
         "</div>";
       let resultDetail;
       if (isPlanet) {
-        // 봇 구역/사람 구역 둘 다 소유권이 절대 안 넘어간다 — 이겨도 그 자리에서 약탈(홈 행성은
-        // 포켓 코인 몰수, 봇 구역은 시세 약탈)만 받고, 행성 자체는 원래 상태 그대로 남는다.
+        // 봇 구역/사람 구역 둘 다 소유권은 안 넘어간다. 봇 행성은 이기면 약탈 후 다음 리롤까지
+        // 지도에서 사라지고(서버가 기록), 홈 행성은 포켓 코인 몰수만 받고 그대로 남는다.
         if (r.attackerWins) {
           resultDetail = r.isHome
             ? "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인"
-            : "🤖 침투 성공! +" + fmt(r.lootCoins) + " 코인 약탈";
+            : "🤖 침투 성공! +" + fmt(r.lootCoins) + " 코인 약탈" + (r.planetCleared ? '<br><span class="dim">이 행성은 다음 리롤까지 은하 지도에서 사라집니다.</span>' : "");
         } else {
           resultDetail = "침투 실패";
         }
@@ -1125,6 +1125,7 @@
         '<button class="attack-close-btn" id="attackResultCloseBtn">확인</button>';
       state = r.state; renderHeader();
       if (!isPlanet && currentTab === "pvp") renderPvpTab();
+      if (isPlanet && r.planetCleared) galaxyProbeResults = galaxyProbeResults.filter((p) => p.id !== r.planetId);
       if (isPlanet) { galaxyCache = null; if (currentTab === "galaxy") renderGalaxyTab(); }
       $("attackResultCloseBtn").addEventListener("click", closeAttackModal);
     } catch (e) {
