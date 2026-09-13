@@ -518,15 +518,53 @@
   .raffle-winners { background: var(--surface); border: 1px solid var(--border); padding: 4px 14px; }
   .raffle-winner-row { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .raffle-winner-row:last-child { border-bottom: none; }
-  /* 증권거래소 — 종목 5개 카드(현재가/스파크라인/보유 현황/매수·매도 폼). */
-  .stock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-  .stock-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); padding: 16px; }
-  .stock-card-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
-  .stock-price { font-size: 20px; font-weight: bold; margin: 4px 0; }
-  .stock-price.up { color: var(--energy); } .stock-price.down { color: var(--danger); } .stock-price.flat { color: var(--text); }
-  .stock-spark { width: 100%; height: 70px; display: block; margin: 6px 0 10px; }
-  .stock-card-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--sub); margin-bottom: 5px; }
-  .stock-card-row b { color: var(--text); }
+  /* 월드 레이드 — 왼쪽 보스 카드(초상화/HP바/공격) + 오른쪽 정보 패널들, 좁으면 한 줄로. */
+  .wr-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  .wr-boss-card { background: radial-gradient(120% 80% at 50% 0%, rgba(255,61,104,0.14), transparent 60%), var(--surface); border: 1px solid rgba(255,61,104,0.45); box-shadow: inset 0 0 24px rgba(255,61,104,0.12); padding: 18px; }
+  .wr-boss-head { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+  .wr-level { font-size: 11px; font-weight: bold; color: #fff; background: var(--danger); padding: 2px 8px; letter-spacing: 0.05em; }
+  .wr-boss-name { font-size: 16px; font-weight: bold; color: var(--danger); text-shadow: 0 0 10px rgba(255,61,104,0.5); text-align: center; }
+  .wr-boss-art { position: relative; }
+  .wr-boss-art svg { width: 180px; height: 180px; }
+  .wr-boss-art.wr-hit svg { animation: wrShake 0.25s; }
+  @keyframes wrShake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+  .wr-pops { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .wr-pop { position: absolute; top: 40%; transform: translateX(-50%); font-weight: bold; font-size: 18px; color: #ffd166; white-space: nowrap; text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(255,61,104,0.7); animation: wrPop 1s ease-out forwards; }
+  @keyframes wrPop { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -60px; } }
+  .wr-hp-track { position: relative; height: 22px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; margin: 8px 0 10px; }
+  .wr-hp-fill { height: 100%; background: linear-gradient(90deg, #8a0f2c, var(--danger)); transition: width 0.3s ease; }
+  .wr-hp-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 0 0 4px #000; }
+  .wr-boss-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .wr-boss-stats > div { background: var(--surface-2); border: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .wr-boss-stats span { font-size: 10px; color: var(--sub); }
+  .wr-boss-stats b { font-size: 14px; }
+  .wr-gold { color: var(--stamina); }
+  .wr-attack-btn { width: 100%; font-size: 15px; padding: 12px; }
+  .wr-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; cursor: pointer; flex-wrap: wrap; }
+  .wr-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .wr-panel { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
+  .wr-panel-title { font-size: 12px; font-weight: bold; color: var(--sub); margin-bottom: 10px; }
+  .wr-stat-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.06); }
+  .wr-stat-row:last-child { border-bottom: none; }
+  .wr-stat-row span { color: var(--sub); }
+  .wr-stat-row b { text-align: right; }
+  .wr-rank-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; padding: 5px 6px; }
+  .wr-rank-row.me { background: rgba(0,255,157,0.08); }
+  .wr-rank-no { color: var(--sub); text-align: center; font-weight: bold; }
+  .wr-rank-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wr-rank-dmg { font-weight: bold; }
+  .wr-mvp-tag { font-size: 9px; font-weight: bold; color: #111; background: var(--stamina); padding: 1px 5px; margin-left: 6px; }
+  .wr-drop-note { font-size: 11px; line-height: 1.8; margin: 0; }
+  .wr-forbidden { color: #ff1744; font-weight: bold; }
+  .wr-respawn-time { font-size: 28px; font-weight: bold; text-align: center; color: var(--danger); margin: 24px 0 8px; }
+  .wr-last { margin-top: 14px; }
+  .wr-reward-mine { background: rgba(255,176,32,0.08); border: 1px solid rgba(255,176,32,0.35); padding: 10px; font-size: 12px; margin-bottom: 10px; line-height: 1.6; }
+  @media (max-width: 760px) {
+    .wr-layout { grid-template-columns: 1fr; }
+    .wr-boss-art svg { width: 140px; height: 140px; }
+  }
+  /* 빠른 금액 버튼 줄 — 원래 증권거래소용이었지만 슬롯머신 배팅 버튼이 같이 쓰고 있어서 남겨 둔다. */
+  /* 수량 입력 + 버튼 한 줄 폼 — 증권거래소는 폐지됐지만 환생 상점 환전소가 같은 폼을 쓰고 있어서 남겨 둔다. */
   .stock-form { display: flex; gap: 6px; margin-top: 8px; }
   .stock-form input { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; padding: 8px; }
   .stock-form button { flex: 0 0 auto; }
@@ -801,7 +839,7 @@
     .side-tab.active { border-bottom-color: var(--accent); box-shadow: none; }
     .content { padding: 14px; }
     /* 카드 그리드 최소폭을 낮춰서 한 줄에 어정쩡하게 잘리지 않게 한다. */
-    .job-grid, .shop-grid, .property-grid, .raffle-grid, .stock-grid {
+    .job-grid, .shop-grid, .property-grid, .raffle-grid {
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
     }
   }
@@ -823,7 +861,7 @@
     .log-row > span:last-child { font-size: 10px; opacity: 0.8; }
 
     /* 카드 한 장이 화면을 꽉 채우게 — 두 칸으로 쪼개면 글자가 너무 작아진다. */
-    .job-grid, .shop-grid, .property-grid, .raffle-grid, .stock-grid {
+    .job-grid, .shop-grid, .property-grid, .raffle-grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
     .slot-card { max-width: none; padding: 14px; }
@@ -900,6 +938,7 @@
       <button class="side-tab active" data-tab="jobs">💻 Hacking Jobs</button>
       <button class="side-tab" data-tab="galaxy">🌌 Galaxy Map</button>
       <button class="side-tab" data-tab="pvp">🎯 Arena P2P</button>
+      <button class="side-tab" data-tab="worldraid">🐉 World Raid</button>
       <button class="side-tab" data-tab="bounty">📋 Bounty Board</button>
       <div class="side-section-label">경제</div>
       <button class="side-tab" data-tab="shop">🛒 Hardware Shop</button>
@@ -908,7 +947,6 @@
       <button class="side-tab" data-tab="property">🏭 Property</button>
       <button class="side-tab" data-tab="bank">🏦 Secure Bank</button>
       <button class="side-tab" data-tab="raffle">🎫 다크넷 로또</button>
-      <button class="side-tab" data-tab="stocks">📈 증권거래소</button>
       <button class="side-tab" data-tab="research">🔬 Research</button>
       <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
       <button class="side-tab" data-tab="trade">🤝 Trade</button>
@@ -1107,10 +1145,10 @@
         <div class="raffle-winners" id="raffleWinners"><p class="dim">불러오는 중...</p></div>
       </div>
 
-      <div class="tab-panel" id="panel-stocks">
-        <p class="panel-title">📈 STOCK EXCHANGE</p>
-        <p class="dim" style="margin-bottom:14px;">매수/매도 모두 언제든 바로 가능합니다. 매도 수수료는 <b id="stockFeeNote">5</b>% 고정이며, 가격은 10초마다 조금씩 움직이되 장기적으로 항상 기준가 근처로 되돌아옵니다(무조건 우상향 아님).</p>
-        <div class="stock-grid" id="stockGrid"><p class="dim">불러오는 중...</p></div>
+      <div class="tab-panel" id="panel-worldraid">
+        <p class="panel-title">🐉 WORLD RAID</p>
+        <p class="dim" style="margin-bottom:14px;">서버 전체가 같이 때리는 초대형 보스입니다. 자원 소모 없이 3초마다 공격할 수 있고, 처치하면 보상 풀을 <b>기여 데미지 비율대로</b> 나눠 받습니다. 보스 방어력이 높아서 약한 장비는 데미지가 크게 깎이고, 장비가 강할수록 훨씬 많이 법니다. 처치할 때마다 다음 보스는 더 강해지고 보상도 커지며, 매일 자정(KST) 이후 첫 보스는 Lv.1로 돌아갑니다.</p>
+        <div id="worldRaidBody"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-research">

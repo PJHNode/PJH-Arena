@@ -1008,76 +1008,119 @@ function rollSlotSymbol() {
 }
 
 // ══════════════════════════════════════════════════════════
-//  증권거래소(Stock Exchange) — "주식 시스템까지 넣어보자" 요청 반영(다크넷 로또와는 완전히
-//  별개 기능이라 이름도 겹치지 않게 지었다). 코인으로 종목에 투자하고 나중에 되팔아 회수하는
-//  구조지만, 아래 두 가지로 "이걸로 갑자기 큰 이익을 못 보게" 막았다:
-//   (1) 가격이 평균회귀(mean-reversion)한다 — 매 틱마다 기준가(basePrice) 쪽으로 일정
-//       비율(STOCK_MEAN_REVERSION_RATE)만큼 당겨지고, 그 위에 작은 무작위 충격만 더해진다.
-//       그래서 "무조건 우상향"이 아니라 장기적으로는 항상 기준가 근처로 돌아온다(요청 반영:
-//       "주식이 항상 오르지만 못하게, 무조건 평균값 정도로"). 가격 자체도 기준가의
-//       STOCK_PRICE_MIN/MAX_MULT 배 안으로 항상 clamp돼서 폭등/폭락 자체가 막혀 있다.
-//       10초 틱으로 바꾸면서(요청 반영: "변화 간격이 최소 10초는 돼야") 반감기(대략 30분)가
-//       예전(5분 틱)과 비슷하게 유지되도록 틱당 회귀율/충격폭을 그만큼 잘게 다시 잡았다
-//       (직접 8640틱=1일 시뮬레이션으로 평균이 기준가 대비 오차 1.6% 이내에 머무는 것 확인).
-//   (2) 매도 수수료(STOCK_SELL_FEE_RATE) 5% 고정 — 팔 때마다 판돈의 5%가 그대로 사라진다
-//       (요청 반영: "수수료는 5%가 필수"). 코인 총량을 깎는 순수 소모처 역할도 겸한다.
-//  매도 대기시간(예전 SELL_DELAY_MS 30분)은 "그냥 매도 버튼 누르면 바로 팔리게 하자"는
-//  요청으로 없앴다 — 이제 매수/매도 둘 다 언제든 바로 가능하고, 위 두 가지(평균회귀 + 수수료)
-//  만으로 과도한 차익거래를 억제한다.
+//  월드 레이드(World Raid) — "보스몹 레이드를 겁나 강하게 해서, 클럽 보스처럼 짜게 말고
+//  포비든 장비 하나 걸고 돈도 많이 주면 좋겠다" 요청 반영. 클럽 레이드(클럽당 20시간에 한 번,
+//  보상 풀 = HP×3이라 실제로 한 판에 수십만 코인)와 달리 서버 전체가 보스 하나를 같이 때리고
+//  보상도 수십억 단위다. 증권거래소는 이번에 폐지했다(요청 반영 — ensureSchema의 환급
+//  마이그레이션 참고).
 //
-//  가격은 실제 크론 없이 "누군가 조회/거래하는 시점"에 지난 틱 수만큼 한 번에 계산해
-//  따라잡는 지연 평가 방식(다크넷 로또 라운드와 같은 발상) — 각 틱은 (종목id+틱번호)로 시드된
-//  결정론적 난수라 언제 누가 계산해도 같은 결과가 나온다. 실제 코인이 오가는 매매 자체는
-//  아니라서(가격 계산일 뿐) 동시 요청끼리 경쟁해도 위험하지 않지만, 그래도 이중 적용을
-//  막기 위해 상점 재고/로또 라운드와 같은 조건부 UPDATE(CAS) 패턴을 그대로 썼다.
+//  · 공격은 자원을 전혀 안 쓰고 3초 쿨다운만 있다 — "액티브로 붙어 있는 사람이 오프라인
+//    수입보다 더 벌어야 한다"는 요구에 맞춘 순수 시간 투자형. 쿨다운은 조건부 UPDATE로 서버가
+//    강제한다(동시 요청으로 쿨다운 우회 불가).
+//  · 보스 방어력(armor)이 데미지를 ATK/(ATK+armor) 비율로 깎는다 — 약한 장비는 데미지가 크게
+//    줄고 강한 장비는 거의 안 줄어서 "보스가 강하다"는 체감 + 장비 투자 가치가 생긴다.
+//  · 처치할 때마다 다음 보스는 레벨이 1 오르고 HP ×1.6 / 방어력 ×1.5 / HP당 코인 ×1.12로
+//    커진다(높은 레벨일수록 강한 장비만 효율이 나오는 대신 데미지당 보상이 더 좋다). 매일
+//    자정(KST) 이후 처음 소환되는 보스는 Lv.1로 돌아간다 — 하루 단위로 상한이 생긴다.
+//  · 보상 풀은 기여 데미지 비율대로 전원에게 나눠 준다(코인 + 다음 레벨 EXP의 %). 1위(MVP)는
+//    Forbidden 장비 1개 확정, 기여도 5% 이상은 각자 30% 확률로 1개.
+//  · 실제 유저 장비(D1)로 시뮬레이션한 결과(3초마다 계속 공격 기준): 현재 최고 ATK(약 1.5만)
+//    유저가 Lv.1에서 시간당 약 32억, abyssal 풀무장(ATK 7만)은 약 160억. 4명이 같이 치면
+//    Lv.1이 약 25분, Lv.5까지 누적 약 9시간.
 // ══════════════════════════════════════════════════════════
-const STOCK_TICK_MS = 10 * 1000; // 10초마다 한 틱(요청 반영: "변화 간격이 최소 10초는 돼야")
-const STOCK_MEAN_REVERSION_RATE = 0.0038; // 틱마다 기준가 쪽으로 0.38%씩(반감기 약 180틱=30분)
-const STOCK_PRICE_MIN_MULT = 0.4, STOCK_PRICE_MAX_MULT = 2.5; // 기준가의 0.4~2.5배 안으로 항상 clamp
-const STOCK_HISTORY_LEN = 180; // 프론트 그래프용 — 최근 180틱(10초 틱 기준 30분)
-const STOCK_SELL_FEE_RATE = 0.05; // 매도 시 5% 고정 수수료(코인 소모처)
-const STOCKS = {
-  neocorp:     { name: "NeoCorp",              basePrice: 10000,    maxShockPct: 0.0027 },
-  obsidian:    { name: "Obsidian Dynamics",    basePrice: 50000,    maxShockPct: 0.0046 },
-  quantumleap: { name: "QuantumLeap Systems",  basePrice: 200000,   maxShockPct: 0.0073 },
-  ghostwire:   { name: "Ghostwire Networks",   basePrice: 500000,   maxShockPct: 0.0110 },
-  singularity: { name: "Singularity Holdings", basePrice: 2000000,  maxShockPct: 0.0164 },
-};
+const WORLD_RAID_ATTACK_COOLDOWN_MS = 3000;
+const WORLD_RAID_COOLDOWN_SLACK_MS = 150; // 자동 공격이 딱 3초 간격으로 올 때 네트워크 지터로 튕기지 않게
+const WORLD_RAID_RESPAWN_MS = 3 * 60 * 1000; // 처치 후 다음 보스까지 3분
+const WORLD_RAID_MAX_LEVEL = 20; // 코인 풀이 Number 안전 정수 범위를 넘지 않게 거는 안전 상한(실제로 도달 불가 수준)
+const WORLD_RAID_BASE_HP = 100000000, WORLD_RAID_HP_GROWTH = 1.6;
+const WORLD_RAID_BASE_ARMOR = 2000, WORLD_RAID_ARMOR_GROWTH = 1.5;
+const WORLD_RAID_BASE_COIN_PER_HP = 20, WORLD_RAID_COIN_PER_HP_GROWTH = 1.12;
+const WORLD_RAID_DAMAGE_MULT = 10;
+const WORLD_RAID_XP_PCT_AT_FULL_SHARE = 0.5; // 기여도 100% 기준 다음 레벨 EXP의 50%
+const WORLD_RAID_DROP_ITEMS = ["omega_killswitch", "absolute_zero", "algorithm_of_god"]; // Forbidden 무기/방어구/코어
+const WORLD_RAID_DROP_MIN_SHARE = 0.05, WORLD_RAID_DROP_CHANCE = 0.3;
+const WORLD_RAID_BOSS_NAMES = ["무한 재귀 히드라", "크림슨 오버마인드", "블랙홀 하이퍼바이저", "넥서스 아포칼립스", "종말의 데몬 커널"];
 
-async function ensureStockPrice(env, stockId) {
-  const stock = STOCKS[stockId];
+function worldRaidStats(level) {
+  const hp = Math.round(WORLD_RAID_BASE_HP * Math.pow(WORLD_RAID_HP_GROWTH, level - 1));
+  const armor = Math.round(WORLD_RAID_BASE_ARMOR * Math.pow(WORLD_RAID_ARMOR_GROWTH, level - 1));
+  const coinPerHp = WORLD_RAID_BASE_COIN_PER_HP * Math.pow(WORLD_RAID_COIN_PER_HP_GROWTH, level - 1);
+  return { hp: hp, armor: armor, coinPool: Math.round(hp * coinPerHp), name: WORLD_RAID_BOSS_NAMES[(level - 1) % WORLD_RAID_BOSS_NAMES.length] };
+}
+function worldRaidExpectedDamage(atk, armor) {
+  const a = Math.max(0, atk || 0);
+  return Math.max(1, Math.round(a * WORLD_RAID_DAMAGE_MULT * a / (a + armor)));
+}
+function worldRaidRollDamage(atk, armor) { return Math.max(1, Math.round(worldRaidExpectedDamage(atk, armor) * randMult())); }
+
+// 크론 없이 조회/공격 시점에 필요하면 그 자리에서 다음 보스를 소환한다. INSERT ... WHERE NOT
+// EXISTS는 단일 문장이라 원자적이어서 여러 요청이 동시에 와도 보스가 둘 생기지 않는다.
+async function ensureWorldRaid(env) {
+  const active = await env.DB.prepare("SELECT * FROM arena_world_raids WHERE status = 'active' ORDER BY id DESC LIMIT 1").first();
+  if (active) return { raid: active, respawnAt: 0 };
   const now = Date.now();
-  let row = await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first();
-  if (!row) {
-    await env.DB.prepare("INSERT INTO arena_stocks (id, price, history, last_tick_at) VALUES (?, ?, ?, ?)")
-      .bind(stockId, stock.basePrice, JSON.stringify([stock.basePrice]), now).run();
-    row = await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first();
+  const last = await env.DB.prepare("SELECT level, ended_at FROM arena_world_raids ORDER BY id DESC LIMIT 1").first();
+  if (last && last.ended_at && now - last.ended_at < WORLD_RAID_RESPAWN_MS) {
+    return { raid: null, respawnAt: last.ended_at + WORLD_RAID_RESPAWN_MS };
   }
-  const ticks = Math.min(10000, Math.floor((now - row.last_tick_at) / STOCK_TICK_MS)); // 10000틱(~27.8시간) 안전 상한 — 그보다 오래 방치됐으면 다음 조회에서 이어서 마저 따라잡는다
-  if (ticks <= 0) return row;
+  const sameDay = last && last.ended_at && kstDateString(last.ended_at) === kstDateString(now);
+  const level = sameDay ? Math.min(last.level + 1, WORLD_RAID_MAX_LEVEL) : 1;
+  const s = worldRaidStats(level);
+  await env.DB.prepare(
+    "INSERT INTO arena_world_raids (level, boss_name, max_hp, hp, armor, coin_pool, status, started_at) " +
+    "SELECT ?, ?, ?, ?, ?, ?, 'active', ? WHERE NOT EXISTS (SELECT 1 FROM arena_world_raids WHERE status = 'active')"
+  ).bind(level, s.name, s.hp, s.hp, s.armor, s.coinPool, now).run();
+  const created = await env.DB.prepare("SELECT * FROM arena_world_raids WHERE status = 'active' ORDER BY id DESC LIMIT 1").first();
+  return { raid: created, respawnAt: 0 };
+}
 
-  let price = row.price;
-  const baseTickIndex = Math.floor(row.last_tick_at / STOCK_TICK_MS);
-  const history = JSON.parse(row.history || "[]");
-  for (let i = 1; i <= ticks; i++) {
-    const rng = mulberry32((hashStr(stockId + ":" + (baseTickIndex + i)) | 0));
-    const reversion = (stock.basePrice - price) * STOCK_MEAN_REVERSION_RATE;
-    const shockPct = (rng() - 0.5) * 2 * stock.maxShockPct;
-    price = clamp(price + reversion + price * shockPct, stock.basePrice * STOCK_PRICE_MIN_MULT, stock.basePrice * STOCK_PRICE_MAX_MULT);
-    history.push(Math.round(price));
+// 처치 확정(status active→completed 조건부 UPDATE에 성공한 딱 한 요청)에서만 호출된다 —
+// 동시에 막타가 여러 번 들어와도 보상이 두 번 나가지 않는다. 코인은 상대값(+?)으로 더해서
+// 그 유저가 동시에 다른 행동으로 코인을 쓰고 있어도 덮어쓰지 않는다.
+async function settleWorldRaid(env, raid) {
+  const res = await env.DB.prepare("SELECT user_id, user_name, damage, hits FROM arena_world_raid_damage WHERE raid_id = ? ORDER BY damage DESC").bind(raid.id).all();
+  const participants = res.results;
+  const totalDamage = participants.reduce(function (sum, p) { return sum + p.damage; }, 0) || 1;
+  const eventMult = globalEventMult();
+  const coinPool = Math.round(raid.coin_pool * eventMult);
+  const now = Date.now();
+  const writes = [];
+  const summary = [];
+  for (let i = 0; i < participants.length; i++) {
+    const p = participants[i];
+    const row = await env.DB.prepare("SELECT * FROM arena_users WHERE user_id = ?").bind(p.user_id).first();
+    if (!row) continue;
+    const share = p.damage / totalDamage;
+    const coins = Math.round(coinPool * share);
+    const xpGain = Math.round(xpPct(row, WORLD_RAID_XP_PCT_AT_FULL_SHARE * share) * eventMult);
+    const leveledUp = applyXpAndLevel(row, xpGain);
+    const isMvp = summary.length === 0;
+    let itemId = null;
+    if (isMvp || (share >= WORLD_RAID_DROP_MIN_SHARE && Math.random() < WORLD_RAID_DROP_CHANCE)) {
+      itemId = WORLD_RAID_DROP_ITEMS[Math.floor(Math.random() * WORLD_RAID_DROP_ITEMS.length)];
+    }
+    const sharePct = Math.round(share * 1000) / 10;
+    writes.push(env.DB.prepare(
+      "UPDATE arena_users SET pocket_coins = pocket_coins + ?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+    ).bind(coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id));
+    if (itemId) {
+      writes.push(env.DB.prepare(
+        "INSERT INTO arena_inventory (user_id, item_id, qty) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + 1"
+      ).bind(p.user_id, itemId));
+    }
+    writes.push(env.DB.prepare(
+      "INSERT INTO arena_world_raid_rewards (raid_id, user_id, user_name, damage, share_pct, coins, xp, item_id, is_mvp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(raid.id, p.user_id, p.user_name, p.damage, sharePct, coins, xpGain, itemId, isMvp ? 1 : 0));
+    writes.push(env.DB.prepare(
+      "INSERT INTO arena_logs (user_id, kind, opponent_id, opponent_name, result, coins_delta, hp_delta, created_at) VALUES (?,?,?,?,?,?,?,?)"
+    ).bind(p.user_id, "world_raid", null, raid.boss_name + " Lv." + raid.level, isMvp ? "mvp" : "win", coins, 0, now));
+    summary.push({
+      userId: p.user_id, userName: p.user_name, damage: p.damage, sharePct: sharePct, coins: coins, xp: xpGain, leveledUp: leveledUp,
+      itemId: itemId, itemName: itemId ? SHOP_ITEMS[itemId].name : null, isMvp: isMvp,
+    });
   }
-  price = Math.round(price);
-  while (history.length > STOCK_HISTORY_LEN) history.shift();
-  const newLastTick = row.last_tick_at + ticks * STOCK_TICK_MS;
-
-  // 조건부 UPDATE(CAS) — 동시에 여러 요청이 같은 구간을 계산해도 딱 하나만 실제로 반영된다.
-  const claim = await env.DB.prepare("UPDATE arena_stocks SET price=?, history=?, last_tick_at=? WHERE id=? AND last_tick_at=?")
-    .bind(price, JSON.stringify(history), newLastTick, stockId, row.last_tick_at).run();
-  if (!claim.meta || !claim.meta.changes) {
-    return await env.DB.prepare("SELECT * FROM arena_stocks WHERE id=?").bind(stockId).first(); // 이미 다른 요청이 갱신함 — 최신값 재조회
-  }
-  row.price = price; row.history = JSON.stringify(history); row.last_tick_at = newLastTick;
-  return row;
+  if (writes.length) await env.DB.batch(writes);
+  return { coinPool: coinPool, participants: summary };
 }
 
 async function clubIdOf(env, userId) {
@@ -1810,15 +1853,49 @@ async function ensureSchema(env) {
     "qty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (round_id, user_id))"
   );
 
-  // ── 증권거래소(Stock Exchange) — 종목당 딱 한 행(현재가/최근 24틱 이력), 보유는 유저당
-  // 종목당 한 행(ensureStockPrice/POST /stocks/buy,sell 참고). ──
+  // ── 월드 레이드 — 서버 전체 공용 보스(한 번에 active 하나), 보스별 기여 데미지, 처치 시
+  // 지급된 보상 기록(직전 처치 결과를 탭에 보여주는 용도). 공격 쿨다운은 arena_users에 둔다. ──
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS arena_stocks (id TEXT PRIMARY KEY, price INTEGER NOT NULL, history TEXT NOT NULL DEFAULT '[]', last_tick_at INTEGER NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS arena_world_raids (id INTEGER PRIMARY KEY AUTOINCREMENT, level INTEGER NOT NULL, boss_name TEXT NOT NULL, " +
+    "max_hp INTEGER NOT NULL, hp INTEGER NOT NULL, armor INTEGER NOT NULL, coin_pool INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active', " +
+    "started_at INTEGER NOT NULL, ended_at INTEGER)"
+  );
+  try { await env.DB.exec("CREATE INDEX IF NOT EXISTS idx_world_raids_status ON arena_world_raids(status, id)"); } catch (e) {}
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_world_raid_damage (raid_id INTEGER NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL, " +
+    "damage INTEGER NOT NULL DEFAULT 0, hits INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (raid_id, user_id))"
   );
   await env.DB.exec(
-    "CREATE TABLE IF NOT EXISTS arena_stock_holdings (user_id TEXT NOT NULL, stock_id TEXT NOT NULL, shares REAL NOT NULL DEFAULT 0, " +
-    "avg_cost REAL NOT NULL DEFAULT 0, sell_locked_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, stock_id))"
+    "CREATE TABLE IF NOT EXISTS arena_world_raid_rewards (raid_id INTEGER NOT NULL, user_id TEXT NOT NULL, user_name TEXT NOT NULL, " +
+    "damage INTEGER NOT NULL, share_pct REAL NOT NULL, coins INTEGER NOT NULL, xp INTEGER NOT NULL, item_id TEXT, is_mvp INTEGER NOT NULL DEFAULT 0, " +
+    "PRIMARY KEY (raid_id, user_id))"
   );
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN last_world_raid_attack_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+
+  // ── 증권거래소 폐지(요청 반영) — 남아 있던 보유 주식을 전부 코인으로 환급하고 테이블을 지운다.
+  // 강제 청산이라 유저가 손해 보지 않게 "현재가 평가액"과 "매수 원가" 중 큰 쪽으로, 수수료 없이,
+  // 약탈당하지 않는 은행 잔고로 넣어 준다. 환급 로그 → 잔고 반영 → DROP이 한 배치(트랜잭션)라
+  // 여러 인스턴스가 동시에 돌아도 두 번째 배치는 테이블이 이미 없어서 통째로 실패한다(중복 환급 불가).
+  try {
+    const hasStockTable = await env.DB.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'arena_stock_holdings'").first();
+    if (hasStockTable) {
+      const refundExpr = "CAST(SUM(MAX(h.shares * s.price, h.shares * h.avg_cost)) AS INTEGER)";
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT INTO arena_logs (user_id, kind, opponent_id, opponent_name, result, coins_delta, hp_delta, created_at) " +
+          "SELECT h.user_id, 'stock_refund', NULL, '증권거래소 폐지 환급', 'success', " + refundExpr + ", 0, ? " +
+          "FROM arena_stock_holdings h JOIN arena_stocks s ON s.id = h.stock_id WHERE h.shares > 0 GROUP BY h.user_id"
+        ).bind(Date.now()),
+        env.DB.prepare(
+          "UPDATE arena_users SET bank_coins = bank_coins + COALESCE((SELECT " + refundExpr + " " +
+          "FROM arena_stock_holdings h JOIN arena_stocks s ON s.id = h.stock_id WHERE h.user_id = arena_users.user_id AND h.shares > 0), 0) " +
+          "WHERE user_id IN (SELECT user_id FROM arena_stock_holdings WHERE shares > 0)"
+        ),
+        env.DB.prepare("DROP TABLE arena_stock_holdings"),
+        env.DB.prepare("DROP TABLE IF EXISTS arena_stocks"),
+      ]);
+    }
+  } catch (e) {}
 
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 1)"
@@ -4784,89 +4861,110 @@ export default {
         return json({ ok: true, reels: reels.map(function (s) { return s.id; }), multiplier: multiplier, payout: payout, pocketCoins: row.pocket_coins });
       }
 
-      // ── GET /stocks — 5개 종목 전부 현재가(조회 시점까지 밀린 틱을 즉시 따라잡은 값) +
-      //    내 보유 현황(주식 수/평균단가)을 내려준다. ──
-      if (request.method === "GET" && path === "/stocks") {
-        const stocks = {};
-        for (const stockId in STOCKS) {
-          const def = STOCKS[stockId];
-          const priceRow = await ensureStockPrice(env, stockId);
-          const holding = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
-          stocks[stockId] = {
-            name: def.name, basePrice: def.basePrice, price: priceRow.price,
-            changePct: Math.round(((priceRow.price - def.basePrice) / def.basePrice) * 10000) / 100,
-            history: JSON.parse(priceRow.history || "[]"),
-            myShares: holding ? holding.shares : 0, myAvgCost: holding ? holding.avg_cost : 0,
+      // ── GET /world-raid — 현재 보스(없으면 그 자리에서 소환하거나 재소환까지 남은 시간),
+      //    내 전투 정보(ATK/방어 관통 효율/1타 예상 데미지), 기여 순위, 직전 처치 결과. ──
+      if (request.method === "GET" && path === "/world-raid") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const now = Date.now();
+        const spawn = await ensureWorldRaid(env);
+        const raid = spawn.raid;
+        const combat = await totalCombatStats(env, row);
+        const eventMult = globalEventMult();
+        let raidInfo = null;
+        if (raid) {
+          const topRes = await env.DB.prepare("SELECT user_id, user_name, damage, hits FROM arena_world_raid_damage WHERE raid_id = ? ORDER BY damage DESC LIMIT 10").bind(raid.id).all();
+          const mine = await env.DB.prepare("SELECT damage, hits FROM arena_world_raid_damage WHERE raid_id = ? AND user_id = ?").bind(raid.id, user.userId).first();
+          const dealt = Math.max(1, raid.max_hp - raid.hp);
+          const myDamage = mine ? mine.damage : 0;
+          raidInfo = {
+            id: raid.id, level: raid.level, bossName: raid.boss_name, hp: raid.hp, maxHp: raid.max_hp, armor: raid.armor,
+            coinPool: Math.round(raid.coin_pool * eventMult), startedAt: raid.started_at,
+            topContributors: topRes.results.map(function (r) { return { userId: r.user_id, userName: r.user_name, damage: r.damage, hits: r.hits }; }),
+            myDamage: myDamage, myHits: mine ? mine.hits : 0,
+            mySharePct: Math.min(100, Math.round(myDamage / dealt * 1000) / 10),
           };
         }
-        return json({ stocks: stocks, sellFeeRatePct: STOCK_SELL_FEE_RATE * 100 });
-      }
-
-      // ── POST /stocks/buy { stockId, coins } — 코인을 원하는 만큼 투자해서(제한 없음) 그
-      //    시점 가격으로 주식(소수 가능)을 산다. ──
-      if (request.method === "POST" && path === "/stocks/buy") {
-        const body = await request.json().catch(function () { return {}; });
-        const stockId = String(body.stockId || "");
-        if (!STOCKS[stockId]) return json({ error: "알 수 없는 종목입니다." }, 400);
-        const coins = Math.floor(Number(body.coins) || 0);
-        if (coins <= 0) return json({ error: "투자할 코인을 입력하세요." }, 400);
-
-        const priceRow = await ensureStockPrice(env, stockId);
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
-        if (row.pocket_coins < coins) return json({ error: "코인이 부족합니다. (필요 " + fmtNum(coins) + ")" }, 400);
-
-        const boughtShares = coins / priceRow.price;
-        const existing = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
-        const oldShares = existing ? existing.shares : 0;
-        const oldCostTotal = existing ? existing.shares * existing.avg_cost : 0;
-        const newShares = oldShares + boughtShares;
-        const newAvgCost = (oldCostTotal + coins) / newShares;
-
-        row.pocket_coins -= coins;
-        await env.DB.batch([
-          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
-          env.DB.prepare(
-            "INSERT INTO arena_stock_holdings (user_id, stock_id, shares, avg_cost) VALUES (?, ?, ?, ?) " +
-            "ON CONFLICT(user_id, stock_id) DO UPDATE SET shares=?, avg_cost=?"
-          ).bind(user.userId, stockId, newShares, newAvgCost, newShares, newAvgCost),
-        ]);
-        return json({ ok: true, pocketCoins: row.pocket_coins, boughtShares: boughtShares });
-      }
-
-      // ── POST /stocks/sell { stockId, shares } — 매수/매도 둘 다 언제든 바로 가능하다(요청
-      //    반영: "그냥 매도하기 버튼 누르면 매도 가능해지도록"). 판돈의 STOCK_SELL_FEE_RATE
-      //    (5%)는 수수료로 그대로 사라진다. ──
-      if (request.method === "POST" && path === "/stocks/sell") {
-        const body = await request.json().catch(function () { return {}; });
-        const stockId = String(body.stockId || "");
-        if (!STOCKS[stockId]) return json({ error: "알 수 없는 종목입니다." }, 400);
-
-        const holding = await env.DB.prepare("SELECT shares, avg_cost FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId).first();
-        if (!holding || holding.shares <= 0) return json({ error: "보유하지 않은 종목입니다." }, 400);
-
-        const sharesReq = Number(body.shares);
-        if (!(sharesReq > 0)) return json({ error: "매도할 수량을 입력하세요." }, 400);
-        const sharesSold = Math.min(sharesReq, holding.shares);
-
-        const priceRow = await ensureStockPrice(env, stockId);
-        const gross = sharesSold * priceRow.price;
-        const fee = Math.round(gross * STOCK_SELL_FEE_RATE);
-        const payout = Math.round(gross) - fee;
-        const remainingShares = holding.shares - sharesSold;
-
-        const row = await loadOrCreateUser(env, user.userId, user.realName);
-        row.pocket_coins += payout;
-        const writes = [
-          env.DB.prepare("UPDATE arena_users SET pocket_coins=? WHERE user_id=?").bind(row.pocket_coins, row.user_id),
-        ];
-        if (remainingShares > 0.000001) {
-          writes.push(env.DB.prepare("UPDATE arena_stock_holdings SET shares=? WHERE user_id=? AND stock_id=?").bind(remainingShares, user.userId, stockId));
-        } else {
-          writes.push(env.DB.prepare("DELETE FROM arena_stock_holdings WHERE user_id=? AND stock_id=?").bind(user.userId, stockId));
+        let lastResult = null;
+        const last = await env.DB.prepare("SELECT * FROM arena_world_raids WHERE status = 'completed' ORDER BY id DESC LIMIT 1").first();
+        if (last) {
+          const mapReward = function (r) {
+            return {
+              userId: r.user_id, userName: r.user_name, damage: r.damage, sharePct: r.share_pct, coins: r.coins, xp: r.xp,
+              itemId: r.item_id, itemName: r.item_id && SHOP_ITEMS[r.item_id] ? SHOP_ITEMS[r.item_id].name : null, isMvp: !!r.is_mvp,
+            };
+          };
+          const cols = "user_id, user_name, damage, share_pct, coins, xp, item_id, is_mvp";
+          const rewardsRes = await env.DB.prepare("SELECT " + cols + " FROM arena_world_raid_rewards WHERE raid_id = ? ORDER BY damage DESC LIMIT 10").bind(last.id).all();
+          const myReward = await env.DB.prepare("SELECT " + cols + " FROM arena_world_raid_rewards WHERE raid_id = ? AND user_id = ?").bind(last.id, user.userId).first();
+          lastResult = {
+            level: last.level, bossName: last.boss_name, endedAt: last.ended_at, durationMs: Math.max(0, last.ended_at - last.started_at),
+            rewards: rewardsRes.results.map(mapReward), mine: myReward ? mapReward(myReward) : null,
+          };
         }
-        await env.DB.batch(writes);
-        await insertLog(env, user.userId, "stock_sell", null, STOCKS[stockId].name, "success", payout, 0);
-        return json({ ok: true, pocketCoins: row.pocket_coins, sharesSold: sharesSold, gross: Math.round(gross), fee: fee, payout: payout });
+        const armorNow = raid ? raid.armor : worldRaidStats(1).armor;
+        return json({
+          raid: raidInfo,
+          respawnInMs: raid ? 0 : Math.max(0, spawn.respawnAt - now),
+          me: { atk: combat.atk, estDamage: worldRaidExpectedDamage(combat.atk, armorNow), efficiencyPct: Math.round(combat.atk / Math.max(1, combat.atk + armorNow) * 100) },
+          cooldownMs: WORLD_RAID_ATTACK_COOLDOWN_MS,
+          cooldownLeftMs: Math.max(0, (row.last_world_raid_attack_at || 0) + WORLD_RAID_ATTACK_COOLDOWN_MS - now),
+          lastResult: lastResult,
+          drops: {
+            items: WORLD_RAID_DROP_ITEMS.map(function (id) { return { id: id, name: SHOP_ITEMS[id].name, type: SHOP_ITEMS[id].type }; }),
+            chancePct: WORLD_RAID_DROP_CHANCE * 100, minSharePct: WORLD_RAID_DROP_MIN_SHARE * 100,
+          },
+          respawnMinutes: WORLD_RAID_RESPAWN_MS / 60000,
+          eventMult: eventMult,
+        });
+      }
+
+      // ── POST /world-raid/attack — 자원 소모 없음, 3초 쿨다운(조건부 UPDATE로 강제). HP 차감은
+      //    "hp = MAX(0, hp - ?) WHERE status='active'"라 동시 공격끼리 서로 덮어쓰지 않고, 기여
+      //    데미지 기록도 같은 배치(트랜잭션) 안에서 보스가 아직 살아 있을 때만 들어간다. ──
+      if (request.method === "POST" && path === "/world-raid/attack") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const spawn = await ensureWorldRaid(env);
+        const raid = spawn.raid;
+        if (!raid) return json({ error: "보스가 아직 재소환되지 않았습니다." }, 400);
+        const now = Date.now();
+        const cdClaim = await env.DB.prepare("UPDATE arena_users SET last_world_raid_attack_at = ? WHERE user_id = ? AND last_world_raid_attack_at <= ?")
+          .bind(now, user.userId, now - WORLD_RAID_ATTACK_COOLDOWN_MS + WORLD_RAID_COOLDOWN_SLACK_MS).run();
+        if (!cdClaim.meta.changes) return json({ error: "공격 쿨다운 중입니다.", cooldown: true }, 429);
+
+        const combat = await totalCombatStats(env, row);
+        const damage = worldRaidRollDamage(combat.atk, raid.armor);
+        const results = await env.DB.batch([
+          env.DB.prepare("UPDATE arena_world_raids SET hp = MAX(0, hp - ?) WHERE id = ? AND status = 'active'").bind(damage, raid.id),
+          env.DB.prepare(
+            "INSERT INTO arena_world_raid_damage (raid_id, user_id, user_name, damage, hits) SELECT ?, ?, ?, ?, 1 " +
+            "WHERE EXISTS (SELECT 1 FROM arena_world_raids WHERE id = ? AND status = 'active') " +
+            "ON CONFLICT(raid_id, user_id) DO UPDATE SET damage = damage + excluded.damage, hits = hits + 1"
+          ).bind(raid.id, user.userId, user.realName, damage, raid.id),
+        ]);
+        if (!results[0].meta.changes) return json({ error: "방금 보스가 처치됐습니다. 곧 다음 보스가 소환됩니다.", defeatedByOther: true }, 400);
+
+        const after = await env.DB.prepare("SELECT hp FROM arena_world_raids WHERE id = ?").bind(raid.id).first();
+        const mine = await env.DB.prepare("SELECT damage, hits FROM arena_world_raid_damage WHERE raid_id = ? AND user_id = ?").bind(raid.id, user.userId).first();
+        let defeated = false, settlement = null;
+        if (after.hp <= 0) {
+          const claim = await env.DB.prepare("UPDATE arena_world_raids SET status = 'completed', ended_at = ? WHERE id = ? AND status = 'active' AND hp <= 0")
+            .bind(Date.now(), raid.id).run();
+          if (claim.meta.changes) {
+            defeated = true;
+            settlement = await settleWorldRaid(env, raid);
+          }
+        }
+        const myDamage = mine ? mine.damage : damage;
+        const dealt = Math.max(1, raid.max_hp - after.hp);
+        return json({
+          ok: true, damage: damage, hp: after.hp, maxHp: raid.max_hp, bossName: raid.boss_name, level: raid.level,
+          myDamage: myDamage, myHits: mine ? mine.hits : 1, mySharePct: Math.min(100, Math.round(myDamage / dealt * 1000) / 10),
+          defeated: defeated,
+          myReward: settlement ? (settlement.participants.find(function (p) { return p.userId === user.userId; }) || null) : null,
+          mvp: settlement && settlement.participants.length ? settlement.participants[0] : null,
+          coinPool: settlement ? settlement.coinPool : null,
+          cooldownMs: WORLD_RAID_ATTACK_COOLDOWN_MS,
+        });
       }
 
       if (request.method === "GET" && path === "/property") {

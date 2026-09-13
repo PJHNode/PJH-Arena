@@ -349,7 +349,7 @@
     property: renderPropertyTab,
     bank: renderBankTab,
     raffle: renderRaffleTab,
-    stocks: renderStockTab,
+    worldraid: renderWorldRaidTab,
     research: renderResearchTab,
     enchant: renderEnchantTab,
     rebirthshop: renderRebirthShopTab,
@@ -1876,166 +1876,217 @@
     }
   }, 1000);
 
-  // ── 증권거래소(Stock Exchange) — "주식 시스템" 요청 반영(다크넷 로또와 별개 기능). 가격은
-  //    10초마다 한 틱씩 움직이고 장기적으로 항상 기준가 근처로 되돌아온다(무조건 우상향
-  //    아님). 매수/매도 둘 다 언제든 바로 가능하고(요청 반영: "그냥 매도하기 버튼 누르면
-  //    매도 가능해지도록" — 예전에 있던 매수 후 30분 매도 지연을 없앰), 매도 수수료 5%
-  //    고정만 과도한 차익거래를 억제한다. 카드마다 최근 30분(180틱) 가격을 영역 채우기
-  //    그래프로 그려서 흐름이 한눈에 보이게 했다(요청 반영: "각 주식에 대해 그래프가"). ──
-  const STOCK_COLORS = { neocorp: "var(--cyan)", obsidian: "#2b7fff", quantumleap: "#b060e8", ghostwire: "#ff3d9e", singularity: "var(--stamina)" };
-  function stockChartSvg(history, color) {
-    if (!history || history.length < 2) return "";
-    const w = 300, h = 70, pad = 3;
-    const min = Math.min(...history), max = Math.max(...history);
-    const range = max - min || 1;
-    const coords = history.map((v, i) => {
-      const x = (i / (history.length - 1)) * (w - pad * 2) + pad;
-      const y = h - pad - ((v - min) / range) * (h - pad * 2);
-      return [x, y];
-    });
-    const linePoints = coords.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
-    const areaPoints = linePoints + " " + (w - pad).toFixed(1) + "," + (h - pad).toFixed(1) + " " + pad.toFixed(1) + "," + (h - pad).toFixed(1);
-    return (
-      '<svg class="stock-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-      '<polygon points="' + areaPoints + '" fill="' + color + '" opacity="0.12"/>' +
-      '<polyline points="' + linePoints + '" fill="none" stroke="' + color + '" stroke-width="1.8"/>' +
-      "</svg>"
-    );
+  // ── 월드 레이드 — 서버 전체가 같이 때리는 보스. 공격은 자원 소모 없이 3초 쿨다운만 있고,
+  //    "자동 공격"을 켜면 이 탭을 실제로 보고 있는 동안(document.hidden이 아닐 때)만 쿨다운이
+  //    끝날 때마다 알아서 때린다 — 클릭 노가다 피로는 없애되, 창을 내려놓고 방치하는 오프라인
+  //    수입처럼은 안 되게 했다. 공격 결과는 HP바/내 기여도만 부분 갱신하고(3초마다 탭 전체를
+  //    다시 그리면 깜빡임), 전체 새로고침은 5초 주기로 따로 돈다. ──
+  let worldRaidData = null;
+  let worldRaidAuto = false;
+  let worldRaidNextAttackAt = 0;
+  let worldRaidRespawnAt = 0;
+  let worldRaidAttackInFlight = false;
+  let worldRaidRefreshInFlight = false;
+  function wrShort(n) {
+    const v = Math.round(Number(n) || 0);
+    if (v >= 1e12) return (v / 1e12).toFixed(2).replace(/\.?0+$/, "") + "조";
+    if (v >= 1e8) return (v / 1e8).toFixed(2).replace(/\.?0+$/, "") + "억";
+    if (v >= 1e4) return (v / 1e4).toFixed(1).replace(/\.0$/, "") + "만";
+    return fmt(v);
   }
-  // 주식 수량은 소수라서 toFixed(4)로 뭉뚱그리면 비싼 종목을 소액 매수했을 때 "0.0000주"로
-  // 보인다 — 값이 작을수록 자릿수를 늘려서 최소한 유효숫자가 보이게 한다.
-  function fmtShares(n) {
-    if (!(n > 0)) return "0";
-    if (n >= 1000) return fmt(Math.round(n));
-    if (n >= 1) return n.toFixed(2);
-    if (n >= 0.01) return n.toFixed(4);
-    return n.toFixed(8).replace(/0+$/, "");
+  function wrCountdown(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return s >= 60 ? Math.floor(s / 60) + "분 " + String(s % 60).padStart(2, "0") + "초" : s + "초";
   }
-  async function renderStockTab() {
-    const grid = $("stockGrid");
+  function wrStatRow(label, value, id) {
+    return '<div class="wr-stat-row"><span>' + label + "</span><b" + (id ? ' id="' + id + '"' : "") + ">" + value + "</b></div>";
+  }
+  function worldRaidHtml(d) {
+    const r = d.raid, me = d.me;
+    const hitsPerHour = 3600000 / d.cooldownMs;
+    let bossCard;
+    if (r) {
+      const pct = Math.max(0, Math.min(100, (r.hp / r.maxHp) * 100));
+      bossCard =
+        '<div class="wr-boss-card">' +
+        '<div class="wr-boss-head"><span class="wr-level">Lv.' + r.level + '</span><span class="wr-boss-name">' + escapeHtml(r.bossName) + "</span></div>" +
+        '<div class="wr-boss-art" id="worldRaidArt">' + raidBossSvgHtml(r.bossName, r.hp / r.maxHp).replace(/bossGlow/g, "wrBossGlow") +
+        '<div class="wr-pops" id="worldRaidPops"></div></div>' +
+        '<div class="wr-hp-track"><div class="wr-hp-fill" id="worldRaidHpFill" style="width:' + pct + '%;"></div>' +
+        '<span class="wr-hp-text" id="worldRaidHpText">' + fmt(r.hp) + " / " + fmt(r.maxHp) + "</span></div>" +
+        '<div class="wr-boss-stats">' +
+        "<div><span>🛡️ 보스 방어력</span><b>" + fmt(r.armor) + "</b></div>" +
+        '<div><span>💰 보상 풀' + (d.eventMult > 1 ? " (이벤트 x" + d.eventMult + ")" : "") + '</span><b class="wr-gold">' + wrShort(r.coinPool) + "</b></div>" +
+        "</div>" +
+        '<button class="btn-danger wr-attack-btn" id="worldRaidAttackBtn">⚔️ 공격</button>' +
+        '<label class="wr-auto"><input type="checkbox" id="worldRaidAuto"' + (worldRaidAuto ? " checked" : "") + "> 자동 공격 " +
+        '<span class="dim">(이 탭을 보고 있는 동안만)</span></label>' +
+        "</div>";
+    } else {
+      bossCard =
+        '<div class="wr-boss-card wr-respawn">' +
+        '<div class="wr-boss-head"><span class="wr-boss-name">다음 보스 소환 대기 중</span></div>' +
+        '<p class="wr-respawn-time" id="worldRaidRespawn">' + wrCountdown(d.respawnInMs) + "</p>" +
+        '<p class="dim" style="text-align:center;">처치 ' + d.respawnMinutes + "분 뒤 한 단계 더 강해진 보스가 소환됩니다. 매일 자정(KST) 이후 첫 보스는 Lv.1부터.</p>" +
+        (worldRaidAuto ? '<p class="dim" style="text-align:center;">자동 공격이 켜져 있어서 소환되면 바로 이어서 공격합니다.</p>' : "") +
+        "</div>";
+    }
+
+    let myPanel = '<div class="wr-panel"><div class="wr-panel-title">⚔️ 내 전투 정보</div>' +
+      wrStatRow("총 ATK (봇·환생 포함)", fmt(me.atk)) +
+      wrStatRow("방어 관통 효율", me.efficiencyPct + "%") +
+      wrStatRow("1타 예상 데미지", fmt(me.estDamage));
+    if (r) {
+      myPanel +=
+        wrStatRow("누적 데미지", fmt(r.myDamage) + " (" + r.myHits + "회)", "worldRaidMyDmg") +
+        wrStatRow("현재 기여도", r.mySharePct + "%", "worldRaidMyShare") +
+        wrStatRow("지금 처치되면 내 몫", "약 " + wrShort(r.coinPool * r.mySharePct / 100) + " 코인", "worldRaidMyEst") +
+        wrStatRow("계속 공격 시 시간당", "약 " + wrShort(me.estDamage * hitsPerHour * r.coinPool / r.maxHp) + " 코인");
+    }
+    myPanel += "</div>";
+
+    let rankPanel = "";
+    if (r) {
+      const rows = r.topContributors.length
+        ? r.topContributors.map((c, i) => (
+            '<div class="wr-rank-row' + (c.userId === state.userId ? " me" : "") + '">' +
+            '<span class="wr-rank-no">' + (i + 1) + "</span>" +
+            '<span class="wr-rank-name">' + escapeHtml(c.userName) + (i === 0 ? '<span class="wr-mvp-tag">MVP</span>' : "") + "</span>" +
+            '<span class="wr-rank-dmg">' + wrShort(c.damage) + "</span></div>"
+          )).join("")
+        : '<p class="dim">아직 공격한 사람이 없습니다. 첫 타격을 날려보세요.</p>';
+      rankPanel = '<div class="wr-panel"><div class="wr-panel-title">🏆 기여 순위</div>' + rows + "</div>";
+    }
+
+    const dropNames = d.drops.items.map((it) => escapeHtml(it.name)).join(" · ");
+    const dropPanel =
+      '<div class="wr-panel"><div class="wr-panel-title">🎁 처치 보상</div><p class="wr-drop-note">' +
+      "코인 풀 + EXP를 <b>기여 데미지 비율</b>대로 전원에게 분배<br>" +
+      '👑 MVP(1위): <span class="wr-forbidden">FORBIDDEN 장비 1개 확정</span><br>' +
+      "기여도 " + d.drops.minSharePct + "% 이상: 각자 " + d.drops.chancePct + "% 확률로 1개<br>" +
+      '<span class="dim">' + dropNames + "</span></p></div>";
+
+    let lastPanel = "";
+    const lr = d.lastResult;
+    if (lr) {
+      const mine = lr.mine;
+      const mineHtml = mine
+        ? '<div class="wr-reward-mine">내 보상: <b>+' + fmt(mine.coins) + "</b> 코인 · EXP +" + fmt(mine.xp) + " · 기여도 " + mine.sharePct + "%" +
+          (mine.itemName ? ' · 🎁 <span class="wr-forbidden">' + escapeHtml(mine.itemName) + "</span>" : "") + (mine.isMvp ? " · 👑 MVP" : "") + "</div>"
+        : "";
+      const rows = lr.rewards.map((w) => (
+        '<div class="wr-rank-row' + (w.userId === state.userId ? " me" : "") + '">' +
+        '<span class="wr-rank-no">' + (w.isMvp ? "👑" : "·") + "</span>" +
+        '<span class="wr-rank-name">' + escapeHtml(w.userName) + ' <span class="dim">' + w.sharePct + "%</span>" +
+        (w.itemName ? ' <span class="wr-forbidden">🎁 ' + escapeHtml(w.itemName) + "</span>" : "") + "</span>" +
+        '<span class="wr-rank-dmg">+' + wrShort(w.coins) + "</span></div>"
+      )).join("");
+      lastPanel =
+        '<div class="wr-panel wr-last"><div class="wr-panel-title">📜 직전 처치 — ' + escapeHtml(lr.bossName) + " Lv." + lr.level +
+        ' <span class="dim">(' + new Date(lr.endedAt).toLocaleTimeString("ko-KR") + " · 소요 " + fmtLongCountdown(lr.durationMs) + ")</span></div>" +
+        mineHtml + rows + "</div>";
+    }
+
+    return '<div class="wr-layout"><div>' + bossCard + "</div>" +
+      '<div class="wr-side">' + myPanel + rankPanel + dropPanel + "</div></div>" + lastPanel;
+  }
+
+  async function renderWorldRaidTab() {
+    const body = $("worldRaidBody");
+    if (!body) return;
     try {
-      const data = await api("/stocks");
-      setText("stockFeeNote", data.sellFeeRatePct);
-      // 10초마다 자동 갱신되는 탭이라, 그냥 innerHTML을 갈아끼우면 사용자가 입력 중이던
-      // 매수/매도 금액과 포커스가 매번 날아간다(실제로 겪는 버그) — 다시 그리기 전에 입력값과
-      // 포커스 위치를 기억해 뒀다가 그린 뒤 그대로 복원한다.
-      const savedInputs = {};
-      grid.querySelectorAll("input[data-buyinput], input[data-sellinput]").forEach((el) => {
-        const key = (el.dataset.buyinput ? "buy:" : "sell:") + (el.dataset.buyinput || el.dataset.sellinput);
-        savedInputs[key] = el.value;
-      });
-      const active = document.activeElement;
-      const focusedKey = active && grid.contains(active) && (active.dataset.buyinput || active.dataset.sellinput)
-        ? (active.dataset.buyinput ? "buy:" : "sell:") + (active.dataset.buyinput || active.dataset.sellinput)
-        : null;
-      const focusedSelStart = focusedKey ? active.selectionStart : null;
-
-      grid.innerHTML = Object.keys(data.stocks).map((id) => {
-        const s = data.stocks[id];
-        const color = STOCK_COLORS[id] || "var(--text)";
-        const dirCls = s.changePct > 0 ? "up" : s.changePct < 0 ? "down" : "flat";
-        const dirArrow = s.changePct > 0 ? "▲" : s.changePct < 0 ? "▼" : "―";
-        const holdingBlock = s.myShares > 0
-          ? '<div class="stock-card-row"><span>내 보유</span><b>' + fmtShares(s.myShares) + "주</b></div>" +
-            '<div class="stock-card-row"><span>평가액</span><b>' + fmt(Math.round(s.myShares * s.price)) + "</b></div>" +
-            '<div class="stock-card-row"><span>손익</span><b style="color:' + (s.price >= s.myAvgCost ? "var(--energy)" : "var(--danger)") + ';">' +
-            (s.myAvgCost > 0 ? (((s.price - s.myAvgCost) / s.myAvgCost) * 100).toFixed(1) : "0.0") + "%</b></div>"
-          : "";
-        return (
-          '<div class="stock-card" style="border-left-color:' + color + ';">' +
-          '<div class="stock-card-title">' + escapeHtml(s.name) + "</div>" +
-          '<div class="stock-price ' + dirCls + '">' + dirArrow + " " + fmt(s.price) + '<span class="dim" style="font-size:10px;"> (' + (s.changePct > 0 ? "+" : "") + s.changePct + "%)</span></div>" +
-          stockChartSvg(s.history, color) +
-          holdingBlock +
-          '<div class="stock-form">' +
-          '<input type="number" min="1" placeholder="투자 코인" data-buyinput="' + id + '" />' +
-          '<button class="btn-primary" data-buystock="' + id + '">매수</button>' +
-          "</div>" +
-          '<div class="stock-quick-row">' +
-          [10, 25, 50, 100].map((pct) => '<button data-buypct="' + id + '" data-pct="' + pct + '">' + (pct === 100 ? "MAX" : pct + "%") + "</button>").join("") +
-          "</div>" +
-          (s.myShares > 0 ? (
-            '<div class="stock-form" style="margin-top:12px;">' +
-            '<input type="number" min="0" step="any" placeholder="매도 수량" data-sellinput="' + id + '" />' +
-            '<button class="btn-ghost" data-sellstock="' + id + '">매도</button>' +
-            "</div>" +
-            '<div class="stock-quick-row">' +
-            [25, 50, 100].map((pct) => '<button data-sellpct="' + id + '" data-pct="' + pct + '">' + (pct === 100 ? "전량" : pct + "%") + "</button>").join("") +
-            "</div>"
-          ) : "") +
-          "</div>"
-        );
-      }).join("");
-
-      // 다시 그리기 전에 기억해 둔 입력값/포커스 복원 — 자동 갱신 때문에 입력이 끊기지 않게.
-      grid.querySelectorAll("input[data-buyinput], input[data-sellinput]").forEach((el) => {
-        const key = (el.dataset.buyinput ? "buy:" : "sell:") + (el.dataset.buyinput || el.dataset.sellinput);
-        if (savedInputs[key] !== undefined && savedInputs[key] !== "") el.value = savedInputs[key];
-        if (key === focusedKey) {
-          el.focus();
-          if (focusedSelStart != null) { try { el.setSelectionRange(focusedSelStart, focusedSelStart); } catch (e) {} }
-        }
-      });
-
-      grid.querySelectorAll("button[data-buypct]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const id = btn.dataset.buypct, pct = Number(btn.dataset.pct);
-          const input = grid.querySelector('input[data-buyinput="' + id + '"]');
-          if (input && state) input.value = Math.max(1, Math.floor(state.pocketCoins * (pct / 100)));
-        });
-      });
-      grid.querySelectorAll("button[data-sellpct]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const id = btn.dataset.sellpct, pct = Number(btn.dataset.pct);
-          const input = grid.querySelector('input[data-sellinput="' + id + '"]');
-          const s = data.stocks[id];
-          if (!input || !s) return;
-          // 전량(100%)은 반올림으로 한 톨이라도 남지 않게 보유량을 그대로 넣는다(서버가
-          // 보유량으로 clamp하므로 넘겨도 안전). 부분 매도만 보기 좋게 자릿수를 줄인다.
-          input.value = pct === 100 ? String(s.myShares) : Number((s.myShares * (pct / 100)).toPrecision(8));
-        });
-      });
-      grid.querySelectorAll("button[data-buystock]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const id = btn.dataset.buystock;
-          const input = grid.querySelector('input[data-buyinput="' + id + '"]');
-          const coins = Math.floor(Number(input.value) || 0);
-          if (coins <= 0) { toast("투자할 코인을 입력하세요.", true); return; }
-          btn.disabled = true;
-          try {
-            const r = await api("/stocks/buy", { method: "POST", body: { stockId: id, coins: coins } });
-            toast("📈 " + escapeHtml(data.stocks[id].name) + "에 " + fmt(coins) + " 코인 투자 완료!");
-            state.pocketCoins = r.pocketCoins; renderHeader(); renderStockTab();
-          } catch (e) { toast(e.message, true); btn.disabled = false; }
-        });
-      });
-      grid.querySelectorAll("button[data-sellstock]").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const id = btn.dataset.sellstock;
-          const input = grid.querySelector('input[data-sellinput="' + id + '"]');
-          const shares = Number(input.value);
-          if (!(shares > 0)) { toast("매도할 수량을 입력하세요.", true); return; }
-          btn.disabled = true;
-          try {
-            const r = await api("/stocks/sell", { method: "POST", body: { stockId: id, shares: shares } });
-            toast("📈 매도 완료! +" + fmt(r.payout) + " 코인 (수수료 " + fmt(r.fee) + " 차감)");
-            state.pocketCoins = r.pocketCoins; renderHeader(); renderStockTab();
-          } catch (e) { toast(e.message, true); btn.disabled = false; }
-        });
-      });
+      const data = await api("/world-raid");
+      worldRaidData = data;
+      worldRaidNextAttackAt = Math.max(worldRaidNextAttackAt, Date.now() + data.cooldownLeftMs);
+      worldRaidRespawnAt = data.raid ? 0 : Date.now() + data.respawnInMs;
+      body.innerHTML = worldRaidHtml(data);
+      updateWorldRaidAttackBtn();
     } catch (e) {
-      grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+      body.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
     }
   }
-  // 가격이 10초마다 한 틱씩 움직이므로(요청 반영: "변화 간격이 최소 10초는") 탭이 보이는
-  // 동안은 10초마다 조용히 다시 조회해서 그래프가 실제로 살아 움직이는 걸 보여준다.
-  // 응답이 10초보다 늦어지면 요청이 겹쳐 쌓이므로 라파와 같은 inFlight 가드를 둔다.
-  let stockRefreshInFlight = false;
+
+  function updateWorldRaidAttackBtn() {
+    const btn = $("worldRaidAttackBtn");
+    if (!btn) return;
+    const left = worldRaidNextAttackAt - Date.now();
+    if (left > 0) { btn.disabled = true; btn.textContent = "⏳ " + (left / 1000).toFixed(1) + "초"; }
+    else { btn.disabled = worldRaidAttackInFlight; btn.textContent = "⚔️ 공격"; }
+  }
+
+  function showWorldRaidPop(damage) {
+    const layer = $("worldRaidPops");
+    if (!layer) return;
+    const el = document.createElement("div");
+    el.className = "wr-pop";
+    el.textContent = "-" + fmt(damage);
+    el.style.left = (30 + Math.random() * 40) + "%";
+    layer.appendChild(el);
+    setTimeout(() => el.remove(), 1000);
+    const art = $("worldRaidArt");
+    if (art) { art.classList.remove("wr-hit"); void art.offsetWidth; art.classList.add("wr-hit"); }
+  }
+
+  async function worldRaidAttack() {
+    if (worldRaidAttackInFlight) return;
+    worldRaidAttackInFlight = true;
+    updateWorldRaidAttackBtn();
+    try {
+      const r = await api("/world-raid/attack", { method: "POST" });
+      worldRaidNextAttackAt = Date.now() + r.cooldownMs;
+      showWorldRaidPop(r.damage);
+      if (r.defeated) {
+        const mine = r.myReward;
+        toast("🐉 " + r.bossName + " Lv." + r.level + " 처치! " +
+          (mine ? "내 몫 +" + fmt(mine.coins) + " 코인" + (mine.itemName ? " · 🎁 " + mine.itemName + " 획득!" : "") + (mine.isMvp ? " · 👑 MVP" : "") : "보상 분배 완료"));
+        refreshState();
+        renderWorldRaidTab();
+      } else {
+        const fill = $("worldRaidHpFill"), txt = $("worldRaidHpText");
+        if (fill) fill.style.width = Math.max(0, Math.min(100, (r.hp / r.maxHp) * 100)) + "%";
+        if (txt) txt.textContent = fmt(r.hp) + " / " + fmt(r.maxHp);
+        setText("worldRaidMyDmg", fmt(r.myDamage) + " (" + r.myHits + "회)");
+        setText("worldRaidMyShare", r.mySharePct + "%");
+        if (worldRaidData && worldRaidData.raid) setText("worldRaidMyEst", "약 " + wrShort(worldRaidData.raid.coinPool * r.mySharePct / 100) + " 코인");
+      }
+    } catch (err) {
+      if (/쿨다운/.test(err.message)) {
+        worldRaidNextAttackAt = Date.now() + 500;
+      } else if (/처치됐|재소환/.test(err.message)) {
+        // 남이 막타를 쳤거나 아직 소환 전 — 자동 공격은 유지한 채 새로고침만(소환되면 이어서 공격)
+        worldRaidNextAttackAt = Date.now() + 3000;
+        renderWorldRaidTab();
+      } else {
+        toast(err.message, true);
+        worldRaidAuto = false;
+        renderWorldRaidTab();
+      }
+    } finally {
+      worldRaidAttackInFlight = false;
+      updateWorldRaidAttackBtn();
+    }
+  }
+
+  document.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "worldRaidAttackBtn") worldRaidAttack();
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "worldRaidAuto") worldRaidAuto = e.target.checked;
+  });
   setInterval(() => {
-    if (currentTab !== "stocks" || stockRefreshInFlight) return;
-    stockRefreshInFlight = true;
-    Promise.resolve(renderStockTab()).finally(() => { stockRefreshInFlight = false; });
-  }, 10000);
+    if (currentTab !== "worldraid") return;
+    updateWorldRaidAttackBtn();
+    if (worldRaidRespawnAt) setText("worldRaidRespawn", wrCountdown(worldRaidRespawnAt - Date.now()));
+    if (worldRaidAuto && !document.hidden && worldRaidData && worldRaidData.raid &&
+        !worldRaidAttackInFlight && Date.now() >= worldRaidNextAttackAt) {
+      worldRaidAttack();
+    }
+  }, 200);
+  setInterval(() => {
+    if (currentTab !== "worldraid" || worldRaidRefreshInFlight || worldRaidAttackInFlight) return;
+    worldRaidRefreshInFlight = true;
+    Promise.resolve(renderWorldRaidTab()).finally(() => { worldRaidRefreshInFlight = false; });
+  }, 5000);
 
   // ── Research — 다이아로 상점 행운/정찰 탐사선 등 여러 연구를 진행한다(원정 연구는
   //    삭제됨 — 요청 반영: "원정 연구를 없애줘"). ──
@@ -2557,6 +2608,12 @@
     "고스트 프로토콜 AI": { c1: "#c46bff", c2: "#2a0e4a" },
     "옵시디언 방화벽 수호자": { c1: "#ff8a3d", c2: "#4a2408" },
     "심연의 루트킷": { c1: "#ff3d68", c2: "#3a0a1a" },
+    // 월드 레이드 보스(레벨마다 순환)
+    "무한 재귀 히드라": { c1: "#00e676", c2: "#003d1c" },
+    "크림슨 오버마인드": { c1: "#ff3d00", c2: "#3d0f00" },
+    "블랙홀 하이퍼바이저": { c1: "#7c4dff", c2: "#12003d" },
+    "넥서스 아포칼립스": { c1: "#d500f9", c2: "#2e003d" },
+    "종말의 데몬 커널": { c1: "#ff1744", c2: "#4a0010" },
   };
   function raidBossSvgHtml(bossName, hpPct) {
     const theme = RAID_BOSS_THEMES[bossName] || { c1: "#ff3d68", c2: "#3a0a1a" };
@@ -3196,6 +3253,8 @@
         else if (l.kind === "trade") { icon = "🤝"; desc = "거래 완료: " + escapeHtml(l.opponent_name || "알 수 없음"); }
         else if (l.kind === "raffle_win") { icon = "🎫"; desc = escapeHtml(l.opponent_name || "") + " 등급 다크넷 로또 당첨!"; }
         else if (l.kind === "stock_sell") { icon = "📈"; desc = escapeHtml(l.opponent_name || "") + " 주식 매도"; }
+        else if (l.kind === "stock_refund") { icon = "🏦"; desc = "증권거래소 폐지 — 보유 주식 은행으로 환급"; }
+        else if (l.kind === "world_raid") { icon = l.result === "mvp" ? "👑" : "🐉"; desc = "월드 레이드 처치 보상: " + escapeHtml(l.opponent_name || "") + (l.result === "mvp" ? " (MVP)" : ""); }
         else if (l.kind === "slot_win") { icon = "🎰"; desc = escapeHtml(l.opponent_name || "") + " 슬롯머신 당첨!"; }
         const coinCls = l.coins_delta > 0 ? "pos" : l.coins_delta < 0 ? "neg" : "";
         return (
