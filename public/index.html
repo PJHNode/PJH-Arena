@@ -122,6 +122,10 @@
   .resource-label { font-size: 11px; color: var(--sub); display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 3px; }
   .resource-label span:first-child { flex-shrink: 0; }
   .resource-label span:nth-child(2) { flex: 1; text-align: right; }
+  /* 헤더 리소스/스탯 아이콘(HP·에너지·스태미나·ATK·DEF·CRIT·스탯 포인트) — 이모티콘 대신
+     ui-icons.js의 손 코딩 SVG. 라벨 텍스트 앞에 인라인으로 붙는다. */
+  .stat-icon { display: inline-flex; width: 12px; height: 12px; margin-right: 4px; vertical-align: -1.5px; }
+  .stat-icon svg { width: 100%; height: 100%; }
   .resource-eta { flex-shrink: 0; font-size: 10px; color: var(--cyan); opacity: 0.85; }
   .resource-track { height: 10px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
   .resource-fill { height: 100%; transition: width 0.3s; }
@@ -168,6 +172,10 @@
   }
   .side-tab.active { color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 14px rgba(0,255,157,0.08); }
   .side-tab:hover { color: var(--text); background: var(--surface-2); }
+  /* 사이드바 탭 아이콘 — 이모티콘 대신 손 코딩 SVG(ui-icons.js). currentColor라 active/hover로
+     글자색이 바뀌면 아이콘도 같이 물든다. */
+  .side-tab-icon { display: inline-flex; width: 15px; height: 15px; margin-right: 9px; vertical-align: -3px; flex-shrink: 0; }
+  .side-tab-icon svg { width: 100%; height: 100%; }
   .side-section-label {
     font-size: 9px; color: var(--sub); opacity: 0.6; text-transform: uppercase; letter-spacing: 0.1em;
     padding: 14px 18px 4px; font-weight: bold;
@@ -693,7 +701,8 @@
     font-family: inherit; font-size: 11px; text-align: center; cursor: pointer;
   }
   .stance-btn:hover { border-color: var(--cyan); }
-  .stance-btn .stance-icon { font-size: 18px; display: block; margin-bottom: 4px; }
+  .stance-btn .stance-icon { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: 0 auto 4px; }
+  .stance-btn .stance-icon svg { width: 100%; height: 100%; }
   .stance-btn .stance-mult { display: block; font-size: 9px; color: var(--sub); margin-top: 3px; }
   .stance-hint { font-size: 11px; color: var(--sub); margin-bottom: 14px; text-align: center; }
   .timing-wrap { text-align: center; }
@@ -915,53 +924,53 @@
 <div id="appShell" style="display:none; flex:1; flex-direction:column; min-height:0;">
   <div class="resource-bar-row">
     <div class="resource">
-      <div class="resource-label"><span>HP</span><span id="hpText">100 / 100</span><span class="resource-eta" id="hpEta"></span><button class="stat-plus-btn" id="upgradeHpBtn" title="HP 강화">+</button></div>
+      <div class="resource-label"><span><span class="stat-icon" data-stat-icon="hp"></span>HP</span><span id="hpText">100 / 100</span><span class="resource-eta" id="hpEta"></span><button class="stat-plus-btn" id="upgradeHpBtn" title="HP 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill hp" id="hpBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>ENERGY</span><span id="energyText">50 / 50</span><span class="resource-eta" id="energyEta"></span><button class="stat-plus-btn" id="upgradeEnergyBtn" title="에너지 강화">+</button></div>
+      <div class="resource-label"><span><span class="stat-icon" data-stat-icon="energy"></span>ENERGY</span><span id="energyText">50 / 50</span><span class="resource-eta" id="energyEta"></span><button class="stat-plus-btn" id="upgradeEnergyBtn" title="에너지 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill energy" id="energyBar"></div></div>
     </div>
     <div class="resource">
-      <div class="resource-label"><span>STAMINA</span><span id="staminaText">10 / 10</span><span class="resource-eta" id="staminaEta"></span><button class="stat-plus-btn" id="upgradeStaminaBtn" title="스태미나 강화">+</button></div>
+      <div class="resource-label"><span><span class="stat-icon" data-stat-icon="stamina"></span>STAMINA</span><span id="staminaText">10 / 10</span><span class="resource-eta" id="staminaEta"></span><button class="stat-plus-btn" id="upgradeStaminaBtn" title="스태미나 강화">+</button></div>
       <div class="resource-track"><div class="resource-fill stamina" id="staminaBar"></div></div>
     </div>
     <div class="atk-def-row">
-      <span>ATK <b id="atkText">10</b></span>
-      <span>DEF <b id="defText">10</b></span>
-      <span>CRIT <b id="critText">5%</b></span>
-      <span class="stat-points-tag" id="statPointsTag" style="display:none;">🔺 스탯 포인트 <b id="statPointsText">0</b></span>
+      <span><span class="stat-icon" data-stat-icon="atk"></span>ATK <b id="atkText">10</b></span>
+      <span><span class="stat-icon" data-stat-icon="def"></span>DEF <b id="defText">10</b></span>
+      <span><span class="stat-icon" data-stat-icon="crit"></span>CRIT <b id="critText">5%</b></span>
+      <span class="stat-points-tag" id="statPointsTag" style="display:none;"><span class="stat-icon" data-stat-icon="statPoints"></span>스탯 포인트 <b id="statPointsText">0</b></span>
     </div>
   </div>
 
   <div class="app-body">
     <div class="sidebar">
       <div class="side-section-label">전투</div>
-      <button class="side-tab active" data-tab="jobs">💻 Hacking Jobs</button>
-      <button class="side-tab" data-tab="galaxy">🌌 Galaxy Map</button>
-      <button class="side-tab" data-tab="pvp">🎯 Arena P2P</button>
-      <button class="side-tab" data-tab="worldraid">🐉 World Raid</button>
-      <button class="side-tab" data-tab="bounty">📋 Bounty Board</button>
+      <button class="side-tab active" data-tab="jobs"><span class="side-tab-icon"></span>Hacking Jobs</button>
+      <button class="side-tab" data-tab="galaxy"><span class="side-tab-icon"></span>Galaxy Map</button>
+      <button class="side-tab" data-tab="pvp"><span class="side-tab-icon"></span>Arena P2P</button>
+      <button class="side-tab" data-tab="worldraid"><span class="side-tab-icon"></span>World Raid</button>
+      <button class="side-tab" data-tab="bounty"><span class="side-tab-icon"></span>Bounty Board</button>
       <div class="side-section-label">경제</div>
-      <button class="side-tab" data-tab="shop">🛒 Hardware Shop</button>
-      <button class="side-tab" data-tab="bots">🤖 Bots</button>
-      <button class="side-tab" data-tab="inventory">💾 Inventory</button>
-      <button class="side-tab" data-tab="property">🏭 Property</button>
-      <button class="side-tab" data-tab="bank">🏦 Secure Bank</button>
-      <button class="side-tab" data-tab="raffle">🎫 다크넷 로또</button>
-      <button class="side-tab" data-tab="research">🔬 Research</button>
-      <button class="side-tab" data-tab="enchant">🧬 Enchant</button>
-      <button class="side-tab" data-tab="trade">🤝 Trade</button>
+      <button class="side-tab" data-tab="shop"><span class="side-tab-icon"></span>Hardware Shop</button>
+      <button class="side-tab" data-tab="bots"><span class="side-tab-icon"></span>Bots</button>
+      <button class="side-tab" data-tab="inventory"><span class="side-tab-icon"></span>Inventory</button>
+      <button class="side-tab" data-tab="property"><span class="side-tab-icon"></span>Property</button>
+      <button class="side-tab" data-tab="bank"><span class="side-tab-icon"></span>Secure Bank</button>
+      <button class="side-tab" data-tab="raffle"><span class="side-tab-icon"></span>다크넷 로또</button>
+      <button class="side-tab" data-tab="research"><span class="side-tab-icon"></span>Research</button>
+      <button class="side-tab" data-tab="enchant"><span class="side-tab-icon"></span>Enchant</button>
+      <button class="side-tab" data-tab="trade"><span class="side-tab-icon"></span>Trade</button>
       <div class="side-section-label">환생</div>
-      <button class="side-tab" data-tab="rebirthshop">✨ Rebirth Shop</button>
+      <button class="side-tab" data-tab="rebirthshop"><span class="side-tab-icon"></span>Rebirth Shop</button>
       <div class="side-section-label">소셜</div>
-      <button class="side-tab" data-tab="club">🛡️ Club</button>
-      <button class="side-tab" data-tab="achievements">🏆 Achievements</button>
-      <button class="side-tab" data-tab="profile">👤 Profile</button>
-      <button class="side-tab" data-tab="leaderboard">📊 Leaderboard</button>
+      <button class="side-tab" data-tab="club"><span class="side-tab-icon"></span>Club</button>
+      <button class="side-tab" data-tab="achievements"><span class="side-tab-icon"></span>Achievements</button>
+      <button class="side-tab" data-tab="profile"><span class="side-tab-icon"></span>Profile</button>
+      <button class="side-tab" data-tab="leaderboard"><span class="side-tab-icon"></span>Leaderboard</button>
       <div class="side-section-label">기록</div>
-      <button class="side-tab" data-tab="logs">📜 Hack Log</button>
-      <button class="side-tab" data-tab="admin" id="adminTabBtn" style="display:none;">🛠️ Admin</button>
+      <button class="side-tab" data-tab="logs"><span class="side-tab-icon"></span>Hack Log</button>
+      <button class="side-tab" data-tab="admin" id="adminTabBtn" style="display:none;"><span class="side-tab-icon"></span>Admin</button>
     </div>
 
     <div class="content">
@@ -1394,6 +1403,7 @@
 
 <script src="./auth-widget.js"></script>
 <script src="./item-icons.js"></script>
+<script src="./ui-icons.js"></script>
 <script src="./arena.js"></script>
 </body>
 </html>

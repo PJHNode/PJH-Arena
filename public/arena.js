@@ -380,6 +380,22 @@
     }
   }
 
+  // ── UI 아이콘 주입 — "이모티콘이 너무 많다"는 요청 반영. 사이드바 탭/헤더 리소스·스탯은
+  //    정적 HTML에 빈 아이콘 placeholder(<span class="side-tab-icon">, <span data-stat-icon>)만
+  //    있고, 실제 SVG는 ui-icons.js(window.UI_ICONS)에서 한 번만 읽어와 여기서 채워 넣는다 —
+  //    아이콘을 바꾸고 싶을 때 마크업이 아니라 ui-icons.js 한 곳만 고치면 되게 하기 위함. ──
+  function initUiIcons() {
+    document.querySelectorAll(".side-tab[data-tab]").forEach((btn) => {
+      const icon = window.UI_ICONS.sidebar[btn.dataset.tab];
+      const span = btn.querySelector(".side-tab-icon");
+      if (icon && span) span.innerHTML = icon;
+    });
+    document.querySelectorAll("[data-stat-icon]").forEach((span) => {
+      const icon = window.UI_ICONS.stat[span.dataset.statIcon];
+      if (icon) span.innerHTML = icon;
+    });
+  }
+
   function initTabs() {
     document.querySelectorAll(".side-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1009,10 +1025,13 @@
 
   // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
   //    실제 검증/계산은 항상 서버가 다시 한다. ──
+  // icon은 이모티콘 대신 ui-icons.js(window.UI_ICONS.stance)의 손 코딩 SVG를 그대로 문자열로
+  // 박아 넣는다 — ui-icons.js가 이 스크립트보다 먼저 <script>로 로드되므로 모듈 최상단에서
+  // 바로 참조해도 안전하다(둘 다 지연 없는 동기 스크립트라 문서 순서대로 실행됨).
   const STANCE_META = {
-    aggressive: { label: "공격형", icon: "⚔️", hint: "ATK +25% · 방어 시 DEF -15%", defMult: 0.85 },
-    defensive:  { label: "방어형", icon: "🛡️", hint: "ATK -15% · 받는 HP 피해 절반 · 방어 시 DEF +25%", defMult: 1.25 },
-    ambush:     { label: "기습형", icon: "🗡️", hint: "치명타 확률 +15%p · 방어 시 DEF -10%", defMult: 0.9 },
+    aggressive: { label: "공격형", icon: window.UI_ICONS.stance.aggressive, hint: "ATK +25% · 방어 시 DEF -15%", defMult: 0.85 },
+    defensive:  { label: "방어형", icon: window.UI_ICONS.stance.defensive, hint: "ATK -15% · 받는 HP 피해 절반 · 방어 시 DEF +25%", defMult: 1.25 },
+    ambush:     { label: "기습형", icon: window.UI_ICONS.stance.ambush, hint: "치명타 확률 +15%p · 방어 시 DEF -10%", defMult: 0.9 },
   };
 
   let attackAnimId = null;
@@ -3344,6 +3363,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    initUiIcons();
     initTabs();
     initBankForm();
     initLeaderboardTabs();
