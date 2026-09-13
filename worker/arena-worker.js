@@ -527,16 +527,52 @@ const PVP_LOSE_ATK_HP_LOSS = 30, PVP_LOSE_DEF_HP_LOSS = 5;
 const BASE_CRIT_PCT = 5;
 const CRIT_MULTIPLIER = 1.5;
 
-// ── 전투 태세(가위바위보) — 공격자가 매 전투마다 고른다. 서로 물고 무는 3종이라 상대의
-//    "평소 태세"(last_stance, 가장 최근 공격 시 골랐던 태세)를 알면 유리한 태세로 맞설 수 있다
-//    (Practice Scan에서 공개). 방어자의 실시간 DEF 자체는 태세 영향을 안 받는다 — 방어자는
-//    오프라인일 수도 있어서 "지금 이 순간 뭘 골랐는지"가 존재하지 않기 때문에, last_stance는
-//    어디까지나 "이 사람 패턴 읽기"용 힌트로만 쓰인다. ──
+// ── 전투 태세(가위바위보) — 공격자가 매 전투마다 고르고, 고른 태세는 "평소 태세"(last_stance)로
+//    남는다. 예전엔 defMult가 정의만 돼 있고 어디서도 안 쓰여서 방어형은 "공격력 -15%"만 있는
+//    항상 손해인 선택지였다(요청 반영: "방어는 공격을 방어하는 건데 공격할 때는 공격값만 들어가").
+//    이제 세 태세가 각자 확실한 역할을 가진다:
+//    · 공격형 — 공격력 ×1.25. 대신 다음에 다른 태세로 공격하기 전까지, 남에게 공격받을 때 DEF ×0.85.
+//    · 방어형 — 공격력 ×0.85. 대신 공격하다 잃는 HP가 절반이고, 공격받을 때 DEF ×1.25.
+//    · 기습형 — 공격력 ×1.0, 치명타 확률 +15%p. 공격받을 때 DEF ×0.90.
+//    defMult는 PvP와 홈 행성 방어에 방어자의 last_stance 기준으로 적용된다(봇 행성은 태세가 없음).
+//    상성(±15%)은 기존대로 공격자의 공격력에만 붙는다. ──
 const STANCES = {
   aggressive: { label: "공격형", atkMult: 1.25, defMult: 0.85, beats: "ambush" },
   defensive:  { label: "방어형", atkMult: 0.85, defMult: 1.25, beats: "aggressive" },
   ambush:     { label: "기습형", atkMult: 1.00, defMult: 0.90, beats: "defensive" },
 };
+const DEFENSIVE_HP_LOSS_MULT = 0.5;
+const AMBUSH_CRIT_BONUS_PCT = 15;
+function stanceDefMult(lastStance) { return lastStance && STANCES[lastStance] ? STANCES[lastStance].defMult : 1; }
+function stanceHpLossMult(stanceId) { return stanceId === "defensive" ? DEFENSIVE_HP_LOSS_MULT : 1; }
+
+// ── 치명타 — 코어(본인+봇 합산)가 주는 값은 "확률 %"가 아니라 "치명타 수치"다. 예전엔 수치를 그대로
+//    확률로 써서 secret급 코어 몇 개만 끼워도 100%를 넘겼고(실제 상위 유저 수치 950~6,300), 그 뒤로는
+//    코어를 아무리 올려도 아무 의미가 없었다. 게다가 PvP에서 이긴 뒤 약탈량에만 쓰였다.
+//    이제 수치가 두 가지로 환산된다:
+//    · 확률 = 5% + 45%p × 수치/(수치+500) — 수치 500에서 +22.5%p, 무한히 올려도 50%에 수렴(체감).
+//      기습형 보너스를 더한 최종 상한은 75%.
+//    · 피해 배율 = 1.5 + 0.25 × log10(1 + 수치/100) — 확률이 포화된 뒤에도 코어 투자가 계속 의미가
+//      있게 로그로 천천히 오른다(수치 952 → ×1.76, 6,277 → ×1.95, 20만 → ×2.33).
+//    적용 위치: PvP/행성 전투의 매 라운드(공격자는 공격력에, 방어자는 방어력에 — "치명 방어"),
+//    월드/클럽 레이드의 매 타격. 치명타가 한 번이라도 터진 승리는 약탈량 ×1.5(PvP·봇 행성).
+//    봇 행성의 crit 값(5~42)은 원래 확률 %로 설계된 값이라 그대로 확률로 쓰고 피해 배율은 ×1.5. ──
+const CRIT_CHANCE_BASE_PCT = 5, CRIT_CHANCE_SOFTCAP_BONUS_PCT = 45, CRIT_RATING_HALF = 500, CRIT_CHANCE_MAX_PCT = 75;
+const CRIT_DAMAGE_BASE = 1.5, CRIT_DAMAGE_LOG_SCALE = 0.25;
+function critProfile(rating, bonusPct) {
+  const r = Math.max(0, Number(rating) || 0);
+  const chance = Math.min(CRIT_CHANCE_MAX_PCT, CRIT_CHANCE_BASE_PCT + CRIT_CHANCE_SOFTCAP_BONUS_PCT * r / (r + CRIT_RATING_HALF) + (bonusPct || 0));
+  const mult = CRIT_DAMAGE_BASE + CRIT_DAMAGE_LOG_SCALE * Math.log10(1 + r / 100);
+  return {
+    rating: r, chancePct: Math.round(chance * 10) / 10, mult: Math.round(mult * 100) / 100,
+    expectedMult: 1 + (chance / 100) * (mult - 1),
+  };
+}
+function botCritProfile(chancePct) {
+  const chance = Math.min(CRIT_CHANCE_MAX_PCT, Math.max(0, Number(chancePct) || 0));
+  return { rating: chance, chancePct: chance, mult: CRIT_DAMAGE_BASE, expectedMult: 1 + (chance / 100) * (CRIT_DAMAGE_BASE - 1) };
+}
+function rollCrit(profile) { return Math.random() * 100 < profile.chancePct; }
 const STANCE_RPS_BONUS = 0.15; // 상성으로 이기면 +15%, 지면 -15%
 
 // ── 공격 시퀀스(3라운드 타이밍 미니게임) — 클라이언트가 라운드마다 0~100 정확도를 보내오면
@@ -1025,7 +1061,7 @@ function rollSlotSymbol() {
 //  · 보상 풀은 기여 데미지 비율대로 전원에게 나눠 준다(코인 + 다음 레벨 EXP의 %). 1위(MVP)는
 //    Forbidden 장비 1개 확정, 기여도 5% 이상은 각자 30% 확률로 1개.
 //  · 실제 유저 장비(D1)로 시뮬레이션한 결과(3초마다 계속 공격 기준): 현재 최고 ATK(약 1.5만)
-//    유저가 Lv.1에서 시간당 약 32억, abyssal 풀무장(ATK 7만)은 약 160억. 4명이 같이 치면
+//    유저가 Lv.1에서 시간당 약 32억(치명타 도입 후 약 46억), abyssal 풀무장(ATK 7만)은 약 160억(치명타 제외). 4명이 같이 치면
 //    Lv.1이 약 25분, Lv.5까지 누적 약 9시간.
 // ══════════════════════════════════════════════════════════
 const WORLD_RAID_ATTACK_COOLDOWN_MS = 3000;
@@ -1047,11 +1083,18 @@ function worldRaidStats(level) {
   const coinPerHp = WORLD_RAID_BASE_COIN_PER_HP * Math.pow(WORLD_RAID_COIN_PER_HP_GROWTH, level - 1);
   return { hp: hp, armor: armor, coinPool: Math.round(hp * coinPerHp), name: WORLD_RAID_BOSS_NAMES[(level - 1) % WORLD_RAID_BOSS_NAMES.length] };
 }
-function worldRaidExpectedDamage(atk, armor) {
+function worldRaidBaseDamage(atk, armor) {
   const a = Math.max(0, atk || 0);
-  return Math.max(1, Math.round(a * WORLD_RAID_DAMAGE_MULT * a / (a + armor)));
+  return a * WORLD_RAID_DAMAGE_MULT * a / (a + armor);
 }
-function worldRaidRollDamage(atk, armor) { return Math.max(1, Math.round(worldRaidExpectedDamage(atk, armor) * randMult())); }
+// 치명타 기댓값까지 포함한 1타 평균(화면 표시용). 배수(x10)는 치명타 도입 전 그대로 둬서 누구의 수입도
+// 줄지 않게 했다 — 코어가 좋을수록 순수하게 더 번다(현재 최고 유저 기준 시간당 약 32억 → 약 46억).
+function worldRaidExpectedDamage(atk, armor, crit) { return Math.max(1, Math.round(worldRaidBaseDamage(atk, armor) * critProfile(crit).expectedMult)); }
+function worldRaidRollDamage(atk, armor, crit) {
+  const p = critProfile(crit);
+  const isCrit = rollCrit(p);
+  return { damage: Math.max(1, Math.round(worldRaidBaseDamage(atk, armor) * randMult() * (isCrit ? p.mult : 1))), isCrit: isCrit };
+}
 
 // 크론 없이 조회/공격 시점에 필요하면 그 자리에서 다음 보스를 소환한다. INSERT ... WHERE NOT
 // EXISTS는 단일 문장이라 원자적이어서 여러 요청이 동시에 와도 보스가 둘 생기지 않는다.
@@ -2535,6 +2578,7 @@ function publicState(row, combat) {
     statPoints: row.stat_points,
     pocketCoins: row.pocket_coins, bankCoins: row.bank_coins, diamonds: row.diamonds,
     atk: combat.atk, def: combat.def, crit: combat.crit, botCount: combat.botCount,
+    critChancePct: critProfile(combat.crit).chancePct, critMult: critProfile(combat.crit).mult,
     equippedWeapon: row.equipped_weapon, equippedArmor: row.equipped_armor, equippedCore: row.equipped_core,
     shieldUntil: row.shield_until, shielded: row.shield_until > Date.now(),
     // 보호막 파쇄기에 당한 직후 — 이 시간까지는 새 보호막 아이템을 못 쓴다(POST /inventory/use 참고).
@@ -2695,28 +2739,34 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
   }
 
   const attackerCombat = await totalCombatStats(env, attacker);
+  const attackerCrit = critProfile(attackerCombat.crit, stanceId === "ambush" ? AMBUSH_CRIT_BONUS_PCT : 0);
+  const defenderCrit = isBotPlanet ? botCritProfile(defenderCombat.crit) : critProfile(defenderCombat.crit);
+  const defenderDefMult = isBotPlanet ? 1 : stanceDefMult(defenderLastStance);
   let attackerRoundWins = 0;
   const rounds = [];
   for (let i = 0; i < PVP_ROUNDS; i++) {
     const timing = timingMultiplier(timingScores[i]);
-    const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult();
-    const defPower = defenderCombat.def * randMult();
+    const atkCrit = rollCrit(attackerCrit), defCrit = rollCrit(defenderCrit);
+    const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult() * (atkCrit ? attackerCrit.mult : 1);
+    const defPower = defenderCombat.def * defenderDefMult * randMult() * (defCrit ? defenderCrit.mult : 1);
     const roundWin = atkPower > defPower;
     if (roundWin) attackerRoundWins++;
     rounds.push({
       round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100),
-      atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100,
+      atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100, atkCrit: atkCrit, defCrit: defCrit,
     });
   }
   const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
   const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
+  const critVictory = attackerWins && rounds.some(function (rd) { return rd.atkCrit; });
 
-  let lootCoins = 0;
+  let lootCoins = 0, attackerHpLoss = 0;
   if (attackerWins) {
     if (isBotPlanet) {
       // 봇 구역은 소유권이 절대 안 넘어간다 — 이겨도 그 자리에서 즉시 약탈 보상만 받는다
       // (슬롯은 다음 조회 때 effectivePlanetTier로 자동으로 새 난이도가 뜬다).
       lootCoins = Math.round(PLANET_BOT_TIERS[effectiveTierKey].coinsPerHour * 0.5);
+      if (critVictory) lootCoins = Math.round(lootCoins * CRIT_MULTIPLIER); // 치명타가 터진 승리는 약탈 ×1.5(PvP와 동일)
     } else {
       // 홈 행성은 coins_per_hour가 항상 0이라 "쌓인 수익 약탈" 방식이 의미가 없다 — 대신
       // 포켓 코인의 20%를 그 자리에서 몰수한다(뱅크 예치분은 보호됨).
@@ -2730,14 +2780,17 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
     if (!isBotPlanet) await recordWarScoreIfHostile(env, user.userId, planet.owner_user_id);
 
     // 완전 승리(3판 전승)면 HP 손실 없음 — 스치지도 않고 이겼는데 깎이는 게 이상하다는 요청 반영.
-    if (!sweep) attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
+    attackerHpLoss = sweep ? 0 : Math.round(PVP_WIN_ATK_HP_LOSS * stanceHpLossMult(stanceId));
+    attacker.hp = clamp(attacker.hp - attackerHpLoss, 0, attacker.max_hp);
   } else {
-    attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
+    attackerHpLoss = Math.round(PVP_LOSE_ATK_HP_LOSS * stanceHpLossMult(stanceId));
+    attacker.hp = clamp(attacker.hp - attackerHpLoss, 0, attacker.max_hp);
   }
 
   return {
     attackerWins: attackerWins, sweep: sweep, captured: false, lootCoins: lootCoins,
     rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
+    isCrit: critVictory, attackerHpLoss: attackerHpLoss, attackerCrit: attackerCrit, defenderDefMult: defenderDefMult,
     attackerCombat: attackerCombat, defenderCombat: defenderCombat, isBotPlanet: isBotPlanet, effectiveTierKey: effectiveTierKey,
   };
 }
@@ -3235,27 +3288,31 @@ export default {
 
         const attackerCombat = await totalCombatStats(env, attacker);
         const defenderCombat = await totalCombatStats(env, defender);
+        const attackerCrit = critProfile(attackerCombat.crit, stanceId === "ambush" ? AMBUSH_CRIT_BONUS_PCT : 0);
+        const defenderCrit = critProfile(defenderCombat.crit);
+        const defenderDefMult = stanceDefMult(defender.last_stance);
 
         let attackerRoundWins = 0;
         const rounds = [];
         for (let i = 0; i < PVP_ROUNDS; i++) {
           const timing = timingMultiplier(timingScores[i]);
-          const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult();
-          const defPower = defenderCombat.def * randMult();
+          const atkCrit = rollCrit(attackerCrit), defCrit = rollCrit(defenderCrit);
+          const atkPower = attackerCombat.atk * stance.atkMult * (1 + rpsMod) * timing * randMult() * (atkCrit ? attackerCrit.mult : 1);
+          const defPower = defenderCombat.def * defenderDefMult * randMult() * (defCrit ? defenderCrit.mult : 1);
           const roundWin = atkPower > defPower;
           if (roundWin) attackerRoundWins++;
           // atkPower/defPower/timing을 그대로 내려보내 클라이언트가 "왜 이겼는지/졌는지" 라운드별
           // 수치를 보여줄 수 있게 한다(요청: 전투 진행 수치 표시).
           rounds.push({
             round: i + 1, win: roundWin, timingScore: clamp(Number(timingScores[i]) || 50, 0, 100),
-            atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100,
+            atkPower: Math.round(atkPower), defPower: Math.round(defPower), timingMult: Math.round(timing * 100) / 100, atkCrit: atkCrit, defCrit: defCrit,
           });
         }
         const attackerWins = attackerRoundWins >= Math.ceil(PVP_ROUNDS / 2);
         const sweep = attackerWins && attackerRoundWins === PVP_ROUNDS;
-        const isCrit = attackerWins && Math.random() * 100 < (attackerCombat.crit + (stanceId === "ambush" ? 10 : 0));
+        const isCrit = attackerWins && rounds.some(function (rd) { return rd.atkCrit; });
 
-        let coinsDelta = 0, attackerGain = 0;
+        let coinsDelta = 0, attackerGain = 0, attackerHpLoss = 0;
         if (attackerWins) {
           let plunderMult = 1 + (isCrit ? CRIT_MULTIPLIER - 1 : 0) + (sweep ? 0.2 : 0);
           coinsDelta = Math.floor(defender.pocket_coins * PVP_PLUNDER_RATE * plunderMult);
@@ -3269,11 +3326,13 @@ export default {
           defender.hp = clamp(defender.hp - PVP_WIN_DEF_HP_LOSS, 0, defender.max_hp);
           // 완전 승리(3판 전승)면 공격자 HP 손실 없음 — 방어자 쪽 피해는 그대로(패배 페널티라
           // 공격자가 얼마나 완벽하게 이겼는지와는 무관).
-          if (!sweep) attacker.hp = clamp(attacker.hp - PVP_WIN_ATK_HP_LOSS, 0, attacker.max_hp);
+          attackerHpLoss = sweep ? 0 : Math.round(PVP_WIN_ATK_HP_LOSS * stanceHpLossMult(stanceId));
+          attacker.hp = clamp(attacker.hp - attackerHpLoss, 0, attacker.max_hp);
           attacker.plunder_wins += 1;
         } else {
           defender.hp = clamp(defender.hp - PVP_LOSE_DEF_HP_LOSS, 0, defender.max_hp);
-          attacker.hp = clamp(attacker.hp - PVP_LOSE_ATK_HP_LOSS, 0, attacker.max_hp);
+          attackerHpLoss = Math.round(PVP_LOSE_ATK_HP_LOSS * stanceHpLossMult(stanceId));
+          attacker.hp = clamp(attacker.hp - attackerHpLoss, 0, attacker.max_hp);
         }
 
         // 경험치 — 이겨도 져도 준다(져도 완전히 헛수고는 아니게). 레벨업이 일어나면
@@ -3295,7 +3354,7 @@ export default {
         ]);
 
         const attackResult = attackerWins ? (isCrit ? "crit" : "win") : "lose";
-        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? attackerGain : 0, attackerWins ? (sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS);
+        await insertLog(env, attacker.user_id, "pvp_attack", defender.user_id, defender.real_name, attackResult, attackerWins ? attackerGain : 0, -attackerHpLoss);
         await insertLog(env, defender.user_id, "pvp_defend", attacker.user_id, attacker.real_name, attackerWins ? "lose" : "win", attackerWins ? -coinsDelta : 0, attackerWins ? -PVP_WIN_DEF_HP_LOSS : -PVP_LOSE_DEF_HP_LOSS);
         if (attackerWins) await recordWarScoreIfHostile(env, attacker.user_id, defender.user_id);
         await bumpDailyProgress(env, attacker.user_id, "battles");
@@ -3305,7 +3364,8 @@ export default {
           ok: true, attackerWins: attackerWins, isCrit: isCrit, sweep: sweep, coinsDelta: attackerGain,
           xpGained: xpGain, leveledUp: leveledUp,
           rounds: rounds, attackerRoundWins: attackerRoundWins, rpsMod: rpsMod,
-          myAtk: attackerCombat.atk, theirDef: defenderCombat.def, stanceLabel: stance.label,
+          myAtk: attackerCombat.atk, theirDef: Math.round(defenderCombat.def * defenderDefMult), theirStanceDefMult: defenderDefMult, stanceLabel: stance.label,
+          myCrit: { chancePct: attackerCrit.chancePct, mult: attackerCrit.mult }, hpLost: attackerHpLoss,
           offlineBonusCollected: offlineBonus, state: publicState(attacker, combat),
         });
       }
@@ -3568,7 +3628,9 @@ export default {
         if (attacker.stamina < RAID_STAMINA_COST) return json({ error: "스태미나가 부족합니다. (필요 " + RAID_STAMINA_COST + ")" }, 400);
 
         const combat = await totalCombatStats(env, attacker);
-        const damage = Math.max(1, Math.round(combat.atk * RAID_ATTACK_POWER_MULT * randMult()));
+        const clubCrit = critProfile(combat.crit);
+        const clubIsCrit = rollCrit(clubCrit);
+        const damage = Math.max(1, Math.round(combat.atk * RAID_ATTACK_POWER_MULT * randMult() * (clubIsCrit ? clubCrit.mult : 1)));
         const newHp = Math.max(0, raid.hp - damage);
 
         attacker.stamina -= RAID_STAMINA_COST;
@@ -3591,7 +3653,7 @@ export default {
           ]);
         }
 
-        return json({ ok: true, damage: damage, raidHp: newHp, raidMaxHp: raid.max_hp, bossName: raid.boss_name, defeated: defeated, rewards: rewards, stamina: attacker.stamina });
+        return json({ ok: true, damage: damage, isCrit: clubIsCrit, raidHp: newHp, raidMaxHp: raid.max_hp, bossName: raid.boss_name, defeated: defeated, rewards: rewards, stamina: attacker.stamina });
       }
 
       // ── POST /club/create { name, description } ──
@@ -4921,7 +4983,7 @@ export default {
         return json({
           raid: raidInfo,
           respawnInMs: raid ? 0 : Math.max(0, spawn.respawnAt - now),
-          me: { atk: combat.atk, estDamage: worldRaidExpectedDamage(combat.atk, armorNow), efficiencyPct: Math.round(combat.atk / Math.max(1, combat.atk + armorNow) * 100) },
+          me: { atk: combat.atk, critChancePct: critProfile(combat.crit).chancePct, critMult: critProfile(combat.crit).mult, estDamage: worldRaidExpectedDamage(combat.atk, armorNow, combat.crit), efficiencyPct: Math.round(combat.atk / Math.max(1, combat.atk + armorNow) * 100) },
           cooldownMs: WORLD_RAID_ATTACK_COOLDOWN_MS,
           cooldownLeftMs: Math.max(0, (row.last_world_raid_attack_at || 0) + WORLD_RAID_ATTACK_COOLDOWN_MS - now),
           lastResult: lastResult,
@@ -4948,7 +5010,8 @@ export default {
         if (!cdClaim.meta.changes) return json({ error: "공격 쿨다운 중입니다.", cooldown: true }, 429);
 
         const combat = await totalCombatStats(env, row);
-        const damage = worldRaidRollDamage(combat.atk, raid.armor);
+        const hit = worldRaidRollDamage(combat.atk, raid.armor, combat.crit);
+        const damage = hit.damage;
         const results = await env.DB.batch([
           env.DB.prepare("UPDATE arena_world_raids SET hp = MAX(0, hp - ?) WHERE id = ? AND status = 'active'").bind(damage, raid.id),
           env.DB.prepare(
@@ -4973,7 +5036,7 @@ export default {
         const myDamage = mine ? mine.damage : damage;
         const dealt = Math.max(1, raid.max_hp - after.hp);
         return json({
-          ok: true, damage: damage, hp: after.hp, maxHp: raid.max_hp, bossName: raid.boss_name, level: raid.level,
+          ok: true, damage: damage, isCrit: hit.isCrit, hp: after.hp, maxHp: raid.max_hp, bossName: raid.boss_name, level: raid.level,
           myDamage: myDamage, myHits: mine ? mine.hits : 1, mySharePct: Math.min(100, Math.round(myDamage / dealt * 1000) / 10),
           defeated: defeated,
           myReward: settlement ? (settlement.participants.find(function (p) { return p.userId === user.userId; }) || null) : null,
@@ -5091,7 +5154,7 @@ export default {
             rewardCoins = Math.round(t.coinsPerHour * 0.5);
           } else {
             // 여기 나오는 홈 행성은 항상 "내" 것뿐이다(쿼리 조건상) — 내 방어 스탯 참고용으로 보여준다.
-            combatStats = { atk: myCombat.atk * HOME_PLANET_DEFENSE_MULT, def: myCombat.def * HOME_PLANET_DEFENSE_MULT, crit: myCombat.crit };
+            combatStats = { atk: myCombat.atk * HOME_PLANET_DEFENSE_MULT, def: myCombat.def * HOME_PLANET_DEFENSE_MULT, crit: critProfile(myCombat.crit).chancePct };
             homeInvulnerable = false; // 내 레벨은 어차피 위에서 이미 알고 있고, 자기 자신은 공격 대상이 아니므로 의미 없음
           }
           return {
@@ -5281,7 +5344,7 @@ export default {
           ok: true,
           planetId: planet.id, planetName: planet.name, ownerUserId: target.user_id, ownerName: target.real_name,
           targetLevel: target.level, homeInvulnerable: homeInvulnerable,
-          combatStats: { atk: targetCombat.atk * HOME_PLANET_DEFENSE_MULT, def: targetCombat.def * HOME_PLANET_DEFENSE_MULT, crit: targetCombat.crit },
+          combatStats: { atk: targetCombat.atk * HOME_PLANET_DEFENSE_MULT, def: targetCombat.def * HOME_PLANET_DEFENSE_MULT, crit: critProfile(targetCombat.crit).chancePct },
           attackable: !homeInvulnerable,
           state: publicState(me, combat),
         });
@@ -5357,7 +5420,7 @@ export default {
                attacker.last_energy_tick, attacker.last_stamina_tick, attacker.last_hp_tick, attacker.last_attack_at, attacker.user_id).run();
 
         await insertLog(env, attacker.user_id, "planet_attack", result.isBotPlanet ? null : planet.owner_user_id, result.isBotPlanet ? planet.name : planet.owner_name,
-          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, (result.attackerWins ? (result.sweep ? 0 : -PVP_WIN_ATK_HP_LOSS) : -PVP_LOSE_ATK_HP_LOSS));
+          result.attackerWins ? "win" : "lose", result.attackerWins ? result.lootCoins : 0, -result.attackerHpLoss);
         // 홈 행성은 뚫려도 소유권이 절대 안 넘어가므로(코인만 몰수) "빼앗김"이 아니라 "피습"이다
         // — 예전엔 이 로그 종류가 "정복당한 야생 행성"에도 쓰였지만 이제 그 경우 자체가 없다.
         if (!result.isBotPlanet && result.attackerWins) {
@@ -5371,7 +5434,8 @@ export default {
           xpGained: xpGain, leveledUp: leveledUp,
           planetName: planet.name, isHome: !!planet.is_home, planetId: planet.id, planetCleared: planetCleared,
           rounds: result.rounds, attackerRoundWins: result.attackerRoundWins, rpsMod: result.rpsMod,
-          myAtk: result.attackerCombat.atk, theirDef: result.defenderCombat.def, stanceLabel: stance.label,
+          myAtk: result.attackerCombat.atk, theirDef: Math.round(result.defenderCombat.def * result.defenderDefMult), theirStanceDefMult: result.defenderDefMult, stanceLabel: stance.label,
+          isCrit: result.isCrit, myCrit: { chancePct: result.attackerCrit.chancePct, mult: result.attackerCrit.mult }, hpLost: result.attackerHpLoss,
           state: publicState(attacker, combat),
         });
       }

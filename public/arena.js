@@ -174,7 +174,9 @@
 
     $("atkText").textContent = state.atk;
     $("defText").textContent = state.def;
-    $("critText").textContent = state.crit;
+    // 치명타는 "수치"(코어 합산)를 확률/피해 배율로 환산해서 보여준다 — 수치 자체는 툴팁으로.
+    $("critText").textContent = (state.critChancePct != null ? state.critChancePct : state.crit) + "% · x" + (state.critMult || 1.5);
+    if ($("critText").parentElement) $("critText").parentElement.title = "치명타 수치 " + fmt(state.crit) + " → 확률 " + state.critChancePct + "% · 치명타 피해 x" + state.critMult + " (전투 라운드/레이드 타격마다 판정)";
     $("shieldTag").style.display = state.shielded ? "" : "none";
 
     // 칭호 — 업적을 청구하면 골라 장착할 수 있다(Achievements 탭). 등급별 색/아우라는
@@ -973,9 +975,9 @@
   // ── 전투 태세(가위바위보) — 서버 STANCES와 동일한 배율/상성을 표시용으로 복제한 것.
   //    실제 검증/계산은 항상 서버가 다시 한다. ──
   const STANCE_META = {
-    aggressive: { label: "공격형", icon: "⚔️", hint: "ATK+25% / DEF-15%" },
-    defensive:  { label: "방어형", icon: "🛡️", hint: "ATK-15% / DEF+25%" },
-    ambush:     { label: "기습형", icon: "🗡️", hint: "치명타 +10%" },
+    aggressive: { label: "공격형", icon: "⚔️", hint: "ATK +25% · 방어 시 DEF -15%", defMult: 0.85 },
+    defensive:  { label: "방어형", icon: "🛡️", hint: "ATK -15% · 받는 HP 피해 절반 · 방어 시 DEF +25%", defMult: 1.25 },
+    ambush:     { label: "기습형", icon: "🗡️", hint: "치명타 확률 +15%p · 방어 시 DEF -10%", defMult: 0.9 },
   };
 
   let attackAnimId = null;
@@ -992,7 +994,7 @@
   // 무료라서, 이미 받아온 그 데이터를 그대로 쓰면 된다 — 행성 공격 모달과 같은 방식.
   function openAttackSequence(target) {
     $("attackModal").style.display = "flex";
-    const stanceHint = (target.lastStanceLabel ? "상대는 최근 <b>[" + escapeHtml(target.lastStanceLabel) + "]</b>으로 싸웠습니다 — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.")
+    const stanceHint = (target.lastStanceLabel ? "상대는 최근 <b>[" + escapeHtml(target.lastStanceLabel) + "]</b>으로 싸웠습니다(지금 방어 DEF x" + ((STANCE_META[target.lastStance] || {}).defMult || 1) + ") — 상성을 노려보세요." : "상대의 전투 패턴 정보가 없습니다.")
       + (target.levelGapHigh ? '<br><span style="color:var(--stamina);">⚠️ 레벨 차이가 커서 스태미나를 더 씁니다(' + target.staminaCost + ').</span>' : "");
     renderStanceStep({ mode: "pvp", targetUserId: target.userId }, target.realName, stanceHint);
   }
@@ -1017,7 +1019,8 @@
         const m = STANCE_META[id];
         return '<button class="stance-btn" data-stance="' + id + '"><span class="stance-icon">' + m.icon + "</span>" + m.label + '<span class="stance-mult">' + m.hint + "</span></button>";
       }).join("") +
-      "</div>";
+      "</div>" +
+      '<p class="dim" style="font-size:11px;margin-top:10px;text-align:center;">"방어 시" 효과는 다음에 다른 태세로 공격하기 전까지, 남에게 공격받을 때 적용됩니다.</p>';
     body.querySelectorAll("button[data-stance]").forEach((btn) => {
       btn.addEventListener("click", () => startTimingRounds(ctx, btn.dataset.stance));
     });
@@ -1090,7 +1093,7 @@
         r.rounds.map((rd) =>
           '<div class="round-detail-row ' + (rd.win ? "win" : "lose") + '">' +
           '<span class="rd-num">R' + rd.round + "</span>" +
-          '<span class="rd-power">' + fmt(rd.atkPower) + " ATK vs " + fmt(rd.defPower) + " DEF</span>" +
+          '<span class="rd-power">' + (rd.atkCrit ? "💥" : "") + fmt(rd.atkPower) + " ATK vs " + fmt(rd.defPower) + " DEF" + (rd.defCrit ? " 🛡️💥" : "") + "</span>" +
           '<span class="rd-timing">타이밍 ' + rd.timingScore + "점 (x" + rd.timingMult + ")</span>" +
           '<span class="rd-outcome">' + (rd.win ? "승" : "패") + "</span>" +
           "</div>"
@@ -1103,7 +1106,7 @@
         if (r.attackerWins) {
           resultDetail = r.isHome
             ? "🏠 홈 행성 침투 성공! 포켓 코인 20% 몰수 +" + fmt(r.lootCoins) + " 코인"
-            : "🤖 침투 성공! +" + fmt(r.lootCoins) + " 코인 약탈" + (r.planetCleared ? '<br><span class="dim">이 행성은 다음 리롤까지 은하 지도에서 사라집니다.</span>' : "");
+            : "🤖 침투 성공! +" + fmt(r.lootCoins) + " 코인 약탈" + (r.isCrit ? " (💥 치명타 x1.5)" : "") + (r.planetCleared ? '<br><span class="dim">이 행성은 다음 리롤까지 은하 지도에서 사라집니다.</span>' : "");
         } else {
           resultDetail = "침투 실패";
         }
@@ -1116,7 +1119,10 @@
       resultDetail += '<br><span class="dim">EXP +' + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : "") + "</span>";
       body.innerHTML =
         '<div class="round-dots">' + r.rounds.map((rd) => '<div class="round-dot ' + (rd.win ? "win" : "lose") + '">' + (rd.win ? "✓" : "✗") + "</div>").join("") + "</div>" +
-        '<div class="attack-stat-line">내 ATK ' + fmt(r.myAtk) + " (" + escapeHtml(r.stanceLabel) + ")" + rpsNote + " · 상대 DEF " + fmt(r.theirDef) + "</div>" +
+        '<div class="attack-stat-line">내 ATK ' + fmt(r.myAtk) + " (" + escapeHtml(r.stanceLabel) + ")" + rpsNote +
+        (r.myCrit ? " · 치명타 " + r.myCrit.chancePct + "% x" + r.myCrit.mult : "") +
+        " · 상대 DEF " + fmt(r.theirDef) + (r.theirStanceDefMult && r.theirStanceDefMult !== 1 ? " (평소 태세 x" + r.theirStanceDefMult + ")" : "") +
+        (r.hpLost ? " · HP -" + r.hpLost : "") + "</div>" +
         roundDetailHtml +
         '<div class="attack-result-title ' + (r.attackerWins ? "win" : "lose") + '">' +
         (r.attackerWins ? (r.sweep ? "🏆 완벽한 승리!" : "✅ 침투 성공") + (r.isCrit ? " · CRITICAL!" : "") : "❌ 침투 실패") +
@@ -1138,7 +1144,7 @@
   function itemStatLabel(it) {
     if (it.type === "weapon") return "ATK +" + it.value;
     if (it.type === "armor") return "DEF +" + it.value;
-    if (it.type === "core") return "치명타 +" + it.value + "%";
+    if (it.type === "core") return "치명타 수치 +" + it.value;
     if (it.type === "box") return "개봉 시 무기/방어/코어 중 하나 획득 (75%/20%/5% 확률로 등급 결정)";
     if (it.effect === "stamina") return "Stamina +" + it.value;
     if (it.effect === "energy") return "Energy +" + it.value;
@@ -1509,7 +1515,7 @@
         return html;
       }
       function statLine(stats) {
-        return '<div class="bot-stat-line"><span>⚔️ ATK <b>' + stats.atk + '</b></span><span>🛡️ DEF <b>' + stats.def + '</b></span><span>💥 CRIT <b>' + stats.crit + '%</b></span></div>';
+        return '<div class="bot-stat-line"><span>⚔️ ATK <b>' + stats.atk + '</b></span><span>🛡️ DEF <b>' + stats.def + '</b></span><span>💥 CRIT <b>' + stats.crit + '</b></span></div>';
       }
       // 경비병 배치 — "나와 함께"(개인 전투력에 합산, 기본값) 또는 내가 정복한 야생 행성(홈
       // 제외) 중 하나. 배치하면 그 순간부터 이 봇 스탯은 위 statLine에 안 잡히고(개인 전투력
@@ -1936,7 +1942,8 @@
     let myPanel = '<div class="wr-panel"><div class="wr-panel-title">⚔️ 내 전투 정보</div>' +
       wrStatRow("총 ATK (봇·환생 포함)", fmt(me.atk)) +
       wrStatRow("방어 관통 효율", me.efficiencyPct + "%") +
-      wrStatRow("1타 예상 데미지", fmt(me.estDamage));
+      wrStatRow("치명타", me.critChancePct + "% · 피해 x" + me.critMult) +
+      wrStatRow("1타 기대 데미지 (치명타 포함)", fmt(me.estDamage));
     if (r) {
       myPanel +=
         wrStatRow("누적 데미지", fmt(r.myDamage) + " (" + r.myHits + "회)", "worldRaidMyDmg") +
@@ -2015,12 +2022,12 @@
     else { btn.disabled = worldRaidAttackInFlight; btn.textContent = "⚔️ 공격"; }
   }
 
-  function showWorldRaidPop(damage) {
+  function showWorldRaidPop(damage, isCrit) {
     const layer = $("worldRaidPops");
     if (!layer) return;
     const el = document.createElement("div");
-    el.className = "wr-pop";
-    el.textContent = "-" + fmt(damage);
+    el.className = "wr-pop" + (isCrit ? " crit" : "");
+    el.textContent = (isCrit ? "💥 " : "") + "-" + fmt(damage);
     el.style.left = (30 + Math.random() * 40) + "%";
     layer.appendChild(el);
     setTimeout(() => el.remove(), 1000);
@@ -2035,7 +2042,7 @@
     try {
       const r = await api("/world-raid/attack", { method: "POST" });
       worldRaidNextAttackAt = Date.now() + r.cooldownMs;
-      showWorldRaidPop(r.damage);
+      showWorldRaidPop(r.damage, r.isCrit);
       if (r.defeated) {
         const mine = r.myReward;
         toast("🐉 " + r.bossName + " Lv." + r.level + " 처치! " +
@@ -2836,7 +2843,7 @@
             const mine = r.rewards.participants.find((p) => p.userId === state.userId);
             toast("🎉 " + r.bossName + " 처치! " + (mine ? "내 몫 +" + fmt(mine.coinReward) + " 코인 · EXP +" + mine.xpGained + (mine.leveledUp ? " · 🎉 LEVEL UP!" : "") : "보상 분배 완료"));
           } else {
-            toast("⚔️ " + fmt(r.damage) + " 데미지! (보스 HP " + fmt(r.raidHp) + " / " + fmt(r.raidMaxHp) + ")");
+            toast((r.isCrit ? "💥 치명타! " : "⚔️ ") + fmt(r.damage) + " 데미지! (보스 HP " + fmt(r.raidHp) + " / " + fmt(r.raidMaxHp) + ")");
           }
           refreshState();
           renderClubTab();
@@ -3079,7 +3086,7 @@
       return '<div class="profile-slot" style="border-left-color:' + s.rarityColor + ';">' +
         '<div>' + botIconHtml(s.rarity, s.rarityColor, 26) + "</div>" +
         '<div class="profile-slot-name" style="color:' + s.rarityColor + ';">봇 (' + s.rarityLabel + ")</div>" +
-        '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "%</div></div>";
+        '<div class="profile-slot-stat">⚔️' + s.atk + " 🛡️" + s.def + " 💥" + s.crit + "</div></div>";
     }).join("");
     return (
       '<div class="profile-card' + glowCls + frameCls + '">' +

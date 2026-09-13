@@ -531,6 +531,7 @@
   .wr-pops { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
   .wr-pop { position: absolute; top: 40%; transform: translateX(-50%); font-weight: bold; font-size: 18px; color: #ffd166; white-space: nowrap; text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(255,61,104,0.7); animation: wrPop 1s ease-out forwards; }
   @keyframes wrPop { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -60px; } }
+  .wr-pop.crit { font-size: 24px; color: #ff4d6d; text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 16px rgba(255,77,109,0.9); }
   .wr-hp-track { position: relative; height: 22px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; margin: 8px 0 10px; }
   .wr-hp-fill { height: 100%; background: linear-gradient(90deg, #8a0f2c, var(--danger)); transition: width 0.3s ease; }
   .wr-hp-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 0 0 4px #000; }
@@ -927,7 +928,7 @@
     <div class="atk-def-row">
       <span>ATK <b id="atkText">10</b></span>
       <span>DEF <b id="defText">10</b></span>
-      <span>CRIT <b id="critText">5</b>%</span>
+      <span>CRIT <b id="critText">5%</b></span>
       <span class="stat-points-tag" id="statPointsTag" style="display:none;">🔺 스탯 포인트 <b id="statPointsText">0</b></span>
     </div>
   </div>
