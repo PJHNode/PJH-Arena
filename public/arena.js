@@ -2553,7 +2553,8 @@
         '<div class="expd-tier-row"><span>필요 레벨</span><b>' + t.minLevel + "</b></div>" +
         '<div class="expd-tier-row"><span>소요 시간</span><b>' + fmtLongCountdown(t.durationMs) + "</b></div>" +
         '<div class="expd-tier-row"><span>난이도</span><b>' + fmt(t.power) + "</b></div>" +
-        '<div class="expd-tier-row"><span>보상</span><b>💰' + fmt(t.coinMin) + "~" + fmt(t.coinMax) + "</b></div>" +
+        '<div class="expd-tier-row"><span>코인</span><b>💰' + fmt(t.coinMin) + "~" + fmt(t.coinMax) + "</b></div>" +
+        '<div class="expd-tier-row"><span>EXP</span><b style="color:var(--accent);">✨' + wrShort(t.xpMin) + "~" + wrShort(t.xpMax) + "</b></div>" +
         (locked ? '<div class="dim" style="margin-top:6px;font-size:10px;">레벨 ' + t.minLevel + " 필요</div>" : "") +
         "</div>"
       );

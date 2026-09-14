@@ -1180,9 +1180,13 @@ async function settleWorldRaid(env, raid) {
 //  보스와 겨뤄 EXP를 버는 것이다.
 //
 //  · 자원(에너지·스태미나) 전혀 안 씀 — 계정당 원정 슬롯 1개, 캐릭터 레벨로만 등급이 풀린다
-//    (신호 감청과 같은 "무자원 수입원" 계열이지만, 신호 감청과 달리 xpPct 방식이라 레벨이
-//    아무리 올라가도 항상 nextExpFor의 일정 비율을 유지한다 — 신호 감청의 고정 XP가 최근
-//    경험치 곡선 개편 이후 고레벨에서 사실상 무의미해진 것과 같은 문제를 여기선 피한다).
+//    (신호 감청과 같은 "무자원 수입원" 계열).
+//  · "경험치를 많이 주게, 각 level에서 요구하는 경험치의 4배(예: 75렙 요구 던전이면
+//    75레벨 요구량의 4배)" 요청 반영 — XP 보상은 플레이어 자기 레벨이 아니라 그 던전의
+//    minLevel 요구량(nextExpFor)에 고정 배율(DUNGEON_XP_MULT=4)을 곱한 절대값이다(아래
+//    dungeonBaseXp 참고). 그 등급에 맞는 캐릭터가 한 번 클리어하면 몇 레벨은 그 자리에서
+//    올라갈 만큼 크다 — 신호 감청의 고정 XP가 경험치 곡선 개편 이후 고레벨에서 무의미해진
+//    것과 달리, 여기선 애초에 "그 던전 난이도에 맞는 큰 보상"으로 설계해서 그 문제가 없다.
 //  · 원정을 보내면 그 순간 놀고 있는 봇 전부(총동원)가 한꺼번에 파견된다("각 던전에 봇들이
 //    총동원돼서 싸우는 게 보이면 좋겠다" 요청 반영) — 원정 중인 봇 전부는 그동안
 //    totalCombatStats에서 빠진다(PvP/레이드 실전 전투력이 그만큼 줄어든다). 봇 하나만 보낼
@@ -1197,15 +1201,23 @@ async function settleWorldRaid(env, raid) {
 //    이미 서버에서 끝났다) 애니메이션 도중 새로고침해도 보상이 두 번 나가는 일이 없다.
 // ══════════════════════════════════════════════════════════
 const DUNGEON_TIERS = {
-  server_room:    { label: "폐기된 서버실",    bossName: "고장난 감시 드론", minLevel: 1,   durationMs: 15 * 60 * 1000,   power: 40,    xpPct: 0.008, coinMin: 400,     coinMax: 700 },
-  datacenter:     { label: "지하 데이터센터",  bossName: "타워 방화벽 코어", minLevel: 15,  durationMs: 45 * 60 * 1000,   power: 220,   xpPct: 0.016, coinMin: 3000,    coinMax: 5000 },
-  blackmarket:    { label: "블랙마켓 은신처",  bossName: "그림자 브로커",   minLevel: 35,  durationMs: 2 * 3600 * 1000,  power: 900,   xpPct: 0.026, coinMin: 15000,   coinMax: 25000 },
-  blacksite:      { label: "정부 블랙사이트",  bossName: "블랙옵스 AI",    minLevel: 60,  durationMs: 4 * 3600 * 1000,  power: 3200,  xpPct: 0.036, coinMin: 60000,   coinMax: 100000 },
-  abyss_facility: { label: "심연의 코어 시설", bossName: "심연의 파수꾼",   minLevel: 100, durationMs: 8 * 3600 * 1000,  power: 12000, xpPct: 0.05,  coinMin: 250000,  coinMax: 400000 },
-  apocalypse_lab: { label: "종말 연구소",      bossName: "종말의 실험체",   minLevel: 200, durationMs: 16 * 3600 * 1000, power: 45000, xpPct: 0.07,  coinMin: 1200000, coinMax: 2000000 },
+  server_room:    { label: "폐기된 서버실",    bossName: "고장난 감시 드론", minLevel: 1,   durationMs: 15 * 60 * 1000,   power: 40,    coinMin: 400,     coinMax: 700 },
+  datacenter:     { label: "지하 데이터센터",  bossName: "타워 방화벽 코어", minLevel: 15,  durationMs: 45 * 60 * 1000,   power: 220,   coinMin: 3000,    coinMax: 5000 },
+  blackmarket:    { label: "블랙마켓 은신처",  bossName: "그림자 브로커",   minLevel: 35,  durationMs: 2 * 3600 * 1000,  power: 900,   coinMin: 15000,   coinMax: 25000 },
+  blacksite:      { label: "정부 블랙사이트",  bossName: "블랙옵스 AI",    minLevel: 60,  durationMs: 4 * 3600 * 1000,  power: 3200,  coinMin: 60000,   coinMax: 100000 },
+  abyss_facility: { label: "심연의 코어 시설", bossName: "심연의 파수꾼",   minLevel: 100, durationMs: 8 * 3600 * 1000,  power: 12000, coinMin: 250000,  coinMax: 400000 },
+  apocalypse_lab: { label: "종말 연구소",      bossName: "종말의 실험체",   minLevel: 200, durationMs: 16 * 3600 * 1000, power: 45000, coinMin: 1200000, coinMax: 2000000 },
 };
 const DUNGEON_TIER_ORDER = ["server_room", "datacenter", "blackmarket", "blacksite", "abyss_facility", "apocalypse_lab"];
+// "경험치 많이 주게, 각 level에서 요구하는 경험치의 4배(예: 75렙 요구 던전이면 75레벨
+// 요구량의 4배)" 요청 반영 — 기존 xpPct(플레이어 자기 레벨 기준 %) 방식을 버리고, 그
+// 던전의 minLevel 요구량(nextExpFor)에 고정 배율을 곱한 절대값으로 바꿨다. 플레이어의
+// 현재 레벨과 무관하게 "이 던전"의 보상은 항상 같다 — 그 던전 등급에 맞는 캐릭터가
+// 한 번 클리어하면 몇 레벨은 그 자리에서 올라갈 만큼 크다(예: 종말 연구소는 레벨 200
+// 요구량의 4배 = 약 4천만 XP, 배율 0.4~1.3배까지 적용하면 1,600만~5,200만).
+const DUNGEON_XP_MULT = 4;
 function dungeonUnlockedTiers(level) { return DUNGEON_TIER_ORDER.filter(function (k) { return (level || 1) >= DUNGEON_TIERS[k].minLevel; }); }
+function dungeonBaseXp(tier) { return nextExpFor(tier.minLevel) * DUNGEON_XP_MULT; }
 // 파견된 봇들의 평균 ATK 대 보스 power 비율 → 0.4~1.3배 사이 연속 배율(코인·XP 둘 다 이
 // 배율로 스케일). 비율 1.0(딱 맞먹음)이면 100%, 0이면 최소 40%, 2배 이상이면 상한 130%.
 function dungeonRewardMult(avgBotAtk, power) {
@@ -5602,7 +5614,11 @@ export default {
         }
         const tiers = DUNGEON_TIER_ORDER.map(function (key) {
           const t = DUNGEON_TIERS[key];
-          return { key: key, label: t.label, bossName: t.bossName, minLevel: t.minLevel, durationMs: t.durationMs, power: t.power, xpPct: t.xpPct, coinMin: t.coinMin, coinMax: t.coinMax };
+          const baseXp = dungeonBaseXp(t);
+          return {
+            key: key, label: t.label, bossName: t.bossName, minLevel: t.minLevel, durationMs: t.durationMs, power: t.power,
+            xpMin: Math.round(baseXp * 0.4), xpMax: Math.round(baseXp * 1.3), coinMin: t.coinMin, coinMax: t.coinMax,
+          };
         });
         return json({
           tiers: tiers, unlockedTiers: dungeonUnlockedTiers(row.level),
@@ -5660,7 +5676,7 @@ export default {
         const rewardMult = dungeonRewardMult(avgAtk, tier.power);
         const eventMult = globalEventMult();
         const coins = Math.round(randInt(tier.coinMin, tier.coinMax) * rewardMult * eventMult);
-        const xpGain = Math.round(xpPct(row, tier.xpPct * rewardMult) * eventMult);
+        const xpGain = Math.max(1, Math.round(dungeonBaseXp(tier) * rewardMult * eventMult));
 
         row.pocket_coins += coins;
         const leveledUp = applyXpAndLevel(row, xpGain);
