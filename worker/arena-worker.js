@@ -815,9 +815,11 @@ function dailyBoostMult(row) {
 // 에서 계산해 쓰면 Cloudflare Workers 아이솔레이트가 콜드스타트될 때마다 "지금부터 N"이
 // 다시 계산되어 이벤트가 사실상 영원히 안 끝나는 버그가 생긴다 — 그래서 반드시 배포
 // 시점에 고정한 절대 타임스탬프 리터럴을 쓴다(요청: "지금부터 2일간 코인 exp 2배 이벤트",
-// 2026-09-11 시작 기준 +48시간).
-const GLOBAL_EVENT_COIN_XP_2X_END_AT = 1789300800000; // 2026-09-13T12:00:00.000Z
+// 2026-09-11 시작 기준 +48시간). "이벤트 7일 연장해줘, 이름은 중간고사 화이팅" 요청 반영 — 기존
+// 종료 시각에 정확히 7일(604,800,000ms)을 더했다(2026-09-13T12:00 -> 2026-09-20T12:00 UTC).
+const GLOBAL_EVENT_COIN_XP_2X_END_AT = 1789300800000 + 7 * 24 * 3600 * 1000; // 2026-09-20T12:00:00.000Z
 const GLOBAL_EVENT_COIN_XP_2X_MULT = 2;
+const GLOBAL_EVENT_NAME = "중간고사 화이팅";
 function globalEventMult() { return Date.now() < GLOBAL_EVENT_COIN_XP_2X_END_AT ? GLOBAL_EVENT_COIN_XP_2X_MULT : 1; }
 
 // 환생 부스트 + 일일 완료 부스트 + 전역 이벤트를 곱해서 쓰는 곳(해킹 작업/PvP 약탈/행성
@@ -1181,13 +1183,18 @@ async function settleWorldRaid(env, raid) {
 //    (신호 감청과 같은 "무자원 수입원" 계열이지만, 신호 감청과 달리 xpPct 방식이라 레벨이
 //    아무리 올라가도 항상 nextExpFor의 일정 비율을 유지한다 — 신호 감청의 고정 XP가 최근
 //    경험치 곡선 개편 이후 고레벨에서 사실상 무의미해진 것과 같은 문제를 여기선 피한다).
-//  · 원정 중인 봇은 그동안 totalCombatStats에서 빠진다(PvP/레이드 등 실전 전투력이 그만큼
-//    줄어든다) — "공짜 경험치"가 아니라 "내 최고 봇을 한동안 못 쓰는" 진짜 트레이드오프를
-//    만든다(이 세션 내내 지켜온 "공짜 이득 없음" 원칙과 일치).
-//  · 보상 배율은 동전 던지기가 아니라 그 봇의 ATK 대 보스 난이도(power) 비율로 정해지는
-//    연속값(0.4~1.3배)이다 — 짧으면 15분, 길면 16시간을 기다리는 콘텐츠라 그 끝에 운으로
-//    완전히 실패하는 경험을 주고 싶지 않았다. 장비가 좋을수록 배율이 오르되 완전히 밑돌아도
-//    최소 40%는 보장한다.
+//  · 원정을 보내면 그 순간 놀고 있는 봇 전부(총동원)가 한꺼번에 파견된다("각 던전에 봇들이
+//    총동원돼서 싸우는 게 보이면 좋겠다" 요청 반영) — 원정 중인 봇 전부는 그동안
+//    totalCombatStats에서 빠진다(PvP/레이드 실전 전투력이 그만큼 줄어든다). 봇 하나만 보낼
+//    때보다 훨씬 큰 트레이드오프다 — "공짜 경험치"가 아니라 "내 로스터 전체를 한동안 못
+//    쓰는" 대가를 치른다.
+//  · 보상 배율은 동전 던지기가 아니라 파견된 봇들의 평균 ATK 대 보스 난이도(power) 비율로
+//    정해지는 연속값(0.4~1.3배)이다 — 짧으면 15분, 길면 16시간을 기다리는 콘텐츠라 그 끝에
+//    운으로 완전히 실패하는 경험을 주고 싶지 않았다. 합계가 아니라 평균을 쓰는 이유는, 봇을
+//    많이 갖고 있다는 이유만으로 장비 수준과 무관하게 던전이 쉬워지는 걸 막기 위해서다.
+//  · 수령 버튼을 누르면 서버가 이미 확정한 결과(코인·XP·배율)를 프론트가 "봇들이 한 마리씩
+//    보스를 공격하는" 연출로 재생한다 — 연출용 HP는 순수 표시 목적이라(진짜 전투 판정은
+//    이미 서버에서 끝났다) 애니메이션 도중 새로고침해도 보상이 두 번 나가는 일이 없다.
 // ══════════════════════════════════════════════════════════
 const DUNGEON_TIERS = {
   server_room:    { label: "폐기된 서버실",    bossName: "고장난 감시 드론", minLevel: 1,   durationMs: 15 * 60 * 1000,   power: 40,    xpPct: 0.008, coinMin: 400,     coinMax: 700 },
@@ -1199,10 +1206,10 @@ const DUNGEON_TIERS = {
 };
 const DUNGEON_TIER_ORDER = ["server_room", "datacenter", "blackmarket", "blacksite", "abyss_facility", "apocalypse_lab"];
 function dungeonUnlockedTiers(level) { return DUNGEON_TIER_ORDER.filter(function (k) { return (level || 1) >= DUNGEON_TIERS[k].minLevel; }); }
-// 봇 ATK 대 보스 power 비율 → 0.4~1.3배 사이 연속 배율(코인·XP 둘 다 이 배율로 스케일).
-// 비율 1.0(딱 맞먹음)이면 100%, 0이면 최소 40%, 2배 이상이면 상한 130%.
-function dungeonRewardMult(botAtk, power) {
-  const ratio = Math.max(0, botAtk || 0) / Math.max(1, power);
+// 파견된 봇들의 평균 ATK 대 보스 power 비율 → 0.4~1.3배 사이 연속 배율(코인·XP 둘 다 이
+// 배율로 스케일). 비율 1.0(딱 맞먹음)이면 100%, 0이면 최소 40%, 2배 이상이면 상한 130%.
+function dungeonRewardMult(avgBotAtk, power) {
+  const ratio = Math.max(0, avgBotAtk || 0) / Math.max(1, power);
   return clamp(0.4 + 0.6 * ratio, 0.4, 1.3);
 }
 
@@ -2266,9 +2273,10 @@ async function ensureSchema(env) {
   // 올릴 때마다 buildPersonalPlanetDeck의 셔플 시드가 바뀌어 그 유저의 48슬롯 배치 전체가
   // 새로 섞인다(다른 유저에게는 영향 없음 — 각자 독립적으로 섞이는 덱이므로).
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN planet_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
-  // 봇 원정(Dungeon Expedition) — 계정당 원정 슬롯 1개(정찰 탐사선과 동일한 설계). 어느 봇을
-  // 보냈는지(expedition_bot_id)까지 같이 저장해서, 수령/조회 시 그 봇의 실제 장비 스탯으로
-  // 보상 배율을 계산한다.
+  // 봇 원정(Dungeon Expedition) — 계정당 원정 슬롯 1개(정찰 탐사선과 동일한 설계). 어느 봇이
+  // 파견됐는지는 arena_bots.on_expedition=1 자체로 알 수 있어서(총동원 방식이라 여러 마리일
+  // 수 있음) 별도 ID 컬럼은 안 쓴다 — expedition_bot_id는 초기(봇 1마리 선택) 설계의 흔적으로
+  // 스키마에만 남아있고 더 이상 읽거나 쓰지 않는다.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_bot_id INTEGER"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_tier TEXT"); } catch (e) {}
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_ready_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
@@ -2669,6 +2677,7 @@ function publicState(row, combat) {
     // 절대 시각 기준이라 유저별 상태 없이 그대로 노출한다.
     globalEventActive: globalEventMult() > 1,
     globalEventEndAt: GLOBAL_EVENT_COIN_XP_2X_END_AT,
+    globalEventName: GLOBAL_EVENT_NAME,
   };
 }
 
@@ -5570,20 +5579,24 @@ export default {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const enchantMap = await loadEnchantMap(env, user.userId);
         const maxLevel = enchantMaxLevelFor(row);
+        const combatMult = rebirthCombatMult(row);
         const botsRes = await env.DB.prepare(
-          "SELECT id, equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity, on_expedition, gacha_rarity " +
+          "SELECT id, equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity, on_expedition, stationed_planet_id " +
           "FROM arena_bots WHERE user_id = ? ORDER BY id"
         ).bind(user.userId).all();
-        const bots = botsRes.results.map(function (b) {
+        const allBots = botsRes.results.map(function (b) {
           const stats = equipStats(b, enchantMap, maxLevel);
-          return { id: b.id, atk: stats.atk, def: stats.def, crit: stats.crit, onExpedition: !!b.on_expedition, gachaRarity: b.gacha_rarity || null };
+          return { id: b.id, atk: Math.round(stats.atk * combatMult), onExpedition: !!b.on_expedition, available: !b.on_expedition && !b.stationed_planet_id };
         });
+        const availableBots = allBots.filter(function (b) { return b.available; });
+        const mobilizedBots = allBots.filter(function (b) { return b.onExpedition; });
+        const avgAvailableAtk = availableBots.length ? Math.round(availableBots.reduce(function (s, b) { return s + b.atk; }, 0) / availableBots.length) : 0;
         let active = null;
         if (row.expedition_tier && DUNGEON_TIERS[row.expedition_tier]) {
           const tier = DUNGEON_TIERS[row.expedition_tier];
           active = {
             tier: row.expedition_tier, label: tier.label, bossName: tier.bossName,
-            botId: row.expedition_bot_id, readyAt: row.expedition_ready_at,
+            bots: mobilizedBots, readyAt: row.expedition_ready_at,
             readyInMs: Math.max(0, row.expedition_ready_at - Date.now()),
           };
         }
@@ -5591,39 +5604,43 @@ export default {
           const t = DUNGEON_TIERS[key];
           return { key: key, label: t.label, bossName: t.bossName, minLevel: t.minLevel, durationMs: t.durationMs, power: t.power, xpPct: t.xpPct, coinMin: t.coinMin, coinMax: t.coinMax };
         });
-        return json({ tiers: tiers, unlockedTiers: dungeonUnlockedTiers(row.level), bots: bots, active: active });
+        return json({
+          tiers: tiers, unlockedTiers: dungeonUnlockedTiers(row.level),
+          availableBotCount: availableBots.length, avgAvailableAtk: avgAvailableAtk, active: active,
+        });
       }
 
-      // ── POST /expedition/launch { botId, tier } — 계정당 슬롯 1개, 자원 소모 없음. 원정
-      //    보낸 봇은 즉시 on_expedition=1이 되어 그 순간부터 totalCombatStats에서 빠진다. ──
+      // ── POST /expedition/launch { tier } — 계정당 슬롯 1개, 자원 소모 없음. 지금 놀고 있는
+      //    (경비병 배치도 원정 중도 아닌) 봇 전부를 그 자리에서 총동원한다. 한 마리도 없으면
+      //    거부 — 최소 한 마리는 있어야 파견할 수 있다. ──
       if (request.method === "POST" && path === "/expedition/launch") {
         const body = await request.json().catch(function () { return {}; });
         const tierKey = String(body.tier || "");
         const tier = DUNGEON_TIERS[tierKey];
         if (!tier) return json({ error: "알 수 없는 던전입니다." }, 400);
-        const botId = parseInt(body.botId, 10);
-        if (!Number.isInteger(botId)) return json({ error: "파견할 봇을 선택하세요." }, 400);
 
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         if (row.level < tier.minLevel) return json({ error: "레벨이 부족합니다. (필요 Lv." + tier.minLevel + ")" }, 400);
-        if (row.expedition_tier) return json({ error: "이미 원정 중인 봇이 있습니다. 먼저 수령하세요." }, 400);
+        if (row.expedition_tier) return json({ error: "이미 원정 중입니다. 먼저 수령하세요." }, 400);
 
-        const bot = await env.DB.prepare("SELECT id, on_expedition FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
-        if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
-        if (bot.on_expedition) return json({ error: "이미 원정 중인 봇입니다." }, 400);
+        const availableRes = await env.DB.prepare(
+          "SELECT id FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL AND on_expedition = 0"
+        ).bind(user.userId).all();
+        if (availableRes.results.length === 0) return json({ error: "파견 가능한 봇이 없습니다. 봇을 모집하세요." }, 400);
 
         const readyAt = Date.now() + tier.durationMs;
         await env.DB.batch([
-          env.DB.prepare("UPDATE arena_users SET expedition_bot_id=?, expedition_tier=?, expedition_ready_at=? WHERE user_id=?")
-            .bind(botId, tierKey, readyAt, user.userId),
-          env.DB.prepare("UPDATE arena_bots SET on_expedition=1 WHERE id=?").bind(botId),
+          env.DB.prepare("UPDATE arena_users SET expedition_tier=?, expedition_ready_at=? WHERE user_id=?").bind(tierKey, readyAt, user.userId),
+          env.DB.prepare("UPDATE arena_bots SET on_expedition=1 WHERE user_id=? AND stationed_planet_id IS NULL AND on_expedition=0").bind(user.userId),
         ]);
-        return json({ ok: true, tier: tierKey, label: tier.label, bossName: tier.bossName, botId: botId, readyAt: readyAt });
+        return json({ ok: true, tier: tierKey, label: tier.label, bossName: tier.bossName, botCount: availableRes.results.length, readyAt: readyAt });
       }
 
-      // ── POST /expedition/collect — 도착 후 그 봇의 실제 장비 ATK로 보스 power와 비교해
-      //    보상 배율(0.4~1.3배)을 정하고 코인·XP를 지급한다. 배율은 동전 던지기가 아니라
-      //    연속값이라 오래 기다린 콘텐츠가 순수 운으로 완전히 허탕나는 일은 없다. ──
+      // ── POST /expedition/collect — 도착 후 총동원됐던 봇 전부(on_expedition=1)의 평균
+      //    장비 ATK로 보스 power와 비교해 보상 배율(0.4~1.3배)을 정하고 코인·XP를 지급한다.
+      //    배율은 동전 던지기가 아니라 연속값이라 오래 기다린 콘텐츠가 순수 운으로 완전히
+      //    허탕나는 일은 없다. 봇별 ATK를 응답에 같이 내려줘서 프론트가 "봇들이 한 마리씩
+      //    공격하는" 연출을 재생할 수 있게 한다(전투 판정 자체는 이미 여기서 끝났다). ──
       if (request.method === "POST" && path === "/expedition/collect") {
         const row = await loadOrCreateUser(env, user.userId, user.realName);
         const tier = DUNGEON_TIERS[row.expedition_tier];
@@ -5631,33 +5648,37 @@ export default {
         if (Date.now() < row.expedition_ready_at) {
           return json({ error: "아직 도착하지 않았습니다. (" + Math.ceil((row.expedition_ready_at - Date.now()) / 1000) + "초 남음)" }, 400);
         }
-        const botId = row.expedition_bot_id;
-        const bot = await env.DB.prepare("SELECT * FROM arena_bots WHERE id = ?").bind(botId).first();
+        const mobilizedRes = await env.DB.prepare("SELECT * FROM arena_bots WHERE user_id = ? AND on_expedition = 1").bind(user.userId).all();
         const enchantMap = await loadEnchantMap(env, user.userId);
         const maxLevel = enchantMaxLevelFor(row);
-        const botStats = bot ? equipStats(bot, enchantMap, maxLevel) : { atk: 0, def: 0, crit: 0 };
-        const botAtk = Math.round(botStats.atk * rebirthCombatMult(row));
-        const rewardMult = dungeonRewardMult(botAtk, tier.power);
+        const combatMult = rebirthCombatMult(row);
+        const mobilizedBots = mobilizedRes.results.map(function (b) {
+          const stats = equipStats(b, enchantMap, maxLevel);
+          return { id: b.id, atk: Math.round(stats.atk * combatMult) };
+        });
+        const avgAtk = mobilizedBots.length ? Math.round(mobilizedBots.reduce(function (s, b) { return s + b.atk; }, 0) / mobilizedBots.length) : 0;
+        const rewardMult = dungeonRewardMult(avgAtk, tier.power);
         const eventMult = globalEventMult();
         const coins = Math.round(randInt(tier.coinMin, tier.coinMax) * rewardMult * eventMult);
         const xpGain = Math.round(xpPct(row, tier.xpPct * rewardMult) * eventMult);
 
         row.pocket_coins += coins;
         const leveledUp = applyXpAndLevel(row, xpGain);
-        const tierKeyDone = row.expedition_tier, bossName = tier.bossName;
+        const tierKeyDone = row.expedition_tier, bossName = tier.bossName, tierLabel = tier.label;
 
         await env.DB.batch([
           env.DB.prepare(
             "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
-            "expedition_bot_id=NULL, expedition_tier=NULL, expedition_ready_at=0 WHERE user_id=?"
+            "expedition_tier=NULL, expedition_ready_at=0 WHERE user_id=?"
           ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
-          env.DB.prepare("UPDATE arena_bots SET on_expedition=0 WHERE id=?").bind(botId),
+          env.DB.prepare("UPDATE arena_bots SET on_expedition=0 WHERE user_id=? AND on_expedition=1").bind(user.userId),
         ]);
-        await insertLog(env, user.userId, "expedition", null, tier.label + " — " + bossName, "success", coins, 0);
+        await insertLog(env, user.userId, "expedition", null, tierLabel + " — " + bossName, "success", coins, 0);
 
         const combat = await totalCombatStats(env, row);
         return json({
-          ok: true, tier: tierKeyDone, label: tier.label, bossName: bossName, botAtk: botAtk, power: tier.power,
+          ok: true, tier: tierKeyDone, label: tierLabel, bossName: bossName,
+          bots: mobilizedBots, avgAtk: avgAtk, power: tier.power,
           rewardMultPct: Math.round(rewardMult * 100), coinsGained: coins, xpGained: xpGain, leveledUp: leveledUp,
           state: publicState(row, combat),
         });

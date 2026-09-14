@@ -239,6 +239,7 @@
     // 주의: #globalEventBanner의 CSS 기본값이 display:none이라 ""로 지우면 그 기본값으로
     // 되돌아갈 뿐 안 보인다(.tab-panel/downedBanner와 똑같은 함정) — 반드시 "block"으로 명시.
     $("globalEventBanner").style.display = state.globalEventActive ? "block" : "none";
+    setText("globalEventName", state.globalEventName ? "[" + state.globalEventName + "] " : "");
     // 긴급 정지 배너 — 관리자가 켜면 모두에게(관리자 본인 포함) 즉시 보인다. 같은 함정이라 "block" 명시.
     $("economyFrozenBanner").style.display = state.economyFrozen ? "block" : "none";
     renderResourceEtas();
@@ -2517,25 +2518,26 @@
   }
 
   // ── 봇 원정(Dungeon Expedition) — "스태미나 없이도 얻는 경험치 수급처, 보스몹이 있는 곳으로
-  // 원하는 봇을 파견하는 던전 느낌" 요청 반영. 정찰 탐사선과 같은 "보내고-기다리고-수령"
-  // 패턴이지만 목적은 EXP다. 계정당 슬롯 1개라 진행 중이면 "떠나 있음" 카드만, 없으면 등급
-  // 선택 + 봇 선택 폼을 보여준다. 등급만 고르는 동작은 서버를 다시 안 불러도 되게
-  // expeditionData 캐시로 즉시 다시 그린다. ──
+  // 봇들이 총동원돼서 싸우는 게 보여지면 좋겠다" 요청 반영. 정찰 탐사선과 같은
+  // "보내고-기다리고-수령" 패턴이지만 목적은 EXP고, 파견하면 지금 놀고 있는 봇 전부가
+  // 자동으로 총동원된다(봇을 고르는 절차 자체가 없음). 수령 시에는 서버가 이미 확정한
+  // 결과를 "봇들이 한 마리씩 보스를 공격하는" 애니메이션으로 재생한다. ──
   let expeditionSelectedTier = null;
   let expeditionData = null;
 
   function expdCountdownText(ms) { return ms <= 0 ? "도착 완료" : fmtLongCountdown(ms); }
+  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
   function expeditionHtml(data) {
     if (data.active) {
-      const bot = data.bots.find((b) => b.id === data.active.botId);
       const ready = data.active.readyInMs <= 0;
+      const botCount = data.active.bots.length;
       return (
         '<div class="expd-active-card">' +
         '<div class="expd-active-boss">🗺️ ' + escapeHtml(data.active.label) + " — " + escapeHtml(data.active.bossName) + "</div>" +
-        '<p class="dim">파견한 봇: #' + data.active.botId + (bot ? " (ATK " + fmt(bot.atk) + ")" : "") + "</p>" +
+        '<p class="dim">총동원된 봇 ' + botCount + "마리(평균 ATK " + fmt(botCount ? Math.round(data.active.bots.reduce((s, b) => s + b.atk, 0) / botCount) : 0) + ")</p>" +
         '<div class="expd-active-timer' + (ready ? " ready" : "") + '" id="expeditionTimer">' + (ready ? "🎉 도착 완료!" : expdCountdownText(data.active.readyInMs)) + "</div>" +
-        '<button class="btn-primary" id="expeditionCollectBtn"' + (ready ? "" : " disabled") + ">" + (ready ? "수령하기" : "대기 중...") + "</button>" +
+        '<button class="btn-primary" id="expeditionCollectBtn"' + (ready ? "" : " disabled") + ">" + (ready ? "전투 개시" : "대기 중...") + "</button>" +
         '<p class="dim" style="margin-top:10px;">원정 중인 봇은 그동안 전투력 합산에서 빠져 있습니다.</p>' +
         "</div>"
       );
@@ -2557,19 +2559,17 @@
       );
     }).join("");
 
-    const eligibleBots = data.bots.filter((b) => !b.onExpedition);
-    const botOptions = eligibleBots.length
-      ? eligibleBots.map((b) => '<option value="' + b.id + '">봇 #' + b.id + " (ATK " + fmt(b.atk) + " · DEF " + fmt(b.def) + ")</option>").join("")
-      : '<option value="">파견 가능한 봇이 없습니다</option>';
-    const canLaunch = !!expeditionSelectedTier && eligibleBots.length > 0;
+    const canLaunch = !!expeditionSelectedTier && data.availableBotCount > 0;
+    const botSummary = data.availableBotCount > 0
+      ? '파견 가능한 봇 <b>' + data.availableBotCount + "마리</b>(평균 ATK " + fmt(data.avgAvailableAtk) + ") — 던전을 고르면 전부 총동원됩니다."
+      : '<span style="color:var(--danger);">파견 가능한 봇이 없습니다. Bots 탭에서 먼저 모집하세요.</span>';
 
     return (
       '<div class="expd-grid">' + tierCards + "</div>" +
       '<div class="expd-launch-panel">' +
-      '<div style="font-size:12px;color:var(--sub);margin-bottom:8px;">파견할 봇 선택</div>' +
-      '<select class="expd-bot-select" id="expeditionBotSelect">' + botOptions + "</select>" +
+      '<div style="font-size:12px;color:var(--sub);margin-bottom:10px;">' + botSummary + "</div>" +
       '<button class="btn-primary" id="expeditionLaunchBtn" style="width:100%;"' + (canLaunch ? "" : " disabled") + ">" +
-      (expeditionSelectedTier ? "파견하기" : "던전을 먼저 선택하세요") + "</button>" +
+      (expeditionSelectedTier ? "총동원 파견하기" : "던전을 먼저 선택하세요") + "</button>" +
       "</div>"
     );
   }
@@ -2593,13 +2593,11 @@
     const launchBtn = body.querySelector("#expeditionLaunchBtn");
     if (launchBtn) {
       launchBtn.addEventListener("click", async () => {
-        const botSelect = $("expeditionBotSelect");
-        const botId = botSelect ? parseInt(botSelect.value, 10) : NaN;
-        if (!expeditionSelectedTier || !Number.isInteger(botId)) return;
+        if (!expeditionSelectedTier) return;
         launchBtn.disabled = true;
         try {
-          const r = await api("/expedition/launch", { method: "POST", body: { tier: expeditionSelectedTier, botId: botId } });
-          toast("🗺️ " + escapeHtml(r.label) + " — " + escapeHtml(r.bossName) + "(으)로 봇을 파견했습니다!");
+          const r = await api("/expedition/launch", { method: "POST", body: { tier: expeditionSelectedTier } });
+          toast("🗺️ " + escapeHtml(r.label) + " — " + escapeHtml(r.bossName) + "(으)로 봇 " + r.botCount + "마리를 총동원 파견했습니다!");
           expeditionSelectedTier = null;
           renderExpeditionTab();
         } catch (e) { toast(e.message, true); launchBtn.disabled = false; }
@@ -2611,12 +2609,62 @@
         collectBtn.disabled = true;
         try {
           const r = await api("/expedition/collect", { method: "POST" });
-          toast("🎉 " + escapeHtml(r.bossName) + " 원정 완료! (배율 " + r.rewardMultPct + "%) +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
           state = r.state; renderHeader();
-          renderExpeditionTab();
+          await playExpeditionBattle(r);
         } catch (e) { toast(e.message, true); collectBtn.disabled = false; }
       });
     }
+  }
+
+  // ── 전투 연출 — 서버가 이미 확정한 결과(코인·XP·배율)를 "봇들이 한 마리씩 보스를 공격하는"
+  // 시퀀스로 재생한다. HP는 순수 연출용(항상 0까지 깎여 "클리어"로 끝남 — 실제 성패는 이미
+  // 배율(rewardMultPct)로 드러나 있음)이라 애니메이션 도중 탭을 벗어나거나 새로고침해도
+  // 보상이 어긋나지 않는다(각 단계에서 관련 DOM이 사라졌으면 조용히 멈춘다). ──
+  async function playExpeditionBattle(result) {
+    const body = $("expeditionBody");
+    if (!body) return;
+    const bots = result.bots && result.bots.length ? result.bots : [{ id: 0, atk: 0 }];
+    const totalAtk = bots.reduce((s, b) => s + b.atk, 0) || 1;
+    const maxHp = 1000;
+    let hp = maxHp;
+    body.innerHTML =
+      '<div class="expd-battle">' +
+      '<div class="expd-battle-boss">🗡️ ' + escapeHtml(result.label) + " — " + escapeHtml(result.bossName) + "</div>" +
+      raidBossSvgHtml(result.bossName, 1).replace(/bossGlow/g, "expdBossGlow") +
+      '<div class="wr-hp-track"><div class="wr-hp-fill" id="expdBattleHpFill" style="width:100%;"></div>' +
+      '<span class="wr-hp-text" id="expdBattleHpText">' + fmt(maxHp) + " / " + fmt(maxHp) + "</span></div>" +
+      '<div class="expd-battle-log" id="expdBattleLog"></div>' +
+      "</div>";
+    const perBotDelay = Math.max(120, Math.min(500, Math.round(3500 / bots.length)));
+    for (let i = 0; i < bots.length; i++) {
+      const log = $("expdBattleLog");
+      if (!log) return; // 탭을 벗어났으면 조용히 중단
+      const b = bots[i];
+      const dmg = Math.round(maxHp * (b.atk / totalAtk));
+      hp = Math.max(0, hp - dmg);
+      const line = document.createElement("div");
+      line.className = "expd-battle-log-line";
+      line.textContent = "🤖 봇 #" + b.id + " 공격 -" + fmt(dmg) + " (ATK " + fmt(b.atk) + ")";
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+      const fill = $("expdBattleHpFill"), text = $("expdBattleHpText");
+      if (fill) fill.style.width = Math.max(0, (hp / maxHp) * 100) + "%";
+      if (text) text.textContent = fmt(hp) + " / " + fmt(maxHp);
+      await sleep(perBotDelay);
+    }
+    await sleep(400);
+    const resultBody = $("expeditionBody");
+    if (!resultBody) return;
+    resultBody.innerHTML =
+      '<div class="expd-battle expd-battle-result">' +
+      '<div class="expd-battle-boss">🎉 ' + escapeHtml(result.label) + " 클리어!</div>" +
+      '<p class="dim" style="margin:10px 0;">평균 봇 ATK ' + fmt(result.avgAtk) + " · 보스 난이도 " + fmt(result.power) + " · 배율 " + result.rewardMultPct + "%</p>" +
+      '<div style="font-size:22px;font-weight:bold;color:var(--stamina);margin-bottom:6px;">+' + fmt(result.coinsGained) + " 코인</div>" +
+      '<div style="font-size:14px;color:var(--sub);">EXP +' + fmt(result.xpGained) + (result.leveledUp ? " · 🎉 LEVEL UP!" : "") + "</div>" +
+      '<button class="btn-primary" id="expeditionBattleDoneBtn" style="margin-top:16px;">확인</button>' +
+      "</div>";
+    const doneBtn = $("expeditionBattleDoneBtn");
+    if (doneBtn) doneBtn.addEventListener("click", () => renderExpeditionTab());
   }
 
   async function renderExpeditionTab() {
@@ -2643,13 +2691,13 @@
     el.textContent = ready ? "🎉 도착 완료!" : expdCountdownText(expeditionData.active.readyInMs);
     el.classList.toggle("ready", ready);
     const btn = $("expeditionCollectBtn");
-    if (btn && ready && btn.disabled) { btn.disabled = false; btn.textContent = "수령하기"; }
+    if (btn && ready && btn.disabled) { btn.disabled = false; btn.textContent = "전투 개시"; }
   }, 1000);
   // 오랜 시간 켜뒀을 때를 대비한 정기 재조회(30초) — 로컬 카운트다운만으론 서버와 약간씩
-  // 어긋날 수 있어서 주기적으로 맞춰준다.
+  // 어긋날 수 있어서 주기적으로 맞춰준다. 전투 연출이 재생 중일 때는 건드리지 않는다.
   let expeditionRefreshInFlight = false;
   setInterval(() => {
-    if (currentTab !== "expedition" || expeditionRefreshInFlight) return;
+    if (currentTab !== "expedition" || expeditionRefreshInFlight || $("expdBattleLog")) return;
     expeditionRefreshInFlight = true;
     Promise.resolve(renderExpeditionTab()).finally(() => { expeditionRefreshInFlight = false; });
   }, 30000);
@@ -2819,6 +2867,13 @@
     "블랙홀 하이퍼바이저": { c1: "#7c4dff", c2: "#12003d" },
     "넥서스 아포칼립스": { c1: "#d500f9", c2: "#2e003d" },
     "종말의 데몬 커널": { c1: "#ff1744", c2: "#4a0010" },
+    // 봇 원정(Dungeon Expedition) 보스 — 던전 등급 순서대로 점점 더 위협적인 색으로.
+    "고장난 감시 드론": { c1: "#8fa3ad", c2: "#1a2226" },
+    "타워 방화벽 코어": { c1: "#00d4ff", c2: "#0a2a3d" },
+    "그림자 브로커": { c1: "#b060e8", c2: "#2a0e3a" },
+    "블랙옵스 AI": { c1: "#ff3d3d", c2: "#3a0a0a" },
+    "심연의 파수꾼": { c1: "#7c4dff", c2: "#150a3a" },
+    "종말의 실험체": { c1: "#ffb020", c2: "#4a2400" },
   };
   function raidBossSvgHtml(bossName, hpPct) {
     const theme = RAID_BOSS_THEMES[bossName] || { c1: "#ff3d68", c2: "#3a0a1a" };
