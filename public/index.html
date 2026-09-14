@@ -573,6 +573,24 @@
     .wr-layout { grid-template-columns: 1fr; }
     .wr-boss-art svg { width: 140px; height: 140px; }
   }
+  /* 봇 원정(Dungeon Expedition) — 던전 등급 카드 그리드 + 봇 선택/파견 패널, 원정 중이면
+     대신 "떠나 있음" 카드 하나로 바뀐다. 접두사는 expd-(eXPeDition)로, 기존 경험치 바
+     클래스인 .exp-track/.exp-fill과 겹치지 않게 뒀다. */
+  .expd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .expd-tier-card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--cyan); padding: 12px; cursor: pointer; transition: border-color 0.12s ease, background 0.12s ease; }
+  .expd-tier-card:hover { border-color: var(--cyan); background: var(--surface-2); }
+  .expd-tier-card.selected { border-color: var(--accent); border-left-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 12px rgba(0,255,157,0.08); }
+  .expd-tier-card.locked { opacity: 0.5; cursor: not-allowed; }
+  .expd-tier-title { font-weight: bold; font-size: 13px; margin-bottom: 2px; }
+  .expd-tier-boss { font-size: 11px; color: var(--danger); margin-bottom: 8px; }
+  .expd-tier-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--sub); margin-bottom: 3px; }
+  .expd-tier-row b { color: var(--text); }
+  .expd-launch-panel { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
+  .expd-bot-select { width: 100%; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-family: inherit; padding: 8px; margin-bottom: 10px; }
+  .expd-active-card { background: radial-gradient(120% 80% at 50% 0%, rgba(0,212,255,0.12), transparent 60%), var(--surface); border: 1px solid rgba(0,212,255,0.4); padding: 20px; text-align: center; }
+  .expd-active-boss { font-size: 15px; font-weight: bold; color: var(--cyan); margin-bottom: 4px; }
+  .expd-active-timer { font-size: 26px; font-weight: bold; margin: 14px 0; }
+  .expd-active-timer.ready { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
   /* 빠른 금액 버튼 줄 — 원래 증권거래소용이었지만 슬롯머신 배팅 버튼이 같이 쓰고 있어서 남겨 둔다. */
   /* 수량 입력 + 버튼 한 줄 폼 — 증권거래소는 폐지됐지만 환생 상점 환전소가 같은 폼을 쓰고 있어서 남겨 둔다. */
   .stock-form { display: flex; gap: 6px; margin-top: 8px; }
@@ -951,6 +969,7 @@
       <button class="side-tab" data-tab="pvp"><span class="side-tab-icon"></span>Arena P2P</button>
       <button class="side-tab" data-tab="worldraid"><span class="side-tab-icon"></span>World Raid</button>
       <button class="side-tab" data-tab="bounty"><span class="side-tab-icon"></span>Bounty Board</button>
+      <button class="side-tab" data-tab="expedition"><span class="side-tab-icon"></span>Expedition</button>
       <div class="side-section-label">경제</div>
       <button class="side-tab" data-tab="shop"><span class="side-tab-icon"></span>Hardware Shop</button>
       <button class="side-tab" data-tab="bots"><span class="side-tab-icon"></span>Bots</button>
@@ -1048,6 +1067,12 @@
         <p class="panel-title">📋 BOUNTY BOARD</p>
         <p class="dim" style="margin-bottom:14px;">8시간마다 새로운 현상금 5개 등장 · 다음 갱신까지 <b id="bountyRefreshCountdown">-</b></p>
         <div class="achievement-grid" id="bountyGrid"><p class="dim">불러오는 중...</p></div>
+      </div>
+
+      <div class="tab-panel" id="panel-expedition">
+        <p class="panel-title">🗺️ DUNGEON EXPEDITION</p>
+        <p class="dim" style="margin-bottom:14px;">에너지·스태미나 없이 봇 하나를 던전으로 파견합니다. 파견 중인 봇은 그동안 전투력 합산에서 빠지고, 도착하면 그 봇의 장비가 강할수록 더 많은 코인·경험치를 받습니다(운으로 완전히 실패하지는 않습니다).</p>
+        <div id="expeditionBody"><p class="dim">불러오는 중...</p></div>
       </div>
 
       <div class="tab-panel" id="panel-shop">

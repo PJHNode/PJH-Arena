@@ -1171,6 +1171,41 @@ async function settleWorldRaid(env, raid) {
   return { coinPool: coinPool, participants: summary };
 }
 
+// ══════════════════════════════════════════════════════════
+//  봇 원정(Dungeon Expedition) — "스태미나 없이도 얻을 수 있는 경험치 수급처, 보스몹이 있는
+//  곳으로 원하는 봇을 파견하는 던전 느낌" 요청 반영. 정찰 탐사선(Probe)과 완전히 같은
+//  "보내고 - 기다리고 - 수령" 패턴을 재사용하되, 목적이 정찰이 아니라 그 자리에서 가상의
+//  보스와 겨뤄 EXP를 버는 것이다.
+//
+//  · 자원(에너지·스태미나) 전혀 안 씀 — 계정당 원정 슬롯 1개, 캐릭터 레벨로만 등급이 풀린다
+//    (신호 감청과 같은 "무자원 수입원" 계열이지만, 신호 감청과 달리 xpPct 방식이라 레벨이
+//    아무리 올라가도 항상 nextExpFor의 일정 비율을 유지한다 — 신호 감청의 고정 XP가 최근
+//    경험치 곡선 개편 이후 고레벨에서 사실상 무의미해진 것과 같은 문제를 여기선 피한다).
+//  · 원정 중인 봇은 그동안 totalCombatStats에서 빠진다(PvP/레이드 등 실전 전투력이 그만큼
+//    줄어든다) — "공짜 경험치"가 아니라 "내 최고 봇을 한동안 못 쓰는" 진짜 트레이드오프를
+//    만든다(이 세션 내내 지켜온 "공짜 이득 없음" 원칙과 일치).
+//  · 보상 배율은 동전 던지기가 아니라 그 봇의 ATK 대 보스 난이도(power) 비율로 정해지는
+//    연속값(0.4~1.3배)이다 — 짧으면 15분, 길면 16시간을 기다리는 콘텐츠라 그 끝에 운으로
+//    완전히 실패하는 경험을 주고 싶지 않았다. 장비가 좋을수록 배율이 오르되 완전히 밑돌아도
+//    최소 40%는 보장한다.
+// ══════════════════════════════════════════════════════════
+const DUNGEON_TIERS = {
+  server_room:    { label: "폐기된 서버실",    bossName: "고장난 감시 드론", minLevel: 1,   durationMs: 15 * 60 * 1000,   power: 40,    xpPct: 0.008, coinMin: 400,     coinMax: 700 },
+  datacenter:     { label: "지하 데이터센터",  bossName: "타워 방화벽 코어", minLevel: 15,  durationMs: 45 * 60 * 1000,   power: 220,   xpPct: 0.016, coinMin: 3000,    coinMax: 5000 },
+  blackmarket:    { label: "블랙마켓 은신처",  bossName: "그림자 브로커",   minLevel: 35,  durationMs: 2 * 3600 * 1000,  power: 900,   xpPct: 0.026, coinMin: 15000,   coinMax: 25000 },
+  blacksite:      { label: "정부 블랙사이트",  bossName: "블랙옵스 AI",    minLevel: 60,  durationMs: 4 * 3600 * 1000,  power: 3200,  xpPct: 0.036, coinMin: 60000,   coinMax: 100000 },
+  abyss_facility: { label: "심연의 코어 시설", bossName: "심연의 파수꾼",   minLevel: 100, durationMs: 8 * 3600 * 1000,  power: 12000, xpPct: 0.05,  coinMin: 250000,  coinMax: 400000 },
+  apocalypse_lab: { label: "종말 연구소",      bossName: "종말의 실험체",   minLevel: 200, durationMs: 16 * 3600 * 1000, power: 45000, xpPct: 0.07,  coinMin: 1200000, coinMax: 2000000 },
+};
+const DUNGEON_TIER_ORDER = ["server_room", "datacenter", "blackmarket", "blacksite", "abyss_facility", "apocalypse_lab"];
+function dungeonUnlockedTiers(level) { return DUNGEON_TIER_ORDER.filter(function (k) { return (level || 1) >= DUNGEON_TIERS[k].minLevel; }); }
+// 봇 ATK 대 보스 power 비율 → 0.4~1.3배 사이 연속 배율(코인·XP 둘 다 이 배율로 스케일).
+// 비율 1.0(딱 맞먹음)이면 100%, 0이면 최소 40%, 2배 이상이면 상한 130%.
+function dungeonRewardMult(botAtk, power) {
+  const ratio = Math.max(0, botAtk || 0) / Math.max(1, power);
+  return clamp(0.4 + 0.6 * ratio, 0.4, 1.3);
+}
+
 async function clubIdOf(env, userId) {
   const row = await env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(userId).first();
   return row ? row.club_id : null;
@@ -1481,13 +1516,13 @@ const PLANET_NEARBY_RESTRICTED_TIERS = ["apex", "transcendent"];
 // 슬롯을 "먼 곳인데 제한 등급이 아닌" 슬롯과 맞바꾼다 — 등급별 전체 개수(48개 구성비)는
 // 그대로 유지하면서 위치만 재배치하는 것이라 보장 개수 자체는 안 깨진다. 좌표 정보가 없으면
 // (호출부가 안 넘기면) 그냥 원래 셔플 결과를 쓴다 — 하위 호환.
-function buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords) {
+function buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords, nonce) {
   const deck = [];
   for (const key in PLANET_TIER_GUARANTEED_COUNTS) {
     for (let i = 0; i < PLANET_TIER_GUARANTEED_COUNTS[key]; i++) deck.push(key);
   }
   const bucket = planetRerollBucket(nowMs);
-  const rng = mulberry32((hashSeedFromString(String(userId)) ^ bucket) | 0);
+  const rng = mulberry32((hashSeedFromString(String(userId) + ":" + (nonce || 0)) ^ bucket) | 0);
   for (let i = deck.length - 1; i > 0; i--) { // Fisher-Yates
     const j = Math.floor(rng() * (i + 1));
     const tmp = deck[i]; deck[i] = deck[j]; deck[j] = tmp;
@@ -1508,8 +1543,8 @@ function buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords) {
   }
   return deck;
 }
-function effectivePlanetTier(userId, slotIndex, nowMs, homeXY, slotCoords) {
-  const deck = buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords);
+function effectivePlanetTier(userId, slotIndex, nowMs, homeXY, slotCoords, nonce) {
+  const deck = buildPersonalPlanetDeck(userId, nowMs, homeXY, slotCoords, nonce);
   return deck[slotIndex % deck.length];
 }
 // effectivePlanetTier를 "근처 제한 등급" 반영해서 정확히 판정하려면 내 홈 좌표 + 48슬롯
@@ -2226,6 +2261,18 @@ async function ensureSchema(env) {
   // 환불한다(다른 스탯에 원하는 대로 다시 쓸 수 있음). stat_cost_curve_migrated=0인 행에만
   // 1회 적용되고, 끝나면 1로 표시해서 재실행(콜드스타트마다)돼도 다시 안 건드린다.
   try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN stat_cost_curve_migrated INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 은하 지도 개인 리롤 — "모든 근처 행성을 다 이겨서 더 공격할 게 없으면 다음 글로벌
+  // 리롤(10시간)을 기다리지 않고 그 자리에서 이 유저만 다시 섞는다" 요청 반영. 이 값을
+  // 올릴 때마다 buildPersonalPlanetDeck의 셔플 시드가 바뀌어 그 유저의 48슬롯 배치 전체가
+  // 새로 섞인다(다른 유저에게는 영향 없음 — 각자 독립적으로 섞이는 덱이므로).
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN planet_reroll_nonce INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  // 봇 원정(Dungeon Expedition) — 계정당 원정 슬롯 1개(정찰 탐사선과 동일한 설계). 어느 봇을
+  // 보냈는지(expedition_bot_id)까지 같이 저장해서, 수령/조회 시 그 봇의 실제 장비 스탯으로
+  // 보상 배율을 계산한다.
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_bot_id INTEGER"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_tier TEXT"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_users ADD COLUMN expedition_ready_at INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
+  try { await env.DB.exec("ALTER TABLE arena_bots ADD COLUMN on_expedition INTEGER NOT NULL DEFAULT 0"); } catch (e) {}
   try {
     const pending = await env.DB.prepare(
       "SELECT user_id, hp, max_hp, energy, max_energy, stamina, max_stamina, stat_points FROM arena_users WHERE stat_cost_curve_migrated = 0"
@@ -2468,6 +2515,15 @@ function equipStats(unit, enchantMap, maxLevel) {
   };
 }
 
+// 환생 등급 보너스(회당 ATK/DEF +1%, 최대 250회) + 환생 상점 코어 배율을 합친 곱연산 배율 —
+// 실전 전투(totalCombatStats)와 봇 원정 결과 계산(아래 DUNGEON) 양쪽에서 재사용한다.
+function rebirthCombatMult(row) {
+  const rebirthMult = 1 + Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT;
+  const shopBoostSet = rebirthShopOwnedSet(row);
+  const statBoostMult = (shopBoostSet.has("rebirth_core_overclock") ? 1.03 : 1) * (shopBoostSet.has("rebirth_core_singularity") ? 1.05 : 1);
+  return rebirthMult * statBoostMult;
+}
+
 async function totalCombatStats(env, row) {
   // 이 유저 소유의 모든 장비(본인 + 봇)가 같은 인챈트 표를 공유하므로 한 번만 불러온다.
   const enchantMap = await loadEnchantMap(env, row.user_id);
@@ -2477,28 +2533,20 @@ async function totalCombatStats(env, row) {
   let atk = baseAtkFor(row.level) + self.atk;
   let def = baseDefFor(row.level) + self.def;
   let crit = BASE_CRIT_PCT + self.crit;
-  // 경비병으로 행성에 배치된 봇(stationed_planet_id 있음)은 여기서 뺀다 — 봇 구역/사람 구역
-  // 개편으로 이제 배치 대상 자체가 없어서 사실상 항상 비어있지만, 혹시 남아있는 데이터를
-  // 대비해 안전하게 계속 걸러낸다.
+  // 경비병으로 행성에 배치된 봇(stationed_planet_id 있음)과 원정 중인 봇(on_expedition=1)은
+  // 여기서 뺀다 — 원정 보낸 봇은 그동안 "내 최고 봇을 못 쓰는" 진짜 트레이드오프가 되도록.
   const botsRes = await env.DB.prepare(
     "SELECT equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity " +
-    "FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL"
+    "FROM arena_bots WHERE user_id = ? AND stationed_planet_id IS NULL AND on_expedition = 0"
   ).bind(row.user_id).all();
   const bots = botsRes.results;
   for (const b of bots) {
     const bs = equipStats(b, enchantMap, maxLevel);
     atk += bs.atk; def += bs.def; crit += bs.crit;
   }
-  // 환생 보너스 — 회당 ATK/DEF +1%(치명타는 제외), 최대 10회(+10%)에서 상한. 봇까지 합산한
-  // 총 전투력에 곱해서 "전체적으로 조금 더 강해짐"이 되게 한다(사기 방지를 위해 작고 상한 있게).
-  const rebirthMult = 1 + Math.min(row.rebirth_count || 0, REBIRTH_BONUS_MAX_COUNT) * REBIRTH_BONUS_PER_COUNT;
-  // 환생 상점의 "환생 코어 오버클럭"(1회 구매, 중복 불가) — 위 환생 등급 보너스와는 별개로
-  // 딱 +3%만 추가 곱연산. 중복 구매가 안 되니 인플레 걱정 없이 고정값으로 둔다.
-  // 환생 코어 2종은 곱연산으로 중복 적용된다(오버클럭 +3%, 특이점 +5% → 둘 다 사면 x1.0815).
-  const shopBoostSet = rebirthShopOwnedSet(row);
-  const statBoostMult = (shopBoostSet.has("rebirth_core_overclock") ? 1.03 : 1) * (shopBoostSet.has("rebirth_core_singularity") ? 1.05 : 1);
-  atk = Math.round(atk * rebirthMult * statBoostMult);
-  def = Math.round(def * rebirthMult * statBoostMult);
+  const combatMult = rebirthCombatMult(row);
+  atk = Math.round(atk * combatMult);
+  def = Math.round(def * combatMult);
   return { atk: atk, def: def, crit: crit, botCount: bots.length };
 }
 
@@ -2722,7 +2770,7 @@ async function resolvePlanetCombat(env, user, attacker, planet, stanceId, timing
 
   if (isBotPlanet) {
     const nearbyCtx = await planetNearbyContext(env, user.userId);
-    effectiveTierKey = effectivePlanetTier(user.userId, planet.slot_index, now, nearbyCtx.homeXY, nearbyCtx.slotCoords);
+    effectiveTierKey = effectivePlanetTier(user.userId, planet.slot_index, now, nearbyCtx.homeXY, nearbyCtx.slotCoords, attacker.planet_reroll_nonce || 0);
     const t = PLANET_BOT_TIERS[effectiveTierKey];
     defenderCombat = { atk: t.atk, def: t.def, crit: t.crit };
   } else {
@@ -5186,8 +5234,24 @@ export default {
         const rerollBucket = planetRerollBucket(now);
         const nextRerollAt = (rerollBucket + 1) * PLANET_REROLL_MS;
         const res = await env.DB.prepare("SELECT * FROM arena_planets WHERE is_home = 0 OR owner_user_id = ? ORDER BY is_home DESC, slot_index ASC").bind(user.userId).all();
-        const clearedIds = await clearedPlanetIds(env, user.userId, rerollBucket);
+        let clearedIds = await clearedPlanetIds(env, user.userId, rerollBucket);
         const meRow = await loadOrCreateUser(env, user.userId, user.realName);
+        let planetNonce = meRow.planet_reroll_nonce || 0;
+        // 개인 리롤 판정 — 근처(공격 가능 반경) 봇 행성이 하나라도 있는데 전부 이겼다면,
+        // 이 유저만 그 자리에서 다시 섞는다. 다른 유저의 화면/좌표/이름에는 전혀 영향 없다.
+        let rerolled = false;
+        const nearbyNonHomeIds = res.results.filter(function (p) {
+          return !p.is_home && planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS;
+        }).map(function (p) { return p.id; });
+        if (nearbyNonHomeIds.length > 0 && nearbyNonHomeIds.every(function (id) { return clearedIds.has(id); })) {
+          planetNonce += 1;
+          await env.DB.batch([
+            env.DB.prepare("UPDATE arena_users SET planet_reroll_nonce = ? WHERE user_id = ?").bind(planetNonce, user.userId),
+            env.DB.prepare("DELETE FROM arena_planet_clears WHERE user_id = ? AND bucket = ?").bind(user.userId, rerollBucket),
+          ]);
+          clearedIds = new Set();
+          rerolled = true;
+        }
         const myCombat = await totalCombatStats(env, meRow);
         // 근처 제한 등급(극한/초월) 판정에 필요한 좌표표 — 이미 위 쿼리로 48슬롯 좌표를 전부
         // 갖고 있으니 다시 조회하지 않고 여기서 바로 만든다.
@@ -5208,7 +5272,7 @@ export default {
           // 표시했었다)를 쓰지 않는다(요청 반영: "그냥 보상이니까 이렇게 쓰지마").
           let tierKey = null, combatStats = null, rewardCoins = 0, homeInvulnerable = false;
           if (!p.is_home) {
-            tierKey = effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier);
+            tierKey = effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier, planetNonce);
             const t = PLANET_BOT_TIERS[tierKey];
             combatStats = { atk: t.atk, def: t.def, crit: t.crit };
             rewardCoins = Math.round(t.coinsPerHour * 0.5);
@@ -5243,7 +5307,7 @@ export default {
         };
         return json({
           planets: planets, stances: STANCES,
-          nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS, attackStaminaCost: PLANET_ATTACK_STAMINA_COST,
+          nextRerollAt: nextRerollAt, rerollMs: PLANET_REROLL_MS, attackStaminaCost: PLANET_ATTACK_STAMINA_COST, rerolled: rerolled,
           homeInvulnerableLevel: HOME_PLANET_INVULNERABLE_UNTIL_LEVEL,
           nearbyRadius: PLANET_NEARBY_RADIUS, galaxySize: PLANET_GALAXY_SIZE,
           myHome: { x: myHome.x, y: myHome.y },
@@ -5301,7 +5365,7 @@ export default {
         allSlots.results.forEach(function (p) { slotCoordsForTier[p.slot_index] = { x: p.x, y: p.y }; });
         const matches = [];
         for (const p of allSlots.results) {
-          if (effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier) !== targetTier) continue;
+          if (effectivePlanetTier(user.userId, p.slot_index, now, myHome, slotCoordsForTier, row.planet_reroll_nonce || 0) !== targetTier) continue;
           if (myHome && planetDistance(p.x, p.y, myHome.x, myHome.y) <= PLANET_NEARBY_RADIUS) continue; // 이미 그냥 보이는 건 패스
           if (clearedIds.has(p.id)) continue; // 이번 리롤 구간에 이미 이긴 행성은 다시 찾아오지 않는다
           matches.push(p);
@@ -5497,6 +5561,105 @@ export default {
           myAtk: result.attackerCombat.atk, theirDef: Math.round(result.defenderCombat.def * result.defenderDefMult), theirStanceDefMult: result.defenderDefMult, stanceLabel: stance.label,
           isCrit: result.isCrit, myCrit: { chancePct: result.attackerCrit.chancePct, mult: result.attackerCrit.mult }, hpLost: result.attackerHpLoss,
           state: publicState(attacker, combat),
+        });
+      }
+
+      // ── GET /expedition — 해금된 던전 등급, 원정 보낼 수 있는 내 봇 목록(원정 중인 봇은
+      //    already-away로 표시), 지금 진행 중인 원정(있다면 남은 시간)을 내려준다. ──
+      if (request.method === "GET" && path === "/expedition") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const enchantMap = await loadEnchantMap(env, user.userId);
+        const maxLevel = enchantMaxLevelFor(row);
+        const botsRes = await env.DB.prepare(
+          "SELECT id, equipped_weapon, equipped_armor, equipped_core, gacha_weapon_rarity, gacha_armor_rarity, gacha_core_rarity, on_expedition, gacha_rarity " +
+          "FROM arena_bots WHERE user_id = ? ORDER BY id"
+        ).bind(user.userId).all();
+        const bots = botsRes.results.map(function (b) {
+          const stats = equipStats(b, enchantMap, maxLevel);
+          return { id: b.id, atk: stats.atk, def: stats.def, crit: stats.crit, onExpedition: !!b.on_expedition, gachaRarity: b.gacha_rarity || null };
+        });
+        let active = null;
+        if (row.expedition_tier && DUNGEON_TIERS[row.expedition_tier]) {
+          const tier = DUNGEON_TIERS[row.expedition_tier];
+          active = {
+            tier: row.expedition_tier, label: tier.label, bossName: tier.bossName,
+            botId: row.expedition_bot_id, readyAt: row.expedition_ready_at,
+            readyInMs: Math.max(0, row.expedition_ready_at - Date.now()),
+          };
+        }
+        const tiers = DUNGEON_TIER_ORDER.map(function (key) {
+          const t = DUNGEON_TIERS[key];
+          return { key: key, label: t.label, bossName: t.bossName, minLevel: t.minLevel, durationMs: t.durationMs, power: t.power, xpPct: t.xpPct, coinMin: t.coinMin, coinMax: t.coinMax };
+        });
+        return json({ tiers: tiers, unlockedTiers: dungeonUnlockedTiers(row.level), bots: bots, active: active });
+      }
+
+      // ── POST /expedition/launch { botId, tier } — 계정당 슬롯 1개, 자원 소모 없음. 원정
+      //    보낸 봇은 즉시 on_expedition=1이 되어 그 순간부터 totalCombatStats에서 빠진다. ──
+      if (request.method === "POST" && path === "/expedition/launch") {
+        const body = await request.json().catch(function () { return {}; });
+        const tierKey = String(body.tier || "");
+        const tier = DUNGEON_TIERS[tierKey];
+        if (!tier) return json({ error: "알 수 없는 던전입니다." }, 400);
+        const botId = parseInt(body.botId, 10);
+        if (!Number.isInteger(botId)) return json({ error: "파견할 봇을 선택하세요." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        if (row.level < tier.minLevel) return json({ error: "레벨이 부족합니다. (필요 Lv." + tier.minLevel + ")" }, 400);
+        if (row.expedition_tier) return json({ error: "이미 원정 중인 봇이 있습니다. 먼저 수령하세요." }, 400);
+
+        const bot = await env.DB.prepare("SELECT id, on_expedition FROM arena_bots WHERE id = ? AND user_id = ?").bind(botId, user.userId).first();
+        if (!bot) return json({ error: "봇을 찾을 수 없습니다." }, 404);
+        if (bot.on_expedition) return json({ error: "이미 원정 중인 봇입니다." }, 400);
+
+        const readyAt = Date.now() + tier.durationMs;
+        await env.DB.batch([
+          env.DB.prepare("UPDATE arena_users SET expedition_bot_id=?, expedition_tier=?, expedition_ready_at=? WHERE user_id=?")
+            .bind(botId, tierKey, readyAt, user.userId),
+          env.DB.prepare("UPDATE arena_bots SET on_expedition=1 WHERE id=?").bind(botId),
+        ]);
+        return json({ ok: true, tier: tierKey, label: tier.label, bossName: tier.bossName, botId: botId, readyAt: readyAt });
+      }
+
+      // ── POST /expedition/collect — 도착 후 그 봇의 실제 장비 ATK로 보스 power와 비교해
+      //    보상 배율(0.4~1.3배)을 정하고 코인·XP를 지급한다. 배율은 동전 던지기가 아니라
+      //    연속값이라 오래 기다린 콘텐츠가 순수 운으로 완전히 허탕나는 일은 없다. ──
+      if (request.method === "POST" && path === "/expedition/collect") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const tier = DUNGEON_TIERS[row.expedition_tier];
+        if (!tier) return json({ error: "진행 중인 원정이 없습니다." }, 400);
+        if (Date.now() < row.expedition_ready_at) {
+          return json({ error: "아직 도착하지 않았습니다. (" + Math.ceil((row.expedition_ready_at - Date.now()) / 1000) + "초 남음)" }, 400);
+        }
+        const botId = row.expedition_bot_id;
+        const bot = await env.DB.prepare("SELECT * FROM arena_bots WHERE id = ?").bind(botId).first();
+        const enchantMap = await loadEnchantMap(env, user.userId);
+        const maxLevel = enchantMaxLevelFor(row);
+        const botStats = bot ? equipStats(bot, enchantMap, maxLevel) : { atk: 0, def: 0, crit: 0 };
+        const botAtk = Math.round(botStats.atk * rebirthCombatMult(row));
+        const rewardMult = dungeonRewardMult(botAtk, tier.power);
+        const eventMult = globalEventMult();
+        const coins = Math.round(randInt(tier.coinMin, tier.coinMax) * rewardMult * eventMult);
+        const xpGain = Math.round(xpPct(row, tier.xpPct * rewardMult) * eventMult);
+
+        row.pocket_coins += coins;
+        const leveledUp = applyXpAndLevel(row, xpGain);
+        const tierKeyDone = row.expedition_tier, bossName = tier.bossName;
+
+        await env.DB.batch([
+          env.DB.prepare(
+            "UPDATE arena_users SET pocket_coins=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=?, " +
+            "expedition_bot_id=NULL, expedition_tier=NULL, expedition_ready_at=0 WHERE user_id=?"
+          ).bind(row.pocket_coins, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
+          env.DB.prepare("UPDATE arena_bots SET on_expedition=0 WHERE id=?").bind(botId),
+        ]);
+        await insertLog(env, user.userId, "expedition", null, tier.label + " — " + bossName, "success", coins, 0);
+
+        const combat = await totalCombatStats(env, row);
+        return json({
+          ok: true, tier: tierKeyDone, label: tier.label, bossName: bossName, botAtk: botAtk, power: tier.power,
+          rewardMultPct: Math.round(rewardMult * 100), coinsGained: coins, xpGained: xpGain, leveledUp: leveledUp,
+          state: publicState(row, combat),
         });
       }
 

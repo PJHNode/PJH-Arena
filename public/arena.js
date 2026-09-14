@@ -356,6 +356,7 @@
     enchant: renderEnchantTab,
     rebirthshop: renderRebirthShopTab,
     bounty: renderBountyTab,
+    expedition: renderExpeditionTab,
     trade: renderTradeTab,
     club: renderClubTab,
     profile: renderProfileTab,
@@ -713,6 +714,10 @@
         galaxyTargetsCache = targetsData ? targetsData.targets : [];
         const status = $("galaxyStarmapStatus");
         if (status) status.remove();
+        // 근처 행성을 전부 정복해서 서버가 그 자리에서 개인 리롤을 돌렸을 때만 한 번 알려준다
+        // (요청 반영: "모든 행성을 공격해서 없어지면 다시 리롤되도록") — 그 즉시 clears가
+        // 비워지므로 이 플래그는 리롤이 실제로 일어난 응답에서만 true로 온다.
+        if (planetsData.rerolled) toast("🌌 근처 행성을 모두 정복했습니다! 새로운 배치로 재배열됩니다.");
       } catch (e) {
         const status = $("galaxyStarmapStatus");
         if (status) status.textContent = e.message;
@@ -2510,6 +2515,144 @@
       });
     } catch (e) { grid.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>"; }
   }
+
+  // ── 봇 원정(Dungeon Expedition) — "스태미나 없이도 얻는 경험치 수급처, 보스몹이 있는 곳으로
+  // 원하는 봇을 파견하는 던전 느낌" 요청 반영. 정찰 탐사선과 같은 "보내고-기다리고-수령"
+  // 패턴이지만 목적은 EXP다. 계정당 슬롯 1개라 진행 중이면 "떠나 있음" 카드만, 없으면 등급
+  // 선택 + 봇 선택 폼을 보여준다. 등급만 고르는 동작은 서버를 다시 안 불러도 되게
+  // expeditionData 캐시로 즉시 다시 그린다. ──
+  let expeditionSelectedTier = null;
+  let expeditionData = null;
+
+  function expdCountdownText(ms) { return ms <= 0 ? "도착 완료" : fmtLongCountdown(ms); }
+
+  function expeditionHtml(data) {
+    if (data.active) {
+      const bot = data.bots.find((b) => b.id === data.active.botId);
+      const ready = data.active.readyInMs <= 0;
+      return (
+        '<div class="expd-active-card">' +
+        '<div class="expd-active-boss">🗺️ ' + escapeHtml(data.active.label) + " — " + escapeHtml(data.active.bossName) + "</div>" +
+        '<p class="dim">파견한 봇: #' + data.active.botId + (bot ? " (ATK " + fmt(bot.atk) + ")" : "") + "</p>" +
+        '<div class="expd-active-timer' + (ready ? " ready" : "") + '" id="expeditionTimer">' + (ready ? "🎉 도착 완료!" : expdCountdownText(data.active.readyInMs)) + "</div>" +
+        '<button class="btn-primary" id="expeditionCollectBtn"' + (ready ? "" : " disabled") + ">" + (ready ? "수령하기" : "대기 중...") + "</button>" +
+        '<p class="dim" style="margin-top:10px;">원정 중인 봇은 그동안 전투력 합산에서 빠져 있습니다.</p>' +
+        "</div>"
+      );
+    }
+
+    const tierCards = data.tiers.map((t) => {
+      const locked = !data.unlockedTiers.includes(t.key);
+      const selected = expeditionSelectedTier === t.key;
+      return (
+        '<div class="expd-tier-card' + (locked ? " locked" : selected ? " selected" : "") + '"' + (locked ? "" : ' data-select-tier="' + t.key + '"') + ">" +
+        '<div class="expd-tier-title">' + escapeHtml(t.label) + "</div>" +
+        '<div class="expd-tier-boss">🗡️ ' + escapeHtml(t.bossName) + "</div>" +
+        '<div class="expd-tier-row"><span>필요 레벨</span><b>' + t.minLevel + "</b></div>" +
+        '<div class="expd-tier-row"><span>소요 시간</span><b>' + fmtLongCountdown(t.durationMs) + "</b></div>" +
+        '<div class="expd-tier-row"><span>난이도</span><b>' + fmt(t.power) + "</b></div>" +
+        '<div class="expd-tier-row"><span>보상</span><b>💰' + fmt(t.coinMin) + "~" + fmt(t.coinMax) + "</b></div>" +
+        (locked ? '<div class="dim" style="margin-top:6px;font-size:10px;">레벨 ' + t.minLevel + " 필요</div>" : "") +
+        "</div>"
+      );
+    }).join("");
+
+    const eligibleBots = data.bots.filter((b) => !b.onExpedition);
+    const botOptions = eligibleBots.length
+      ? eligibleBots.map((b) => '<option value="' + b.id + '">봇 #' + b.id + " (ATK " + fmt(b.atk) + " · DEF " + fmt(b.def) + ")</option>").join("")
+      : '<option value="">파견 가능한 봇이 없습니다</option>';
+    const canLaunch = !!expeditionSelectedTier && eligibleBots.length > 0;
+
+    return (
+      '<div class="expd-grid">' + tierCards + "</div>" +
+      '<div class="expd-launch-panel">' +
+      '<div style="font-size:12px;color:var(--sub);margin-bottom:8px;">파견할 봇 선택</div>' +
+      '<select class="expd-bot-select" id="expeditionBotSelect">' + botOptions + "</select>" +
+      '<button class="btn-primary" id="expeditionLaunchBtn" style="width:100%;"' + (canLaunch ? "" : " disabled") + ">" +
+      (expeditionSelectedTier ? "파견하기" : "던전을 먼저 선택하세요") + "</button>" +
+      "</div>"
+    );
+  }
+
+  function renderExpeditionFromCache() {
+    const body = $("expeditionBody");
+    if (!body || !expeditionData) return;
+    body.innerHTML = expeditionHtml(expeditionData);
+    wireExpeditionButtons();
+  }
+
+  function wireExpeditionButtons() {
+    const body = $("expeditionBody");
+    if (!body) return;
+    body.querySelectorAll("[data-select-tier]").forEach((el) => {
+      el.addEventListener("click", () => {
+        expeditionSelectedTier = el.dataset.selectTier;
+        renderExpeditionFromCache();
+      });
+    });
+    const launchBtn = body.querySelector("#expeditionLaunchBtn");
+    if (launchBtn) {
+      launchBtn.addEventListener("click", async () => {
+        const botSelect = $("expeditionBotSelect");
+        const botId = botSelect ? parseInt(botSelect.value, 10) : NaN;
+        if (!expeditionSelectedTier || !Number.isInteger(botId)) return;
+        launchBtn.disabled = true;
+        try {
+          const r = await api("/expedition/launch", { method: "POST", body: { tier: expeditionSelectedTier, botId: botId } });
+          toast("🗺️ " + escapeHtml(r.label) + " — " + escapeHtml(r.bossName) + "(으)로 봇을 파견했습니다!");
+          expeditionSelectedTier = null;
+          renderExpeditionTab();
+        } catch (e) { toast(e.message, true); launchBtn.disabled = false; }
+      });
+    }
+    const collectBtn = body.querySelector("#expeditionCollectBtn");
+    if (collectBtn) {
+      collectBtn.addEventListener("click", async () => {
+        collectBtn.disabled = true;
+        try {
+          const r = await api("/expedition/collect", { method: "POST" });
+          toast("🎉 " + escapeHtml(r.bossName) + " 원정 완료! (배율 " + r.rewardMultPct + "%) +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
+          state = r.state; renderHeader();
+          renderExpeditionTab();
+        } catch (e) { toast(e.message, true); collectBtn.disabled = false; }
+      });
+    }
+  }
+
+  async function renderExpeditionTab() {
+    const body = $("expeditionBody");
+    if (!body) return;
+    try {
+      const data = await api("/expedition");
+      expeditionData = data;
+      body.innerHTML = expeditionHtml(data);
+      wireExpeditionButtons();
+    } catch (e) {
+      body.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  // 원정 카운트다운 — 활성 원정이 있을 때만, 이 탭을 보고 있을 때만 1초마다 로컬로 줄인다
+  // (서버를 다시 안 불러도 됨). 다 됐으면 그 자리에서 수령 버튼을 즉시 활성화한다.
+  setInterval(() => {
+    if (currentTab !== "expedition" || !expeditionData || !expeditionData.active) return;
+    const el = $("expeditionTimer");
+    if (!el) return;
+    expeditionData.active.readyInMs = Math.max(0, expeditionData.active.readyInMs - 1000);
+    const ready = expeditionData.active.readyInMs <= 0;
+    el.textContent = ready ? "🎉 도착 완료!" : expdCountdownText(expeditionData.active.readyInMs);
+    el.classList.toggle("ready", ready);
+    const btn = $("expeditionCollectBtn");
+    if (btn && ready && btn.disabled) { btn.disabled = false; btn.textContent = "수령하기"; }
+  }, 1000);
+  // 오랜 시간 켜뒀을 때를 대비한 정기 재조회(30초) — 로컬 카운트다운만으론 서버와 약간씩
+  // 어긋날 수 있어서 주기적으로 맞춰준다.
+  let expeditionRefreshInFlight = false;
+  setInterval(() => {
+    if (currentTab !== "expedition" || expeditionRefreshInFlight) return;
+    expeditionRefreshInFlight = true;
+    Promise.resolve(renderExpeditionTab()).finally(() => { expeditionRefreshInFlight = false; });
+  }, 30000);
 
   // ── Trade — 유저 간 코인+아이템 거래. "내가 줄 것"은 내 인벤토리(장착 중인 건 빼고 남는
   //    수량)에서 고르고, "내가 받을 것"은 상대 인벤토리를 볼 수 없으니 전체 카탈로그에서
