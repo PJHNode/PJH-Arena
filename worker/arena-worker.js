@@ -1675,6 +1675,51 @@ const ACHIEVEMENTS = {
   lucky_researcher: { name: "행운의 연구자", desc: "상점 행운 연구 레벨 " + ABYSSAL_RESEARCH_UNLOCK_LEVEL + " 달성(Abyssal 해금)", title: "행운의 연구자", reward: 60000, check: function (ctx) { return (ctx.row.research_shop_level || 0) >= ABYSSAL_RESEARCH_UNLOCK_LEVEL; } },
 };
 
+// ══════════════════════════════════════════════════════════
+//  첫걸음(First Steps) — "신규 유저에게 다음에 뭘 해야 하는지 감이 안 온다" 요청 반영.
+//  ACHIEVEMENTS와 완전히 같은 구조(정의는 코드에만, DB엔 청구 여부만 남김)를 그대로
+//  재사용한 별도 체크리스트다 — 다만 ACHIEVEMENTS는 레벨 10/환생/PvP 100승처럼 상당히
+//  진행한 뒤에야 깨지는 항목이 대부분이라 "막 시작한 사람"에게는 아무 도움이 안 됐다.
+//  여기 9개는 전부 "딱 한 번만 해보면" 깨지는 조건으로만 골라서, Hacking Jobs 탭
+//  (기본 진입 탭) 맨 위에 상시 노출하고 주요 시스템(장비/스탯/봇/은하/PvP/은행/부동산/
+//  클럽)을 한 번씩 다 만져보게 유도한다. 9개를 전부 청구하면 그 자리에서 다이아
+//  보너스가 한 번 더 나간다(FIRST_STEPS_BONUS_DIAMONDS, arena_first_steps_claims에
+//  step_id="bonus" sentinel 행으로 중복 지급을 막는다).
+// ══════════════════════════════════════════════════════════
+const FIRST_STEPS_XP_PCT = 0.02;
+const FIRST_STEPS_BONUS_DIAMONDS = 300;
+const FIRST_STEPS = {
+  first_job:      { label: "첫 해킹 작업",   desc: "Hacking Jobs에서 작업 1회 완료",        reward: 300,  check: function (ctx) { return (ctx.jobCount || 0) >= 1; } },
+  first_gear:     { label: "장비 장착",      desc: "무기·방어구·코어 중 1개 이상 장착",      reward: 500,  check: function (ctx) { return !!(ctx.row.equipped_weapon || ctx.row.equipped_armor || ctx.row.equipped_core); } },
+  first_stat:     { label: "첫 스탯 강화",   desc: "HP·에너지·스태미나 중 1개 강화",         reward: 500,  check: function (ctx) { return ctx.row.max_hp > BASE_MAX_HP || ctx.row.max_energy > BASE_MAX_ENERGY || ctx.row.max_stamina > BASE_MAX_STAMINA; } },
+  first_bot:      { label: "첫 봇 모집",     desc: "Bots 탭에서 봇 1기 모집",               reward: 1000, check: function (ctx) { return (ctx.botCount || 0) >= 1; } },
+  first_planet:   { label: "은하 지도 정복", desc: "Galaxy Map에서 행성 침투 성공 1회",     reward: 1000, check: function (ctx) { return (ctx.planetWinCount || 0) >= 1; } },
+  first_pvp:      { label: "PvP 첫 승리",    desc: "Arena P2P에서 침투 성공 1회",           reward: 1500, check: function (ctx) { return (ctx.pvpWinCount || 0) >= 1; } },
+  first_bank:     { label: "은행 이용",      desc: "Secure Bank에 코인 예치",              reward: 800,  check: function (ctx) { return (ctx.row.bank_coins || 0) > 0; } },
+  first_property: { label: "부동산 투자",    desc: "Property에서 기기 1개 구매",           reward: 1500, check: function (ctx) { return (ctx.propertyCount || 0) >= 1; } },
+  first_club:     { label: "동료 찾기",      desc: "클럽 가입 또는 생성",                   reward: 2000, check: function (ctx) { return !!ctx.clubId; } },
+};
+const FIRST_STEPS_ORDER = ["first_job", "first_gear", "first_stat", "first_bot", "first_planet", "first_pvp", "first_bank", "first_property", "first_club"];
+async function buildFirstStepsContext(env, row) {
+  const [jobCountRow, pvpWinRow, planetWinRow, botCountRow, membership, propertyCountRow] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND kind = 'job'").bind(row.user_id).first(),
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND kind = 'pvp_attack' AND result IN ('win', 'crit')").bind(row.user_id).first(),
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_logs WHERE user_id = ? AND kind = 'planet_attack' AND result = 'win'").bind(row.user_id).first(),
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_bots WHERE user_id = ?").bind(row.user_id).first(),
+    env.DB.prepare("SELECT club_id FROM arena_club_members WHERE user_id = ?").bind(row.user_id).first(),
+    env.DB.prepare("SELECT COUNT(*) AS cnt FROM arena_devices WHERE user_id = ? AND qty > 0").bind(row.user_id).first(),
+  ]);
+  return {
+    row: row,
+    jobCount: (jobCountRow && jobCountRow.cnt) || 0,
+    pvpWinCount: (pvpWinRow && pvpWinRow.cnt) || 0,
+    planetWinCount: (planetWinRow && planetWinRow.cnt) || 0,
+    botCount: (botCountRow && botCountRow.cnt) || 0,
+    clubId: membership ? membership.club_id : null,
+    propertyCount: (propertyCountRow && propertyCountRow.cnt) || 0,
+  };
+}
+
 // ── 환생 상점 — 환생석으로만 사는 1회성 소장품. 코인 경제와 무관한 순수 명예/코스메틱
 //    보상이라 밸런스 걱정 없이 계속 늘려도 된다. type:"frame"은 보유 즉시 자동 적용(별도
 //    장착 절차 없음 — 프레임이 하나뿐이라 온오프 개념이 필요 없다), type:"title"은
@@ -2191,6 +2236,14 @@ async function ensureSchema(env) {
   await env.DB.exec(
     "CREATE TABLE IF NOT EXISTS arena_achievement_claims (user_id TEXT NOT NULL, achievement_id TEXT NOT NULL, " +
     "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, achievement_id))"
+  );
+  // 첫걸음(First Steps) — "신규 유저가 뭘 해야 할지 감이 안 온다" 요청 반영. ACHIEVEMENTS와
+  // 완전히 같은 구조(정의는 코드에만, DB엔 청구 여부만)를 재사용한 별도 체크리스트다. id
+  // "bonus"는 실제 FIRST_STEPS 항목이 아니라 "9개 전부 청구 완료" 시 1회만 지급하는
+  // 보너스를 표시하는 sentinel 행이다(GET에서 FIRST_STEPS_ORDER만 순회하므로 무시됨).
+  await env.DB.exec(
+    "CREATE TABLE IF NOT EXISTS arena_first_steps_claims (user_id TEXT NOT NULL, step_id TEXT NOT NULL, " +
+    "claimed_at INTEGER NOT NULL, PRIMARY KEY (user_id, step_id))"
   );
 
   // ── 오프라인 활동 요약 — "마지막으로 이 요약을 확인한 시각" 하나만 저장한다. GET
@@ -4608,6 +4661,80 @@ export default {
         await env.DB.prepare("UPDATE arena_users SET equipped_title_id = ? WHERE user_id = ?").bind(id, user.userId).run();
         const setTitleInfo = lookupTitleInfo(id);
         return json({ ok: true, equippedTitleId: id, equippedTitle: setTitleInfo.text, equippedTitleRarity: setTitleInfo.rarity, equippedTitleColor: setTitleInfo.color });
+      }
+
+      // ══════════════════════════════════════════════════════════
+      //  첫걸음(First Steps) — 신규 유저용 체크리스트. Achievements와 같은 청구 패턴이지만
+      //  전용 엔드포인트/테이블을 따로 둬서 "지금 막 시작한 사람이 볼 것"과 "많이 진행한
+      //  사람이 볼 것"이 섞이지 않게 한다.
+      // ══════════════════════════════════════════════════════════
+
+      // ── GET /first-steps — 9개 항목 전부의 완료/청구 여부 + 전체 진행도. ──
+      if (request.method === "GET" && path === "/first-steps") {
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const [ctx, claimsRes] = await Promise.all([
+          buildFirstStepsContext(env, row),
+          env.DB.prepare("SELECT step_id FROM arena_first_steps_claims WHERE user_id = ?").bind(user.userId).all(),
+        ]);
+        const claimed = new Set(claimsRes.results.map(function (r) { return r.step_id; }));
+        const items = FIRST_STEPS_ORDER.map(function (id) {
+          const s = FIRST_STEPS[id];
+          return { id: id, label: s.label, desc: s.desc, reward: s.reward, completed: !!s.check(ctx), claimed: claimed.has(id) };
+        });
+        const claimedCount = FIRST_STEPS_ORDER.filter(function (id) { return claimed.has(id); }).length;
+        return json({
+          items: items, claimedCount: claimedCount, totalCount: FIRST_STEPS_ORDER.length,
+          bonusClaimed: claimed.has("bonus"), bonusDiamonds: FIRST_STEPS_BONUS_DIAMONDS,
+        });
+      }
+
+      // ── POST /first-steps/claim { id } — 달성했는데 아직 안 받은 첫걸음 보상을 청구한다.
+      //    이 청구로 9개가 전부 채워지면 그 자리에서 다이아 보너스도 함께 지급한다. ──
+      if (request.method === "POST" && path === "/first-steps/claim") {
+        const body = await request.json().catch(function () { return {}; });
+        const id = body.id;
+        const step = FIRST_STEPS[id];
+        if (!step) return json({ error: "존재하지 않는 항목입니다." }, 404);
+
+        const already = await env.DB.prepare("SELECT 1 FROM arena_first_steps_claims WHERE user_id=? AND step_id=?").bind(user.userId, id).first();
+        if (already) return json({ error: "이미 받았습니다." }, 400);
+
+        const row = await loadOrCreateUser(env, user.userId, user.realName);
+        const ctx = await buildFirstStepsContext(env, row);
+        if (!step.check(ctx)) return json({ error: "아직 조건을 채우지 못했습니다." }, 400);
+
+        const eventMult = globalEventMult();
+        const coinReward = Math.round(step.reward * eventMult);
+        row.pocket_coins += coinReward;
+        const xpGain = Math.round(xpPct(row, FIRST_STEPS_XP_PCT) * eventMult);
+        const leveledUp = applyXpAndLevel(row, xpGain);
+
+        // 이 청구까지 포함해서 9개가 다 찼는지 미리 계산 — 다 찼으면 같은 배치에 다이아
+        // 보너스와 sentinel 행("bonus")을 같이 넣어 1회만 지급되게 한다.
+        const claimsRes = await env.DB.prepare("SELECT step_id FROM arena_first_steps_claims WHERE user_id = ?").bind(user.userId).all();
+        const claimedIds = new Set(claimsRes.results.map(function (r) { return r.step_id; }));
+        claimedIds.add(id);
+        const allDone = FIRST_STEPS_ORDER.every(function (k) { return claimedIds.has(k); });
+        const grantBonus = allDone && !claimedIds.has("bonus");
+        if (grantBonus) row.diamonds = (row.diamonds || 0) + FIRST_STEPS_BONUS_DIAMONDS;
+
+        const writes = [
+          env.DB.prepare(
+            "UPDATE arena_users SET pocket_coins=?, diamonds=?, xp=?, level=?, stat_points=?, hp=?, energy=?, stamina=?, last_energy_tick=?, last_stamina_tick=?, last_hp_tick=? WHERE user_id=?"
+          ).bind(row.pocket_coins, row.diamonds, row.xp, row.level, row.stat_points, row.hp, row.energy, row.stamina, row.last_energy_tick, row.last_stamina_tick, row.last_hp_tick, row.user_id),
+          env.DB.prepare("INSERT INTO arena_first_steps_claims (user_id, step_id, claimed_at) VALUES (?, ?, ?)").bind(user.userId, id, Date.now()),
+        ];
+        if (grantBonus) {
+          writes.push(env.DB.prepare("INSERT INTO arena_first_steps_claims (user_id, step_id, claimed_at) VALUES (?, 'bonus', ?)").bind(user.userId, Date.now()));
+        }
+        await env.DB.batch(writes);
+
+        const combat = await totalCombatStats(env, row);
+        return json({
+          ok: true, reward: coinReward, xpGained: xpGain, leveledUp: leveledUp,
+          bonusGranted: grantBonus, bonusDiamonds: FIRST_STEPS_BONUS_DIAMONDS,
+          state: publicState(row, combat),
+        });
       }
 
       // ── POST /rebirth-shop/set-skin { id|null } — 환생 상점에서 산 행 배경 스킨을 장착/해제.

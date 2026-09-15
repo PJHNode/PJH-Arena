@@ -391,6 +391,8 @@
       const icon = window.UI_ICONS.sidebar[btn.dataset.tab];
       const span = btn.querySelector(".side-tab-icon");
       if (icon && span) span.innerHTML = icon;
+      const color = window.UI_ICONS.sidebarColor[btn.dataset.tab];
+      if (color && span) span.style.color = color;
     });
     document.querySelectorAll("[data-stat-icon]").forEach((span) => {
       const icon = window.UI_ICONS.stat[span.dataset.statIcon];
@@ -427,6 +429,7 @@
   // ── ① Hacking Jobs ──
   function renderJobsTab() {
     if (!state) return; // /state 조회가 아직 안 끝났거나 실패한 경우 — 다음 refreshState 성공 시 재호출됨
+    renderFirstStepsWidget();
     renderDailyWidget();
     const panel = $("panel-jobs");
     // 환생 버프(자원 효율, 최대 -20%/환생 10회에서 선형 상한) — 서버 rebirthCostMult와 동일 공식.
@@ -512,6 +515,50 @@
         toast("📡 신호 감청 성공! +" + fmt(r.coinsGained) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
         state = r.state; renderHeader();
       } catch (e) { toast(e.message, true); btn.disabled = false; }
+    });
+  }
+
+  // ── 첫걸음(First Steps) — "신규 유저에게 다음에 뭘 해야 하는지 감이 안 온다" 요청 반영.
+  // Hacking Jobs 탭(기본 진입 탭) 맨 위, 출석/미션 위젯보다도 위에 둬서 가장 먼저 보인다.
+  // 9개를 전부 청구하면 서버가 그 자리에서 다이아 보너스까지 자동 지급하고, 다음 조회부터
+  // bonusClaimed=true가 내려오는 순간 위젯 자체를 숨겨서(다시 안 나타남) 이미 적응한
+  // 유저의 화면을 계속 차지하지 않게 한다. ──
+  async function renderFirstStepsWidget() {
+    const el = $("firstStepsWidget");
+    if (!el) return;
+    try {
+      const d = await api("/first-steps");
+      if (d.bonusClaimed) { el.style.display = "none"; return; }
+      const rows = d.items.map((s) => {
+        const btn = s.claimed
+          ? '<span class="dim">수령 완료</span>'
+          : s.completed
+          ? '<button class="btn-primary" data-first-step-claim="' + s.id + '">받기 (💰' + fmt(s.reward) + ")</button>"
+          : '<span class="daily-quest-progress">' + escapeHtml(s.desc) + "</span>";
+        return '<div class="daily-quest-row"><span>' + escapeHtml(s.label) + "</span>" + btn + "</div>";
+      }).join("");
+      el.innerHTML =
+        '<div class="daily-widget-row"><span>🧭 첫걸음 <b style="color:var(--cyan);">' + d.claimedCount + " / " + d.totalCount +
+        "</b> 완료 — 게임의 주요 시스템을 하나씩 다뤄보세요.</span></div>" + rows;
+    } catch (e) {
+      el.innerHTML = '<p class="dim">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  function initFirstStepsButtons() {
+    const el = $("firstStepsWidget");
+    if (!el) return;
+    el.addEventListener("click", async (e) => {
+      const t = e.target;
+      if (!t.dataset.firstStepClaim) return;
+      t.disabled = true;
+      try {
+        const r = await api("/first-steps/claim", { method: "POST", body: { id: t.dataset.firstStepClaim } });
+        toast("✅ +" + fmt(r.reward) + " 코인 · EXP +" + r.xpGained + (r.leveledUp ? " · 🎉 LEVEL UP!" : ""));
+        if (r.bonusGranted) toast("🎉 첫걸음 전부 완료! 💎 다이아 +" + fmt(r.bonusDiamonds) + " 보너스!");
+        state = r.state; renderHeader();
+        renderFirstStepsWidget();
+      } catch (err) { toast(err.message, true); t.disabled = false; }
     });
   }
 
@@ -3572,6 +3619,7 @@
     initResearchButtons();
     initTradeButtons();
     initClubButtons();
+    initFirstStepsButtons();
     initDailyButtons();
     initSignalInterceptButton();
     initSlotMachine();

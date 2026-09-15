@@ -37,6 +37,19 @@ window.UI_ICONS = {
     logs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.5" y="3" width="15" height="18" rx="1.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
     admin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2.1 2.1M16.9 16.9L19 19M5 19l2.1-2.1M16.9 7.1L19 5"/></svg>',
   },
+  // ── 사이드바 아이콘 색 — "왼쪽 탭 아이콘에 색을 좀 입히면 좋겠다" 요청 반영. 새 색을
+  //    만들지 않고 이 게임에 이미 쓰이고 있는 등급/리소스 색 팔레트(RARITY_META, 헤더
+  //    리소스 색 등 — "탁하다"는 피드백으로 한 번 리뉴얼이 반려된 뒤 고정된 팔레트)에서만
+  //    골랐다. 아이콘 span에 이 색을 직접 입혀서 currentColor를 덮어쓰므로, hover/active로
+  //    글자색이 바뀌어도 아이콘 고유색은 그대로 유지된다(라벨 텍스트만 강조되는 방식).
+  sidebarColor: {
+    jobs: "#00d4ff", galaxy: "#b060e8", pvp: "#ff3d68", worldraid: "#ff1744", bounty: "#ffb020", expedition: "#e100ff",
+    shop: "#00e07a", bots: "#2b7fff", inventory: "#ff8a3d", property: "#4cd137", bank: "#ffd700", raffle: "#ff3d9e",
+    research: "#00d4ff", enchant: "#ff0044", trade: "#4cd137",
+    rebirthshop: "#ffd700",
+    club: "#2b7fff", achievements: "#ffb020", profile: "#00ff9d", leaderboard: "#ff8a3d",
+    logs: "#6d8590", admin: "#ff0044",
+  },
   // ── 헤더 리소스바/스탯(HP·에너지·스태미나·ATK·DEF·CRIT) + 스탯 포인트 뱃지. 화면에 항상
   //    떠 있는 곳이라 크기를 작게(13px) 잡고 라인만 최소한으로 그렸다. ──
   stat: {
